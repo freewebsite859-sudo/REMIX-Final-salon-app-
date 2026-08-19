@@ -1,0 +1,101 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #780032;
+  --color-primary-container: #a30046;
+  --color-primary-fixed: #ffd9df;
+  --color-primary-fixed-dim: #ffb1c0;
+  --color-on-primary: #ffffff;
+  --color-on-primary-container: #ffaebe;
+  --color-on-primary-fixed: #3f0017;
+  --color-on-primary-fixed-variant: #90003d;
+  --color-nexora-pink: #a30046;
+  --color-surface: #fff8f7;
+  --color-surface-bright: #fff8f7;
+  --color-surface-dim: #edd4d7;
+  --color-surface-off-white: #f9f9f9;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #fff0f1;
+  --color-surface-container: #ffe9eb;
+  --color-surface-container-high: #fce2e5;
+  --color-surface-container-highest: #f6dce0;
+  --color-surface-variant: #f6dce0;
+  --color-surface-tint: #b61953;
+  --color-on-surface: #26181a;
+  --color-on-surface-variant: #594045;
+  --color-outline: #8c7074;
+  --color-outline-variant: #e0bec3;
+  --color-secondary: #5f5e5e;
+  --color-secondary-container: #e2dfde;
+  --color-on-secondary: #ffffff;
+  --color-on-secondary-container: #636262;
+  --color-tertiary: #004421;
+  --color-tertiary-container: #005e30;
+  --color-on-tertiary: #ffffff;
+  --color-on-tertiary-container: #86d59b;
+  --color-success-emerald: #059669;
+  --color-warning-amber: #d97706;
+  --color-error: #ba1a1a;
+  --color-error-crimson: #dc2626;
+  --color-error-container: #ffdad6;
+  --color-on-error: #ffffff;
+  --color-on-error-container: #93000a;
+  --color-neutral-charcoal: #333333;
+  --color-neutral-soft-gray: #e5e7eb;
+
+  --font-hero-heading: "Hanken Grotesk", sans-serif;
+  --font-hero-heading-mobile: "Hanken Grotesk", sans-serif;
+  --font-page-heading: "Hanken Grotesk", sans-serif;
+  --font-section-heading: "Hanken Grotesk", sans-serif;
+  --font-card-title: "Hanken Grotesk", sans-serif;
+  --font-body-lg: "Inter", sans-serif;
+  --font-body-md: "Inter", sans-serif;
+  --font-button-text: "Inter", sans-serif;
+  --font-metadata: "Inter", sans-serif;
+  --font-nav-label: "Inter", sans-serif;
+
+  --spacing-page-margin: 16px;
+  --spacing-section-gap: 32px;
+  --spacing-component-gap: 16px;
+  --spacing-touch-target-min: 44px;
+  --spacing-gutter: 12px;
+}
+
+@layer base {
+  body {
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: contain;
+    font-family: var(--font-body-md);
+    background-color: var(--color-surface-off-white);
+    color: var(--color-on-surface);
+    min-height: 100vh;
+  }
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  vertical-align: middle;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.material-symbols-outlined.fill-1 {
+  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
