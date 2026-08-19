@@ -1,3 +1,4 @@
+import nexoraQrCode from "../assets/images/nexora_qr_code_1787067887544.jpg";
 import React, { useState, useMemo, useEffect } from 'react';
 import { Salon, SalonService, Stylist, Appointment } from '../types';
 
@@ -861,7 +862,7 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
                   {/* QR Code Image Placeholder Container */}
                   <div className="p-2 bg-neutral-900 rounded-2xl shadow-md border border-neutral-800 my-1 flex flex-col items-center">
                     <img
-                      src="/src/assets/images/nexora_qr_code_1787067887544.jpg"
+                      src={nexoraQrCode}
                       alt="Nexora SalonOS Payment QR Code"
                       referrerPolicy="no-referrer"
                       className="w-36 h-36 object-cover rounded-xl border border-neutral-700 shadow-xs"

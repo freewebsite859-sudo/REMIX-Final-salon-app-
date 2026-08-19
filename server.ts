@@ -79,7 +79,7 @@ User query: "${searchQuery}".
 Provide a concise, helpful summary highlighting top rated salons, specific specialties (haircuts, styling, facials, bridal, nails, spa), typical pricing, opening status, and why customers love them. Include exact salon names and addresses when available.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: "gemini-2.5-flash",
       contents: prompt,
       config: {
         tools: [{ googleMaps: {} }],
@@ -147,7 +147,7 @@ Client Preferences: ${JSON.stringify(preferences || {})}.
 Give an expert recommendation on which treatment/haircut fits best, and mention specific top-rated salons nearby in ${userLoc} with their key highlights, estimated price, and address.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: "gemini-2.5-flash",
       contents: prompt,
       config: {
         tools: [{ googleMaps: {} }],
@@ -330,7 +330,7 @@ Provide:
 Format your response as structured advice, and ground nearby salon suggestions in ${userLoc}.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.7-flash",
+      model: "gemini-2.5-flash",
       contents: prompt,
       config: {
         tools: [{ googleMaps: {} }],
@@ -705,7 +705,7 @@ Provide a comprehensive, structured Sentiment Summary in valid JSON format match
 Return ONLY valid JSON.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.7-flash",
+      model: "gemini-2.5-flash",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
