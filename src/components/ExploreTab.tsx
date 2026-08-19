@@ -271,23 +271,6 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
               </button>
             )}
           </div>
-
-          <button
-            type="button"
-            onClick={() => {
-              if (searchQuery.trim()) addRecentSearch(searchQuery);
-              handlePerformGroundedSearch();
-            }}
-            disabled={isSearchingGrounded}
-            className="px-4 bg-[#b00055] text-white text-[12px] font-semibold rounded-[14px] flex items-center gap-1.5 hover:-translate-y-0.5 hover:shadow-[0_6px_16px_rgba(176,0,85,0.20)] active:scale-95 transition-all duration-180 disabled:opacity-50 shrink-0 cursor-pointer"
-          >
-            {isSearchingGrounded ? (
-              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-            ) : (
-              <span className="material-symbols-outlined text-[18px]">google_pin</span>
-            )}
-            <span className="hidden sm:inline">Ground with Maps</span>
-          </button>
         </div>
 
         {/* 3 Most Recent Search Queries Clickable Chips */}

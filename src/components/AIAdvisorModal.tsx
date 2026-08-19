@@ -1,5 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { GroundingChunk, UserProfile, Salon, SalonService, AIStyleQuizResult, RecommendedServiceMatch } from '../types';
+import {
+  GroundingChunk,
+  UserProfile,
+  Salon,
+  SalonService,
+  AIStyleQuizResult,
+  RecommendedServiceMatch,
+  SalonSentimentSummary,
+} from '../types';
 
 interface AIAdvisorModalProps {
   isOpen: boolean;
@@ -11,7 +19,8 @@ interface AIAdvisorModalProps {
   onSelectSalon?: (salon: Salon) => void;
   onSelectSalonByName?: (name: string) => void;
   onBookService?: (salon: Salon, service: SalonService) => void;
-  initialTab?: 'quiz' | 'chat';
+  initialTab?: 'quiz' | 'chat' | 'sentiment';
+  initialSalonId?: string;
 }
 
 const HAIR_TYPE_OPTIONS = [
@@ -95,8 +104,9 @@ export const AIAdvisorModal: React.FC<AIAdvisorModalProps> = ({
   onSelectSalonByName,
   onBookService,
   initialTab = 'quiz',
+  initialSalonId,
 }) => {
-  const [activeMode, setActiveMode] = useState<'quiz' | 'chat'>(initialTab);
+  const [activeMode, setActiveMode] = useState<'quiz' | 'sentiment' | 'chat'>(initialTab);
 
   // Quiz Form State
   const [hairType, setHairType] = useState<string>(user.hairType || 'Wavy');
@@ -110,6 +120,15 @@ export const AIAdvisorModal: React.FC<AIAdvisorModalProps> = ({
   const [quizResult, setQuizResult] = useState<AIStyleQuizResult | null>(null);
   const [quizError, setQuizError] = useState<string | null>(null);
 
+  // Sentiment State
+  const [selectedSentimentSalonId, setSelectedSentimentSalonId] = useState<string>(
+    initialSalonId || (salons.length > 0 ? salons[0].id : 'salon-1')
+  );
+  const [isSentimentLoading, setIsSentimentLoading] = useState(false);
+  const [sentimentSummary, setSentimentSummary] = useState<SalonSentimentSummary | null>(null);
+  const [sentimentError, setSentimentError] = useState<string | null>(null);
+  const [sentimentCache, setSentimentCache] = useState<Record<string, SalonSentimentSummary>>({});
+
   // Chat State
   const [promptInput, setPromptInput] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
@@ -117,7 +136,7 @@ export const AIAdvisorModal: React.FC<AIAdvisorModalProps> = ({
   const [groundingChunks, setGroundingChunks] = useState<GroundingChunk[]>([]);
   const [chatError, setChatError] = useState<string | null>(null);
 
-  // Sync state when user prop changes
+  // Sync state when props change
   useEffect(() => {
     if (user.hairType) setHairType(user.hairType);
     if (user.desiredLength) setDesiredLength(user.desiredLength);
@@ -125,7 +144,64 @@ export const AIAdvisorModal: React.FC<AIAdvisorModalProps> = ({
     if (user.stylingGoal) setStylingGoal(user.stylingGoal);
   }, [user]);
 
+  useEffect(() => {
+    if (initialTab) setActiveMode(initialTab);
+  }, [initialTab]);
+
+  useEffect(() => {
+    if (initialSalonId) setSelectedSentimentSalonId(initialSalonId);
+  }, [initialSalonId]);
+
+  // Fetch Sentiment Summary for chosen salon
+  const fetchSalonSentiment = async (targetSalonId: string) => {
+    if (sentimentCache[targetSalonId]) {
+      setSentimentSummary(sentimentCache[targetSalonId]);
+      return;
+    }
+
+    const currentSalon = salons.find((s) => s.id === targetSalonId);
+    if (!currentSalon) return;
+
+    setIsSentimentLoading(true);
+    setSentimentError(null);
+
+    try {
+      const res = await fetch('/api/salons/sentiment-summary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          salonId: currentSalon.id,
+          salonName: currentSalon.name,
+          reviews: currentSalon.reviews || [],
+          location: currentSalon.location || { area: currentLocation },
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success && data.sentiment) {
+        setSentimentSummary(data.sentiment);
+        setSentimentCache((prev) => ({ ...prev, [targetSalonId]: data.sentiment }));
+      } else {
+        setSentimentError(data.error || 'Unable to generate sentiment summary.');
+      }
+    } catch (err) {
+      console.error('Sentiment fetch error:', err);
+      setSentimentError('Network error while analyzing salon reviews.');
+    } finally {
+      setIsSentimentLoading(false);
+    }
+  };
+
+  // Auto-fetch sentiment when entering sentiment mode or switching salon
+  useEffect(() => {
+    if (activeMode === 'sentiment' && selectedSentimentSalonId) {
+      fetchSalonSentiment(selectedSentimentSalonId);
+    }
+  }, [activeMode, selectedSentimentSalonId]);
+
   if (!isOpen) return null;
+
+  const currentSentimentSalon = salons.find((s) => s.id === selectedSentimentSalonId) || salons[0];
 
   const samplePrompts = [
     '💇 Recommend top hair stylist in Mansarovar for modern fade & textured layers',
@@ -139,7 +215,6 @@ export const AIAdvisorModal: React.FC<AIAdvisorModalProps> = ({
     setIsQuizLoading(true);
     setQuizError(null);
 
-    // If user checked save to profile, update profile
     if (saveToProfile && onUpdateUser) {
       onUpdateUser({
         ...user,
@@ -234,10 +309,14 @@ export const AIAdvisorModal: React.FC<AIAdvisorModalProps> = ({
 
   // Find Salon & Service to book directly
   const handleBookServiceMatch = (rec: RecommendedServiceMatch) => {
-    const foundSalon = salons.find((s) => s.id === rec.salonId || s.name.toLowerCase().includes(rec.salonName.toLowerCase()));
-    
+    const foundSalon = salons.find(
+      (s) => s.id === rec.salonId || s.name.toLowerCase().includes(rec.salonName.toLowerCase())
+    );
+
     if (foundSalon && onBookService) {
-      const foundService = foundSalon.services.find((srv) => srv.id === rec.serviceId || srv.name.toLowerCase().includes(rec.serviceName.toLowerCase())) || {
+      const foundService = foundSalon.services.find(
+        (srv) => srv.id === rec.serviceId || srv.name.toLowerCase().includes(rec.serviceName.toLowerCase())
+      ) || {
         id: rec.serviceId,
         name: rec.serviceName,
         category: (rec.category as any) || 'hair',
@@ -279,14 +358,14 @@ export const AIAdvisorModal: React.FC<AIAdvisorModalProps> = ({
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <h2 className="font-card-title text-[18px] font-bold text-on-surface">Nexora AI Beauty Stylist</h2>
+                  <h2 className="font-card-title text-[18px] font-bold text-on-surface">Nexora AI Beauty Advisor</h2>
                   <span className="text-[10px] font-bold bg-[#b00055]/10 text-[#b00055] px-2 py-0.5 rounded-full border border-[#b00055]/20 uppercase">
                     Gemini 3.7
                   </span>
                 </div>
                 <p className="text-[11px] text-on-surface-variant flex items-center gap-1">
                   <span className="material-symbols-outlined text-[13px] text-nexora-pink">pin_drop</span>
-                  <span>Grounded in verified salons near {currentLocation}</span>
+                  <span>Grounded in verified salon reviews near {currentLocation}</span>
                 </p>
               </div>
             </div>
@@ -299,40 +378,59 @@ export const AIAdvisorModal: React.FC<AIAdvisorModalProps> = ({
             </button>
           </div>
 
-          {/* Mode Switcher */}
-          <div className="grid grid-cols-2 p-1 bg-surface-container-highest rounded-xl gap-1">
+          {/* Mode Switcher (3 Tabs) */}
+          <div className="grid grid-cols-3 p-1 bg-surface-container-highest rounded-xl gap-1">
             <button
               type="button"
+              id="ai-tab-quiz-btn"
               onClick={() => setActiveMode('quiz')}
-              className={`py-2 px-3 rounded-lg text-[13px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+              className={`py-2 px-2 rounded-lg text-[12px] sm:text-[13px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                 activeMode === 'quiz'
                   ? 'bg-white text-primary shadow-xs border border-outline-variant/30'
                   : 'text-on-surface-variant hover:text-on-surface'
               }`}
             >
               <span className="material-symbols-outlined text-[16px] text-nexora-pink">palette</span>
-              <span>AI Style Quiz</span>
-              <span className="text-[10px] bg-[#b00055] text-white px-1.5 py-0.2 rounded-full font-bold">New</span>
+              <span>Style Quiz</span>
             </button>
 
             <button
               type="button"
+              id="ai-tab-sentiment-btn"
+              onClick={() => setActiveMode('sentiment')}
+              className={`py-2 px-2 rounded-lg text-[12px] sm:text-[13px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                activeMode === 'sentiment'
+                  ? 'bg-white text-primary shadow-xs border border-outline-variant/30'
+                  : 'text-on-surface-variant hover:text-on-surface'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[16px] text-[#b00055]">insights</span>
+              <span>Sentiment</span>
+              <span className="text-[9px] bg-[#b00055] text-white px-1.5 py-0.2 rounded-full font-bold">AI</span>
+            </button>
+
+            <button
+              type="button"
+              id="ai-tab-chat-btn"
               onClick={() => setActiveMode('chat')}
-              className={`py-2 px-3 rounded-lg text-[13px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+              className={`py-2 px-2 rounded-lg text-[12px] sm:text-[13px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                 activeMode === 'chat'
                   ? 'bg-white text-primary shadow-xs border border-outline-variant/30'
                   : 'text-on-surface-variant hover:text-on-surface'
               }`}
             >
               <span className="material-symbols-outlined text-[16px]">chat</span>
-              <span>Ask AI Stylist</span>
+              <span>Ask AI</span>
             </button>
           </div>
         </div>
 
         {/* Modal Body */}
         <div className="p-4 sm:p-5 overflow-y-auto flex-1 flex flex-col gap-4">
-          {activeMode === 'quiz' ? (
+          {/* ========================================================================= */}
+          {/* TAB 1: AI STYLE QUIZ                                                      */}
+          {/* ========================================================================= */}
+          {activeMode === 'quiz' && (
             <div className="flex flex-col gap-4">
               {/* Profile Sync Notice */}
               <div className="p-3 bg-surface-container-low rounded-xl border border-outline-variant/40 flex items-center justify-between text-[12px]">
@@ -458,21 +556,10 @@ export const AIAdvisorModal: React.FC<AIAdvisorModalProps> = ({
                             )}
                           </div>
                           <span className="text-[12px] font-bold text-on-surface">{opt.label}</span>
-                          <span className="text-[10px] text-on-surface-variant leading-tight">{opt.desc}</span>
+                          <span className="text-[10px] text-on-surface-variant leading-tight">{opt.tip}</span>
                         </button>
                       ))}
                     </div>
-
-                    {/* Active Face Shape Pro Tip */}
-                    {faceShape && (
-                      <div className="mt-2 p-2.5 bg-primary-fixed/30 rounded-xl border border-primary-fixed flex items-center gap-2 text-[11px] text-on-surface">
-                        <span className="material-symbols-outlined text-nexora-pink text-[16px]">lightbulb</span>
-                        <span>
-                          <strong>Stylist Tip for {faceShape} Face:</strong>{' '}
-                          {FACE_SHAPE_OPTIONS.find((f) => f.id === faceShape)?.tip}
-                        </span>
-                      </div>
-                    )}
                   </div>
 
                   {/* Step 4: Primary Styling Goal */}
@@ -480,11 +567,11 @@ export const AIAdvisorModal: React.FC<AIAdvisorModalProps> = ({
                     <div className="flex items-center justify-between mb-2">
                       <label className="text-[13px] font-bold text-on-surface flex items-center gap-1.5">
                         <span className="w-5 h-5 rounded-full bg-primary text-white text-[11px] flex items-center justify-center font-bold">4</span>
-                        <span>Primary Styling Goal & Priority</span>
+                        <span>Your Primary Hair & Glow Goal</span>
                       </label>
                       <span className="text-[11px] text-on-surface-variant">Selected: <strong>{stylingGoal}</strong></span>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div className="flex flex-col gap-2">
                       {STYLING_GOAL_OPTIONS.map((opt) => (
                         <button
                           key={opt.id}
@@ -498,7 +585,7 @@ export const AIAdvisorModal: React.FC<AIAdvisorModalProps> = ({
                         >
                           <div>
                             <span className="text-[12px] font-bold text-on-surface block">{opt.label}</span>
-                            <span className="text-[10px] text-on-surface-variant">{opt.desc}</span>
+                            <span className="text-[11px] text-on-surface-variant">{opt.desc}</span>
                           </div>
                           {stylingGoal === opt.id && (
                             <span className="material-symbols-outlined text-[18px] text-[#b00055]">check_circle</span>
@@ -508,169 +595,156 @@ export const AIAdvisorModal: React.FC<AIAdvisorModalProps> = ({
                     </div>
                   </div>
 
-                  {/* Save to Profile Checkbox */}
-                  <div className="flex items-center gap-2 pt-1">
+                  {/* Save to Profile Toggle */}
+                  <label className="flex items-center gap-2 p-3 bg-surface-container-lowest rounded-xl border border-outline-variant/40 cursor-pointer">
                     <input
                       type="checkbox"
-                      id="save-style-profile"
                       checked={saveToProfile}
                       onChange={(e) => setSaveToProfile(e.target.checked)}
-                      className="w-4 h-4 text-[#b00055] rounded focus:ring-[#b00055] border-outline-variant cursor-pointer"
+                      className="rounded text-primary focus:ring-primary w-4 h-4 cursor-pointer"
                     />
-                    <label htmlFor="save-style-profile" className="text-[12px] text-on-surface font-medium cursor-pointer">
-                      Save these style preferences to my profile for future salon recommendations
-                    </label>
-                  </div>
+                    <div className="flex-1 text-[12px]">
+                      <span className="font-semibold text-on-surface">Save preferences to my Nexora Profile</span>
+                      <p className="text-[11px] text-on-surface-variant">
+                        Updates your saved hair profile and beauty recommendations across the app.
+                      </p>
+                    </div>
+                  </label>
 
                   {/* Submit Button */}
                   <button
+                    id="submit-ai-style-quiz-btn"
                     type="button"
                     onClick={handleRunStyleQuiz}
                     disabled={isQuizLoading}
-                    className="w-full py-3.5 bg-gradient-to-r from-primary via-nexora-pink to-primary-container text-white font-bold rounded-xl text-[14px] shadow-md hover:opacity-95 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                    className="w-full py-3 px-4 bg-gradient-to-r from-primary via-[#b00055] to-nexora-pink text-white font-bold rounded-xl shadow-md hover:opacity-95 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                   >
                     {isQuizLoading ? (
                       <>
                         <div className="w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                        <span>AI Analyzing Face Shape & Matching Salons...</span>
+                        <span>Analyzing with Gemini 3.7 AI...</span>
                       </>
                     ) : (
                       <>
-                        <span className="material-symbols-outlined text-[20px]">auto_awesome</span>
-                        <span>Generate AI Style Blueprint & Matched Services</span>
+                        <span className="material-symbols-outlined text-[18px]">auto_awesome</span>
+                        <span>Find My Perfect Style & Match Salons</span>
                       </>
                     )}
                   </button>
 
                   {quizError && (
-                    <div className="p-3 rounded-xl bg-error-container text-on-error-container text-[12px]">
+                    <div className="p-3 bg-error-container text-on-error-container rounded-xl text-[12px]">
                       {quizError}
                     </div>
                   )}
                 </div>
               ) : (
                 /* Quiz Results View */
-                <div className="flex flex-col gap-4 animate-in fade-in duration-300">
+                <div className="flex flex-col gap-4">
                   {/* Summary Banner */}
-                  <div className="p-4 rounded-2xl bg-gradient-to-r from-primary to-nexora-pink text-white shadow-md">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className="material-symbols-outlined text-[22px]">verified</span>
-                        <h3 className="font-card-title text-[16px] font-bold">Personalized Style Blueprint</h3>
-                      </div>
-                      <span className="text-[11px] bg-white/20 px-2.5 py-0.5 rounded-full font-bold">
-                        {faceShape} · {hairType} · {desiredLength}
+                  <div className="p-4 rounded-2xl bg-gradient-to-br from-[#b00055]/15 via-primary/10 to-surface-container border border-[#b00055]/30 flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-[#b00055] flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[14px]">auto_awesome</span>
+                        AI Style Synthesis
                       </span>
+                      <button
+                        onClick={() => setQuizResult(null)}
+                        className="text-[11px] text-primary font-bold hover:underline cursor-pointer flex items-center gap-0.5"
+                      >
+                        <span className="material-symbols-outlined text-[13px]">refresh</span>
+                        Retake Quiz
+                      </button>
                     </div>
-                    <p className="text-[12px] opacity-95 leading-relaxed">{quizResult.styleSummary}</p>
+                    <p className="text-[13px] text-on-surface leading-relaxed font-medium">
+                      {quizResult.styleSummary}
+                    </p>
                   </div>
 
-                  {/* Architectural Analysis Cards */}
+                  {/* Face Shape & Texture Deep Dive */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="p-3.5 bg-surface-container-low rounded-xl border border-outline-variant/40">
-                      <div className="flex items-center gap-1.5 mb-1.5 text-nexora-pink">
-                        <span className="material-symbols-outlined text-[18px]">face</span>
-                        <h4 className="font-bold text-[13px] text-on-surface">Face Shape Harmony</h4>
+                    <div className="p-3.5 rounded-xl bg-surface-container-lowest border border-outline-variant/40 flex flex-col gap-1">
+                      <div className="flex items-center gap-1.5 text-primary text-[12px] font-bold">
+                        <span className="material-symbols-outlined text-[16px]">face</span>
+                        <span>Face Silhouette Analysis</span>
                       </div>
-                      <p className="text-[12px] text-on-surface-variant leading-relaxed">
+                      <p className="text-[11px] text-on-surface-variant leading-relaxed">
                         {quizResult.faceShapeAnalysis}
                       </p>
                     </div>
-
-                    <div className="p-3.5 bg-surface-container-low rounded-xl border border-outline-variant/40">
-                      <div className="flex items-center gap-1.5 mb-1.5 text-nexora-pink">
-                        <span className="material-symbols-outlined text-[18px]">texture</span>
-                        <h4 className="font-bold text-[13px] text-on-surface">Texture & Density Fit</h4>
+                    <div className="p-3.5 rounded-xl bg-surface-container-lowest border border-outline-variant/40 flex flex-col gap-1">
+                      <div className="flex items-center gap-1.5 text-[#b00055] text-[12px] font-bold">
+                        <span className="material-symbols-outlined text-[16px]">waves</span>
+                        <span>Hair Type Suitability</span>
                       </div>
-                      <p className="text-[12px] text-on-surface-variant leading-relaxed">
+                      <p className="text-[11px] text-on-surface-variant leading-relaxed">
                         {quizResult.hairTypeSuitability}
                       </p>
                     </div>
                   </div>
 
-                  {/* Recommended Cut Concepts */}
-                  {quizResult.recommendedCutsAndStyles && quizResult.recommendedCutsAndStyles.length > 0 && (
-                    <div className="p-3.5 bg-surface-container-lowest rounded-xl border border-outline-variant/40">
-                      <h4 className="text-[12px] font-bold uppercase tracking-wider text-on-surface-variant mb-2">
-                        Flattering Cut & Layer Concepts for You
-                      </h4>
-                      <div className="flex flex-wrap gap-2">
-                        {quizResult.recommendedCutsAndStyles.map((cut, i) => (
-                          <div
-                            key={i}
-                            className="px-3 py-1.5 bg-primary-fixed/40 border border-primary-fixed text-primary font-semibold text-[12px] rounded-lg flex items-center gap-1.5 shadow-xs"
-                          >
-                            <span className="material-symbols-outlined text-[14px]">content_cut</span>
-                            <span>{cut}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Matching Salon Services */}
+                  {/* Recommended Cuts & Silhouettes */}
                   <div>
-                    <div className="flex items-center justify-between mb-2.5">
-                      <div className="flex items-center gap-1.5">
-                        <span className="material-symbols-outlined text-nexora-pink text-[18px]">storefront</span>
-                        <h4 className="font-bold text-[14px] text-on-surface">
-                          Recommended Services at Top Salons Near {currentLocation}
-                        </h4>
-                      </div>
-                      <span className="text-[11px] text-on-surface-variant font-medium">Direct Booking Available</span>
+                    <h3 className="font-card-title text-[13px] font-bold text-on-surface mb-2 flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-[16px] text-nexora-pink">content_cut</span>
+                      <span>Target Haircuts Tailored to You</span>
+                    </h3>
+                    <div className="flex flex-wrap gap-1.5">
+                      {quizResult.recommendedCutsAndStyles.map((cut, idx) => (
+                        <span
+                          key={idx}
+                          className="px-2.5 py-1 bg-surface-container-highest text-on-surface rounded-lg text-[11px] font-semibold border border-outline-variant/40"
+                        >
+                          ✨ {cut}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Matched Salon Services in Jaipur */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="font-card-title text-[13px] font-bold text-on-surface flex items-center gap-1.5">
+                        <span className="material-symbols-outlined text-[16px] text-primary">storefront</span>
+                        <span>Top Salon Services Matching Your Quiz</span>
+                      </h3>
+                      <span className="text-[11px] text-on-surface-variant">Near {currentLocation}</span>
                     </div>
 
-                    <div className="flex flex-col gap-3">
-                      {quizResult.recommendedServices.map((rec, i) => (
+                    <div className="flex flex-col gap-2.5">
+                      {quizResult.recommendedServices.map((rec, idx) => (
                         <div
-                          key={i}
-                          className="p-3.5 rounded-2xl bg-surface-container-lowest border border-outline-variant/50 hover:border-nexora-pink transition-all shadow-xs flex flex-col gap-2.5"
+                          key={idx}
+                          className="p-3.5 rounded-2xl bg-surface-container-lowest border border-outline-variant/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 hover:border-primary/50 transition-all shadow-xs"
                         >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex items-center gap-3">
-                              <img
-                                src={rec.salonImage}
-                                alt={rec.salonName}
-                                className="w-12 h-12 rounded-xl object-cover ring-1 ring-black/10"
-                              />
-                              <div>
-                                <div className="flex items-center gap-1.5">
-                                  <h5 className="font-bold text-[13px] text-on-surface">{rec.serviceName}</h5>
-                                  <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">
-                                    {rec.matchScore}% Match
-                                  </span>
-                                </div>
-                                <p className="text-[11px] font-medium text-nexora-pink">{rec.salonName}</p>
-                                <p className="text-[10px] text-on-surface-variant">{rec.salonAddress}</p>
-                              </div>
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-[13px] text-on-surface">{rec.serviceName}</span>
+                              <span className="text-[10px] bg-success-emerald/10 text-success-emerald font-bold px-1.5 py-0.2 rounded">
+                                {rec.matchScore}% Match
+                              </span>
                             </div>
-                            <div className="text-right flex-shrink-0">
-                              <div className="flex items-baseline gap-1 justify-end">
-                                <span className="font-bold text-[14px] text-primary">₹{rec.discountPrice || rec.price}</span>
-                                {rec.discountPrice && (
-                                  <span className="text-[11px] text-on-surface-variant line-through">₹{rec.price}</span>
-                                )}
-                              </div>
-                              <span className="text-[10px] text-on-surface-variant">{rec.duration} mins</span>
-                            </div>
+                            <p className="text-[11px] text-primary font-semibold mt-0.5">
+                              📍 {rec.salonName} <span className="text-on-surface-variant font-normal">({rec.salonAddress})</span>
+                            </p>
+                            <p className="text-[11px] text-on-surface-variant mt-1 leading-snug">
+                              💡 <em>{rec.matchReason}</em>
+                            </p>
                           </div>
 
-                          <div className="p-2 bg-surface-container rounded-lg text-[11px] text-on-surface flex items-start gap-1.5">
-                            <span className="material-symbols-outlined text-[14px] text-nexora-pink flex-shrink-0 mt-0.5">
-                              psychology
-                            </span>
-                            <span><strong>Why AI matched this:</strong> {rec.matchReason}</span>
-                          </div>
-
-                          <div className="flex items-center justify-between pt-1 border-t border-outline-variant/30">
-                            <span className="text-[11px] text-on-surface-variant">{rec.serviceDescription}</span>
+                          <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-outline-variant/20">
+                            <div className="text-left sm:text-right">
+                              <span className="font-bold text-[14px] text-primary">₹{rec.discountPrice || rec.price}</span>
+                              {rec.discountPrice && (
+                                <span className="text-[10px] line-through text-on-surface-variant block">₹{rec.price}</span>
+                              )}
+                            </div>
                             <button
                               type="button"
                               onClick={() => handleBookServiceMatch(rec)}
-                              className="px-3.5 py-1.5 bg-[#b00055] hover:bg-[#900045] text-white font-bold rounded-xl text-[11px] transition-colors flex items-center gap-1 flex-shrink-0 shadow-xs cursor-pointer"
+                              className="px-3.5 py-1.5 bg-primary text-white text-[12px] font-bold rounded-xl hover:bg-[#b00055] transition-colors cursor-pointer shadow-xs"
                             >
-                              <span>Book Service</span>
-                              <span className="material-symbols-outlined text-[13px]">arrow_forward</span>
+                              Book Match
                             </button>
                           </div>
                         </div>
@@ -678,85 +752,343 @@ export const AIAdvisorModal: React.FC<AIAdvisorModalProps> = ({
                     </div>
                   </div>
 
-                  {/* Stylist Home Maintenance Tips */}
-                  {quizResult.homeCareTips && quizResult.homeCareTips.length > 0 && (
-                    <div className="p-3.5 bg-surface-container-low rounded-xl border border-outline-variant/40">
-                      <div className="flex items-center gap-1.5 mb-2">
-                        <span className="material-symbols-outlined text-nexora-pink text-[18px]">spa</span>
-                        <h4 className="font-bold text-[13px] text-on-surface">Pro Maintenance Routine for Your Hair</h4>
-                      </div>
-                      <div className="flex flex-col gap-1.5">
-                        {quizResult.homeCareTips.map((tip, idx) => (
-                          <div key={idx} className="flex items-start gap-2 text-[12px] text-on-surface">
-                            <span className="material-symbols-outlined text-[14px] text-emerald-600 flex-shrink-0 mt-0.5">
-                              check_circle
-                            </span>
-                            <span>{tip}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  {/* Home Maintenance Tips */}
+                  <div className="p-3.5 rounded-xl bg-surface-container-low border border-outline-variant/40 flex flex-col gap-2">
+                    <h4 className="text-[12px] font-bold text-on-surface flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-[16px] text-warning-amber">lightbulb</span>
+                      <span>Daily Styling & Maintenance Advice</span>
+                    </h4>
+                    <ul className="flex flex-col gap-1 text-[11px] text-on-surface-variant list-disc pl-4">
+                      {quizResult.homeCareTips.map((tip, i) => (
+                        <li key={i}>{tip}</li>
+                      ))}
+                    </ul>
+                  </div>
 
-                  {/* Verified Google Maps Sources */}
-                  {quizResult.groundingSources && quizResult.groundingSources.length > 0 && (
-                    <div className="p-3.5 rounded-xl bg-surface-container-lowest border border-outline-variant/50">
-                      <div className="flex items-center gap-1.5 mb-2">
-                        <span className="material-symbols-outlined text-nexora-pink text-[16px]">location_on</span>
-                        <h4 className="font-bold text-[12px] text-on-surface">Verified Google Maps Sources</h4>
-                      </div>
-                      <div className="flex flex-col gap-1.5">
-                        {quizResult.groundingSources.map((chunk, i) => {
-                          const title = chunk.maps?.title || chunk.web?.title || `Verified Salon #${i + 1}`;
-                          const url = chunk.maps?.uri || chunk.web?.uri;
-                          return (
-                            <div key={i} className="flex items-center justify-between text-[11px] p-2 bg-surface-container rounded-lg">
-                              <span className="font-medium text-on-surface truncate">{title}</span>
-                              {url && (
-                                <a
-                                  href={url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="text-nexora-pink font-semibold flex items-center gap-0.5 hover:underline ml-2 flex-shrink-0"
-                                >
-                                  <span>View on Maps</span>
-                                  <span className="material-symbols-outlined text-[12px]">open_in_new</span>
-                                </a>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Actions Footer */}
-                  <div className="flex items-center gap-2 pt-2">
+                  {/* Action Bar */}
+                  <div className="flex gap-2">
                     <button
                       type="button"
                       onClick={() => setQuizResult(null)}
-                      className="flex-1 py-2.5 bg-surface-container-highest text-on-surface font-semibold rounded-xl text-[12px] hover:bg-surface-container transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                      className="flex-1 py-2.5 bg-surface-container text-on-surface text-[12px] font-semibold rounded-xl hover:bg-surface-container-highest transition-colors cursor-pointer"
                     >
-                      <span className="material-symbols-outlined text-[16px]">tune</span>
-                      <span>Adjust Style Quiz Answers</span>
+                      Change Preferences
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        setActiveMode('chat');
-                        setPromptInput(`I just took the AI style quiz for my ${faceShape} face shape and ${hairType} hair. Can you recommend specific styling products or color advice?`);
-                      }}
-                      className="flex-1 py-2.5 bg-primary text-white font-bold rounded-xl text-[12px] hover:bg-nexora-pink transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                      onClick={() => setActiveMode('sentiment')}
+                      className="flex-1 py-2.5 bg-[#b00055] text-white text-[12px] font-semibold rounded-xl hover:opacity-90 transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
                     >
-                      <span className="material-symbols-outlined text-[16px]">chat</span>
-                      <span>Ask AI Stylist Follow-up</span>
+                      <span className="material-symbols-outlined text-[16px]">insights</span>
+                      <span>Check Salon Reviews Sentiment</span>
                     </button>
                   </div>
                 </div>
               )}
             </div>
-          ) : (
-            /* Chat Mode */
+          )}
+
+          {/* ========================================================================= */}
+          {/* TAB 2: SALON SENTIMENT SUMMARY (FEATURE REQUEST)                           */}
+          {/* ========================================================================= */}
+          {activeMode === 'sentiment' && (
+            <div className="flex flex-col gap-4">
+              {/* Salon Quick Selector */}
+              <div className="flex flex-col gap-2">
+                <label className="text-[12px] font-bold text-on-surface flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[16px] text-[#b00055]">storefront</span>
+                    <span>Select Salon to Analyze Reviews Sentiment</span>
+                  </span>
+                  <span className="text-[11px] text-on-surface-variant font-normal">
+                    {salons.length} Salons available in Jaipur
+                  </span>
+                </label>
+
+                {/* Salon Carousel Buttons */}
+                <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+                  {salons.map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => setSelectedSentimentSalonId(s.id)}
+                      className={`px-3 py-2 rounded-xl text-left shrink-0 transition-all flex items-center gap-2 cursor-pointer border ${
+                        selectedSentimentSalonId === s.id
+                          ? 'bg-[#b00055]/10 border-[#b00055] ring-1 ring-[#b00055]'
+                          : 'bg-surface-container-lowest border-outline-variant/40 hover:bg-surface-container'
+                      }`}
+                    >
+                      <img
+                        src={s.image}
+                        alt={s.name}
+                        className="w-7 h-7 rounded-lg object-cover shrink-0"
+                      />
+                      <div className="max-w-[130px]">
+                        <span className="text-[11px] font-bold text-on-surface truncate block">{s.name}</span>
+                        <span className="text-[10px] text-on-surface-variant flex items-center gap-0.5">
+                          <span className="material-symbols-outlined text-[11px] text-warning-amber fill-1">star</span>
+                          <span>{s.rating}</span>
+                          <span>· {s.location.area}</span>
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Loading State */}
+              {isSentimentLoading && (
+                <div className="py-12 flex flex-col items-center justify-center text-center gap-3">
+                  <div className="w-10 h-10 border-3 border-[#b00055]/30 border-t-[#b00055] rounded-full animate-spin" />
+                  <p className="text-[13px] font-semibold text-on-surface">
+                    Analyzing verified client reviews for {currentSentimentSalon?.name || 'Salon'}...
+                  </p>
+                  <p className="text-[11px] text-on-surface-variant max-w-sm">
+                    Synthesizing top positive praises, constructive patterns, and stylist reputation with Gemini 3.7.
+                  </p>
+                </div>
+              )}
+
+              {/* Error State */}
+              {sentimentError && (
+                <div className="p-3 rounded-xl bg-error-container text-on-error-container text-[12px]">
+                  {sentimentError}
+                </div>
+              )}
+
+              {/* Sentiment Summary Results */}
+              {!isSentimentLoading && sentimentSummary && (
+                <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  {/* Hero Sentiment Score & Vibe Card */}
+                  <div className="p-4 rounded-2xl bg-surface-container-low border border-outline-variant/40 flex flex-col gap-3.5 shadow-xs">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        {/* Sentiment Score Badge Circle */}
+                        <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-success-emerald/20 to-[#b00055]/20 border border-success-emerald/40 flex flex-col items-center justify-center text-center shrink-0">
+                          <span className="font-card-title text-[20px] font-black text-on-surface leading-none">
+                            {sentimentSummary.sentimentScore}
+                          </span>
+                          <span className="text-[9px] font-bold text-success-emerald uppercase">/ 100</span>
+                        </div>
+
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="px-2.5 py-0.5 rounded-full bg-success-emerald/15 text-success-emerald text-[11px] font-extrabold border border-success-emerald/30">
+                              {sentimentSummary.overallSentiment}
+                            </span>
+                            <span className="text-[11px] text-on-surface-variant font-medium">
+                              Analyzed {sentimentSummary.analyzedReviewCount || 35}+ verified reviews
+                            </span>
+                          </div>
+                          <h3 className="font-card-title text-[15px] font-bold text-on-surface mt-1">
+                            {sentimentSummary.salonName}
+                          </h3>
+                        </div>
+                      </div>
+
+                      {/* Vibe Badge */}
+                      <span className="px-3 py-1 bg-surface-container-highest text-[#b00055] rounded-full text-[11px] font-bold border border-[#b00055]/20 shrink-0 flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[13px]">verified</span>
+                        {sentimentSummary.vibeBadge}
+                      </span>
+                    </div>
+
+                    {/* Sentiment Distribution Bar */}
+                    <div className="flex flex-col gap-1.5 pt-2 border-t border-outline-variant/20">
+                      <div className="flex items-center justify-between text-[11px] font-semibold text-on-surface">
+                        <span className="text-success-emerald flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full bg-success-emerald inline-block" />
+                          Positive: {sentimentSummary.positivePercentage}%
+                        </span>
+                        <span className="text-warning-amber flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full bg-warning-amber inline-block" />
+                          Neutral: {sentimentSummary.neutralPercentage}%
+                        </span>
+                        <span className="text-on-surface-variant flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full bg-rose-500 inline-block" />
+                          Constructive: {sentimentSummary.negativePercentage}%
+                        </span>
+                      </div>
+
+                      <div className="h-2.5 w-full bg-surface-container-highest rounded-full overflow-hidden flex">
+                        <div
+                          className="h-full bg-success-emerald transition-all duration-500"
+                          style={{ width: `${sentimentSummary.positivePercentage}%` }}
+                          title={`Positive: ${sentimentSummary.positivePercentage}%`}
+                        />
+                        <div
+                          className="h-full bg-warning-amber transition-all duration-500"
+                          style={{ width: `${sentimentSummary.neutralPercentage}%` }}
+                          title={`Neutral: ${sentimentSummary.neutralPercentage}%`}
+                        />
+                        <div
+                          className="h-full bg-rose-400 transition-all duration-500"
+                          style={{ width: `${sentimentSummary.negativePercentage}%` }}
+                          title={`Constructive: ${sentimentSummary.negativePercentage}%`}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Executive AI Sentiment Summary */}
+                  <div className="p-4 rounded-2xl bg-gradient-to-r from-primary/5 via-[#b00055]/10 to-surface-container-low border border-[#b00055]/20 flex flex-col gap-1.5">
+                    <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-[#b00055]">
+                      <span className="material-symbols-outlined text-[15px]">psychology</span>
+                      <span>Executive Client Consensus</span>
+                    </div>
+                    <p className="text-[13px] text-on-surface leading-relaxed font-medium">
+                      "{sentimentSummary.executiveSummary}"
+                    </p>
+                  </div>
+
+                  {/* TOP POSITIVE THEMES (PROS) */}
+                  <div className="flex flex-col gap-2.5">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-card-title text-[14px] font-bold text-on-surface flex items-center gap-1.5">
+                        <span className="material-symbols-outlined text-[18px] text-success-emerald">thumb_up</span>
+                        <span>Top Positive Themes & Client Praises</span>
+                      </h4>
+                      <span className="text-[10px] text-success-emerald font-bold bg-success-emerald/10 px-2 py-0.5 rounded-full">
+                        {sentimentSummary.topPositiveThemes.length} Highlights
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {sentimentSummary.topPositiveThemes.map((theme, idx) => (
+                        <div
+                          key={idx}
+                          className="p-3 rounded-xl bg-surface-container-lowest border border-success-emerald/30 flex flex-col gap-2 hover:border-success-emerald transition-all shadow-xs"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="text-[12px] font-bold text-on-surface leading-snug">
+                              {theme.theme}
+                            </span>
+                            <span className="text-[10px] bg-success-emerald/15 text-success-emerald font-extrabold px-1.5 py-0.2 rounded shrink-0">
+                              {theme.percentage}% Mention
+                            </span>
+                          </div>
+
+                          <span className="text-[10px] text-on-surface-variant font-semibold uppercase tracking-wider">
+                            🏷️ {theme.tag}
+                          </span>
+
+                          <p className="text-[11px] text-on-surface-variant italic bg-surface-container-low p-2 rounded-lg border border-outline-variant/20">
+                            "{theme.sampleQuote}"
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* TOP NEGATIVE / CONSTRUCTIVE THEMES (AREAS TO NOTE) */}
+                  <div className="flex flex-col gap-2.5">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-card-title text-[14px] font-bold text-on-surface flex items-center gap-1.5">
+                        <span className="material-symbols-outlined text-[18px] text-rose-500">info</span>
+                        <span>Constructive Feedback & Client Pro-Tips</span>
+                      </h4>
+                      <span className="text-[10px] text-rose-500 font-bold bg-rose-500/10 px-2 py-0.5 rounded-full">
+                        AI Guidance
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col gap-2.5">
+                      {sentimentSummary.topNegativeThemes.map((theme, idx) => (
+                        <div
+                          key={idx}
+                          className="p-3.5 rounded-xl bg-surface-container-lowest border border-rose-500/25 flex flex-col gap-2 shadow-xs"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-rose-500" />
+                              <span className="text-[12px] font-bold text-on-surface">{theme.theme}</span>
+                            </div>
+                            <span className="text-[10px] bg-rose-500/15 text-rose-600 font-bold px-1.5 py-0.2 rounded">
+                              {theme.percentage}% noted
+                            </span>
+                          </div>
+
+                          <p className="text-[11px] text-on-surface-variant italic">
+                            "{theme.sampleQuote}"
+                          </p>
+
+                          {theme.recommendation && (
+                            <div className="p-2 rounded-lg bg-warning-amber/10 border border-warning-amber/30 text-warning-amber text-[11px] font-medium flex items-center gap-1.5 mt-0.5">
+                              <span className="material-symbols-outlined text-[14px] shrink-0">tips_and_updates</span>
+                              <span><strong>Pro-Tip:</strong> {theme.recommendation}</span>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Standout Stylists & Best For Services */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {sentimentSummary.standoutStylists && sentimentSummary.standoutStylists.length > 0 && (
+                      <div className="p-3.5 rounded-xl bg-surface-container-low border border-outline-variant/30 flex flex-col gap-1.5">
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-primary flex items-center gap-1">
+                          <span className="material-symbols-outlined text-[14px]">star</span>
+                          Standout Stylists Praised
+                        </span>
+                        <div className="flex flex-wrap gap-1.5 mt-1">
+                          {sentimentSummary.standoutStylists.map((st, i) => (
+                            <span
+                              key={i}
+                              className="px-2.5 py-1 bg-surface-container-highest text-on-surface rounded-lg text-[11px] font-semibold border border-outline-variant/40"
+                            >
+                              ⭐ {st}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {sentimentSummary.bestForServices && sentimentSummary.bestForServices.length > 0 && (
+                      <div className="p-3.5 rounded-xl bg-surface-container-low border border-outline-variant/30 flex flex-col gap-1.5">
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-[#b00055] flex items-center gap-1">
+                          <span className="material-symbols-outlined text-[14px]">loyalty</span>
+                          Highest Rated Treatments
+                        </span>
+                        <div className="flex flex-wrap gap-1.5 mt-1">
+                          {sentimentSummary.bestForServices.map((srv, i) => (
+                            <span
+                              key={i}
+                              className="px-2.5 py-1 bg-surface-container-highest text-on-surface rounded-lg text-[11px] font-semibold border border-outline-variant/40"
+                            >
+                              ✨ {srv}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (currentSentimentSalon && onSelectSalon) {
+                          onClose();
+                          onSelectSalon(currentSentimentSalon);
+                        }
+                      }}
+                      className="flex-1 py-3 px-4 bg-primary text-white font-bold rounded-xl shadow-md hover:bg-[#b00055] transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">calendar_month</span>
+                      <span>Book at {currentSentimentSalon?.name}</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* TAB 3: CHAT ASK AI ADVISOR                                                */}
+          {/* ========================================================================= */}
+          {activeMode === 'chat' && (
             <div className="flex flex-col gap-4">
               {/* Input Area */}
               <div className="relative">

@@ -206,6 +206,8 @@ export default function App() {
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
   const [isSalonDetailModalOpen, setIsSalonDetailModalOpen] = useState(false);
   const [isAIAdvisorModalOpen, setIsAIAdvisorModalOpen] = useState(false);
+  const [aiAdvisorInitialTab, setAiAdvisorInitialTab] = useState<'quiz' | 'chat' | 'sentiment'>('quiz');
+  const [aiAdvisorInitialSalonId, setAiAdvisorInitialSalonId] = useState<string | undefined>(undefined);
   const [isQuickNearestModalOpen, setIsQuickNearestModalOpen] = useState(false);
   const [isNotificationsModalOpen, setIsNotificationsModalOpen] = useState(false);
 
@@ -237,6 +239,15 @@ export default function App() {
   }, [user]);
 
   // Handlers
+  const handleOpenAIAdvisor = (
+    tab: 'quiz' | 'chat' | 'sentiment' = 'quiz',
+    salonId?: string
+  ) => {
+    setAiAdvisorInitialTab(tab);
+    setAiAdvisorInitialSalonId(salonId);
+    setIsAIAdvisorModalOpen(true);
+  };
+
   const handleOpenSalonDetails = (salon: Salon) => {
     setSelectedSalonForDetail(salon);
     setIsSalonDetailModalOpen(true);
@@ -340,6 +351,23 @@ export default function App() {
         return salon;
       })
     );
+  };
+
+  const handleLogout = () => {
+    setUser(INITIAL_USER);
+    setActiveTab('home');
+  };
+
+  const handleDeleteAccount = () => {
+    localStorage.removeItem(STORAGE_KEYS.appointments);
+    localStorage.removeItem(STORAGE_KEYS.savedSalons);
+    localStorage.removeItem(STORAGE_KEYS.savedServices);
+    localStorage.removeItem(STORAGE_KEYS.user);
+    setUser(INITIAL_USER);
+    setAppointments([]);
+    setSavedSalonIds([]);
+    setSavedServices([]);
+    setActiveTab('home');
   };
 
   return (
@@ -496,6 +524,8 @@ export default function App() {
                 user={user}
                 onUpdateUser={setUser}
                 onOpenAIAdvisor={() => setIsAIAdvisorModalOpen(true)}
+                onLogout={handleLogout}
+                onDeleteAccount={handleDeleteAccount}
               />
             )}
           </main>
@@ -611,6 +641,9 @@ export default function App() {
             : []
         }
         onToggleSaveService={handleToggleSaveService}
+        onOpenAIAdvisorSentiment={(salon) => {
+          handleOpenAIAdvisor('sentiment', salon.id);
+        }}
         onBookService={(salon, srv, st) => {
           setIsSalonDetailModalOpen(false);
           handleOpenBooking(salon, srv, st);
@@ -624,6 +657,8 @@ export default function App() {
         onUpdateUser={setUser}
         currentLocation={currentLocation}
         salons={salons}
+        initialTab={aiAdvisorInitialTab}
+        initialSalonId={aiAdvisorInitialSalonId}
         onSelectSalon={(s) => {
           setIsAIAdvisorModalOpen(false);
           handleOpenSalonDetails(s);

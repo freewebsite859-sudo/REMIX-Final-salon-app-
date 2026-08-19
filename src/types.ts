@@ -128,6 +128,15 @@ export interface SavedServiceRef {
   serviceId: string;
 }
 
+export interface ReferredFriend {
+  id: string;
+  name: string;
+  avatar?: string;
+  date: string;
+  reward: string;
+  status: 'completed' | 'pending';
+}
+
 export interface UserProfile {
   name: string;
   email: string;
@@ -136,6 +145,8 @@ export interface UserProfile {
   locationArea: string;
   city: string;
   loyaltyPoints: number;
+  dateOfBirth?: string;
+  gender?: 'men' | 'women';
   preferredServices: string[];
   genderPreference: 'all' | 'women' | 'men' | 'unisex';
   hairProfile?: string;
@@ -146,6 +157,19 @@ export interface UserProfile {
   skinConcern?: string;
   favoriteStylist?: string;
   defaultLocality?: string;
+  // Referral & Rewards
+  referralCode?: string;
+  referralCount?: number;
+  referralEarnings?: number;
+  claimedDiscounts?: number;
+  referredFriends?: ReferredFriend[];
+  // App Settings & Preferences
+  notificationsEnabled?: boolean;
+  appointmentReminders?: boolean;
+  promotionalOffers?: boolean;
+  whatsappAlerts?: boolean;
+  aiAdvisorAlerts?: boolean;
+  appTheme?: 'light' | 'dark' | 'system';
 }
 
 export interface RecommendedServiceMatch {
@@ -162,6 +186,40 @@ export interface RecommendedServiceMatch {
   matchScore: number;
   matchReason: string;
   serviceDescription: string;
+}
+
+export interface PositiveTheme {
+  theme: string;
+  percentage: number;
+  mentionsCount: number;
+  sampleQuote: string;
+  tag: string;
+}
+
+export interface NegativeTheme {
+  theme: string;
+  percentage: number;
+  mentionsCount: number;
+  sampleQuote: string;
+  recommendation: string;
+  tag: string;
+}
+
+export interface SalonSentimentSummary {
+  salonId: string;
+  salonName: string;
+  overallSentiment: 'Overwhelmingly Positive' | 'Very Positive' | 'Mostly Positive' | 'Mixed';
+  sentimentScore: number; // 0-100
+  positivePercentage: number;
+  neutralPercentage: number;
+  negativePercentage: number;
+  executiveSummary: string;
+  topPositiveThemes: PositiveTheme[];
+  topNegativeThemes: NegativeTheme[];
+  standoutStylists: string[];
+  bestForServices: string[];
+  vibeBadge: string;
+  analyzedReviewCount?: number;
 }
 
 export interface AIStyleQuizResult {
