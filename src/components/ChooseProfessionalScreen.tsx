@@ -422,6 +422,7 @@ export const ChooseProfessionalScreen: React.FC<ChooseProfessionalScreenProps> =
               alt="Nexora"
               className="h-8 w-auto object-contain"
               src="https://lh3.googleusercontent.com/aida/AP1WRLu5Mt-tx8SQgwFpWljkKN-YFIH_PwQb9_lO5UAIOe-1ZpwTm9eLs8sQp0VEZPuO_Qbm0lNYVsW-iD7SUSY3XMu_y-rzpTv1huqGsdzErLimk128KQmb2u9D-4h_LrcsG7hhRLQ0q78GHSLaTo4-bBlqXPUDeAoRfc_-CrI_stRb7dYlMugBd1PrzDELW-92v82qaV1YspJ-gl1b0QP4hFqx8TsR_-wTgGo1ao_h0L_eWvmlHnL3XHzGdEc8_1f2xYa0N8Oa6rY5yQ"
+              onError={(e) => { e.currentTarget.style.display = "none"; }}
             />
             <div className="flex flex-col">
               <span className="text-[10px] uppercase font-bold text-nexora-pink tracking-wider leading-none">

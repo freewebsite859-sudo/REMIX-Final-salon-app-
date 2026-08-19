@@ -1,3 +1,5 @@
+import skinGlowCareHero from "../assets/images/skin_glow_care_hero_1787077833623.jpg";
+import nailBridalArtHero from "../assets/images/nail_bridal_art_hero_1787077848463.jpg";
 import React, { useState, useEffect, useRef } from 'react';
 import { Salon, Appointment, SalonService, Stylist, UserProfile } from '../types';
 import { AppointmentCountdownBanner, parseAppointmentDateTime } from './AppointmentCountdownBanner';
@@ -88,7 +90,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
     },
     {
       id: 4,
-      image: '/src/assets/images/skin_glow_care_hero_1787077833623.jpg',
+      image: skinGlowCareHero,
       badge: 'Glow Care',
       badgeBg: 'bg-nexora-pink/90',
       title: 'Skin & Glow Care',
@@ -97,7 +99,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
     },
     {
       id: 5,
-      image: '/src/assets/images/nail_bridal_art_hero_1787077848463.jpg',
+      image: nailBridalArtHero,
       badge: 'Bridal Art',
       badgeBg: 'bg-purple-600/90',
       title: 'Nail & Bridal Art',
