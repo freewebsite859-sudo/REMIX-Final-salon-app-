@@ -1,6 +1,6 @@
 {
   "name": "Remix Nexora SalonOS",
-  "description": "Smart salon discovery, beauty treatment booking, and real-time Google Maps grounded salon finder.",
+  "description": "Smart salon discovery, beauty treatment booking, and modern luxury authentication & workspace management platform for Nexora Luxury Management.",
   "requestFramePermissions": [
     "geolocation"
   ],

@@ -2,20 +2,24 @@ import React from 'react';
 import { UserProfile } from '../types';
 
 interface HeaderProps {
-  user: UserProfile;
+  user: UserProfile | null;
+  isAuthenticated?: boolean;
   currentLocation: string;
   onOpenLocation: () => void;
   onOpenProfile: () => void;
   onOpenNotifications: () => void;
+  onOpenAuth?: () => void;
   hasUnreadNotifications?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   user,
+  isAuthenticated = false,
   currentLocation,
   onOpenLocation,
   onOpenProfile,
   onOpenNotifications,
+  onOpenAuth,
   hasUnreadNotifications = true,
 }) => {
   return (
@@ -53,6 +57,21 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Action Controls */}
         <div className="flex items-center gap-2">
+          {/* 1. Show Sign In / Register Button ONLY when Logged Out (isAuthenticated === false) */}
+          {!isAuthenticated && onOpenAuth && (
+            <button
+              type="button"
+              id="header-auth-switch-btn"
+              onClick={onOpenAuth}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#b90064] hover:bg-[#a00056] text-white text-[12px] sm:text-[13px] font-bold transition-all shadow-xs hover:shadow-[0_6px_18px_rgba(185,0,100,0.25)] hover:-translate-y-0.5 cursor-pointer"
+              title="Sign in to your Nexora account"
+            >
+              <span className="material-symbols-outlined text-[16px]">login</span>
+              <span>Sign In / Register</span>
+            </button>
+          )}
+
+          {/* 2. Notifications Button */}
           <button 
             id="header-notifications-btn"
             onClick={onOpenNotifications}
@@ -65,18 +84,21 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </button>
 
-          <button 
-            id="header-user-profile-btn"
-            onClick={onOpenProfile}
-            aria-label="User Profile"
-            className="w-9 h-9 rounded-full bg-primary flex items-center justify-center shadow-sm overflow-hidden ring-2 ring-outline-variant/40 hover:ring-nexora-pink transition-all"
-          >
-            {user.avatar ? (
-              <img src={user.avatar} alt={user.name} className="w-full h-full object-cover" />
-            ) : (
-              <span className="material-symbols-outlined text-on-primary text-[18px]">person</span>
-            )}
-          </button>
+          {/* 3. Show User Profile Avatar ONLY when Logged In (isAuthenticated === true) */}
+          {isAuthenticated && user && (
+            <button
+              id="header-user-profile-btn"
+              onClick={onOpenProfile}
+              aria-label="User Profile"
+              className="w-9 h-9 rounded-full bg-primary flex items-center justify-center shadow-sm overflow-hidden ring-2 ring-outline-variant/40 hover:ring-nexora-pink transition-all cursor-pointer"
+            >
+              {user.avatar ? (
+                <img src={user.avatar} alt={user.name} className="w-full h-full object-cover" />
+              ) : (
+                <span className="material-symbols-outlined text-on-primary text-[18px]">person</span>
+              )}
+            </button>
+          )}
         </div>
       </div>
     </header>
