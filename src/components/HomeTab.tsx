@@ -1,6 +1,159 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Salon, Appointment, SalonService, Stylist, UserProfile } from '../types';
 import { AppointmentCountdownBanner, parseAppointmentDateTime } from './AppointmentCountdownBanner';
+import { OfferDetailModal, OfferPackageDetail } from './OfferDetailModal';
+import nexoraPremiumOfferImg from '../assets/images/nexora_premium_offer_1787146222315.jpg';
+import hydraFacialOfferImg from '../assets/images/hydra_facial_offer_1787146241160.jpg';
+import bridalStylingOfferImg from '../assets/images/bridal_styling_offer_1787146272580.jpg';
+
+const EXCLUSIVE_OFFERS: Record<'nexora-premium' | 'hydra-facial' | 'bridal-pass', OfferPackageDetail> = {
+  'nexora-premium': {
+    id: 'nexora-premium',
+    badge: 'PROMO • 20% OFF',
+    badgeColor: 'pink',
+    title: 'Nexora Premium Hair & Grooming Suite',
+    subtitle: 'Luxury hair revitalization & precision cut package',
+    image: nexoraPremiumOfferImg,
+    originalPrice: 2499,
+    offerPrice: 1999,
+    discountPercentage: 20,
+    duration: '60 - 75 Mins',
+    rating: 4.9,
+    reviewCount: 342,
+    overview: 'An all-inclusive luxury styling and hair wellness experience curated by Nexora Senior Stylists. Designed to restore hair vitality, precision-craft your signature look, and soothe scalp tension.',
+    includedServices: [
+      {
+        title: 'Precision Director Haircut & Texture Mapping',
+        description: 'Bespoke consultation, facial frame analysis, and master scissor cut by senior stylists.',
+        icon: 'content_cut',
+      },
+      {
+        title: 'Moroccan Argan Deep Conditioning & Scalp Mask',
+        description: 'Intense moisture infusion with argan-infused steam hydration therapy.',
+        icon: 'spa',
+      },
+      {
+        title: 'Acupressure Neck, Shoulder & Scalp Therapy',
+        description: '15-minute tension-melting massage using organic essential oils.',
+        icon: 'self_improvement',
+      },
+      {
+        title: 'Custom Blowout & Thermal Gloss Finish',
+        description: 'Professional heat-shield styling with lightweight shine lacquer seal.',
+        icon: 'air',
+      },
+    ],
+    perks: [
+      'Complimentary Scalp Diagnostic & Product Advisory',
+      'Artisanal Herbal Tea or Espresso Refreshment',
+      'Free rescheduling up to 2 hours before appointment',
+    ],
+    terms: [
+      'Valid at all certified Nexora Partner Salons across Jaipur.',
+      'Discount applies automatically upon confirmation at checkout.',
+      'Can be booked for yourself or gifted to a friend.',
+    ],
+  },
+  'hydra-facial': {
+    id: 'hydra-facial',
+    badge: 'FEATURED • CLINICAL GLOW',
+    badgeColor: 'purple',
+    title: 'Hydra Facial Deluxe 7-Step Glow Package',
+    subtitle: 'Deep cellular vacuum vortex & antioxidant infusion',
+    image: hydraFacialOfferImg,
+    originalPrice: 3999,
+    offerPrice: 2799,
+    discountPercentage: 30,
+    duration: '75 Mins',
+    rating: 4.95,
+    reviewCount: 489,
+    overview: 'Medical-grade clinical hydration facial using advanced vacuum vortex suction and antioxidant serum baths. Instantly eliminates blackheads, refines pores, and unlocks luminous glass-skin glow.',
+    includedServices: [
+      {
+        title: 'Ultrasonic Vortex Peeling & Lymphatic Cleanse',
+        description: 'Gentle exfoliation removing dead dermal layers and environmental pollutants.',
+        icon: 'cleaning_services',
+      },
+      {
+        title: 'Painless Salicylic Vortex Extraction',
+        description: 'Automated spiral vacuum technology clearing deep sebum and congested pores.',
+        icon: 'bubble_chart',
+      },
+      {
+        title: 'Hyaluronic & Oligopeptide Micro-Infusion',
+        description: 'Pressurized multi-molecular hydration for intensive skin plumping.',
+        icon: 'water_drop',
+      },
+      {
+        title: 'Cryo Cold-Hammer & Pore Tightening Lock',
+        description: 'Sub-zero thermal probe closing pores and locking active serums in dermal layers.',
+        icon: 'ac_unit',
+      },
+      {
+        title: 'LED Photon Light Therapy & Collagen Shield',
+        description: 'Dual red/blue light stimulation for cellular regeneration and redness reduction.',
+        icon: 'flare',
+      },
+    ],
+    perks: [
+      'Instant Glass-Skin Radiance with Zero Downtime',
+      'Complimentary Skin Hydration Score Diagnostic',
+      'Take-home post-facial soothing ampoule included',
+    ],
+    terms: [
+      'Safe for all skin types including sensitive and acne-prone skin.',
+      'Administered exclusively by certified dermal aestheticians.',
+      'Special introductory price for limited seasonal slots.',
+    ],
+  },
+  'bridal-pass': {
+    id: 'bridal-pass',
+    badge: 'LIMITED • BRIDAL PASS',
+    badgeColor: 'amber',
+    title: 'Bridal & Royal Event Couture Pass',
+    subtitle: 'Comprehensive VIP makeover suite with master artists',
+    image: bridalStylingOfferImg,
+    originalPrice: 12500,
+    offerPrice: 8999,
+    discountPercentage: 28,
+    duration: '180 Mins • Dedicated Suite',
+    rating: 5.0,
+    reviewCount: 215,
+    overview: 'VIP bridal and wedding makeover session with master makeup artists using premium international cosmetic brands. Includes look consultation, pre-prep glow, jewelry setting, and HD airbrush application.',
+    includedServices: [
+      {
+        title: 'HD Waterproof Bridal Makeover & Airbrush Base',
+        description: 'Transfer-resistant, long-wear luxury makeup tailored to your wedding wardrobe.',
+        icon: 'brush',
+      },
+      {
+        title: 'Royal Hair Sculpting & Fresh Floral Setting',
+        description: 'Intricate bridal updos or soft romantic waves with secure dupatta anchoring.',
+        icon: 'auto_awesome',
+      },
+      {
+        title: '24K Gold Collagen Sheet Prep & Eye De-Puff',
+        description: 'Pre-makeup intensive radiance infusion ensuring crease-free application.',
+        icon: 'diamond',
+      },
+      {
+        title: 'Dupatta Draping & Royal Jewelry Placement',
+        description: 'Professional stylist assistance for lehenga, saree draping, and necklace framing.',
+        icon: 'checkroom',
+      },
+    ],
+    perks: [
+      'Dedicated Private Bridal Suite with Refreshments',
+      'Complimentary Look Consultation & Palette Matching',
+      'Includes emergency touch-up kit for wedding day',
+    ],
+    terms: [
+      'Advance reservation of minimum 48 hours required.',
+      'Master stylists assigned upon booking confirmation.',
+      'Special rate valid for the upcoming festive & wedding season.',
+    ],
+  },
+};
 
 interface HomeTabProps {
   user: UserProfile;
@@ -38,6 +191,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
   const [searchInput, setSearchInput] = useState('');
   const [activeSlide, setActiveSlide] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
+  const [selectedOfferModal, setSelectedOfferModal] = useState<OfferPackageDetail | null>(null);
   const [isBannerDismissed, setIsBannerDismissed] = useState<boolean>(() => {
     try {
       return localStorage.getItem('hideBookNearestBanner') === 'true';
@@ -567,21 +721,30 @@ export const HomeTab: React.FC<HomeTabProps> = ({
             <div className="rounded-xl p-2.5 sm:p-4 bg-[#780032] border border-nexora-pink/20 shadow-md transition-all duration-300 hover:scale-105 hover:shadow-xl flex flex-col justify-between h-[180px] sm:h-[210px] relative overflow-hidden group">
               {/* Cinematic Commercial Photography Background */}
               <img 
-                src="/images/offers/nexora-premium.jpg" 
-                alt="Nexora Premium Hair Salon & Styling"
+                src={nexoraPremiumOfferImg} 
+                alt="Nexora Premium Luxury Hair Salon & Styling"
                 className="absolute inset-0 w-full h-full object-cover pointer-events-none group-hover:scale-105 transition-transform duration-500"
                 referrerPolicy="no-referrer"
               />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/40 to-black/30 pointer-events-none" />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/40 to-black/25 pointer-events-none" />
               
               <div className="relative z-10">
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="text-[8px] sm:text-[10px] uppercase font-bold tracking-wider bg-white/20 text-white px-1.5 py-0.5 rounded-full backdrop-blur-sm">
                     PROMO
                   </span>
-                  <span className="material-symbols-outlined text-white text-[16px] sm:text-[20px] transition-transform duration-300 group-hover:scale-110">
-                    local_offer
-                  </span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedOfferModal(EXCLUSIVE_OFFERS['nexora-premium']);
+                    }}
+                    title="View Package Details"
+                    aria-label="View Nexora Premium Package Details"
+                    className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-black/40 hover:bg-black/70 text-white border border-white/25 flex items-center justify-center backdrop-blur-md transition-all duration-200 active:scale-90 hover:scale-110 cursor-pointer shadow-xs"
+                  >
+                    <span className="material-symbols-outlined text-[15px] sm:text-[17px]">info</span>
+                  </button>
                 </div>
                 <h3 className="font-card-title text-xs sm:text-base font-bold text-white leading-tight mb-1 line-clamp-2 group-hover:text-amber-200 transition-colors">
                   20% Off Nexora Premium
@@ -603,13 +766,13 @@ export const HomeTab: React.FC<HomeTabProps> = ({
             <div className="rounded-xl p-2.5 sm:p-4 bg-[#0a0a0a] border-2 border-nexora-pink shadow-lg text-white transition-all duration-300 hover:scale-105 hover:shadow-2xl flex flex-col justify-between h-[180px] sm:h-[210px] relative overflow-hidden group">
               {/* Cinematic Commercial Photography Background */}
               <img 
-                src="/images/offers/hydra-facial-deluxe.jpg" 
-                alt="Hydra Facial Deluxe Clinical Spa Treatment"
+                src={hydraFacialOfferImg} 
+                alt="Hydra Facial Deluxe Clinical Spa & Skincare Treatment"
                 className="absolute inset-0 w-full h-full object-cover pointer-events-none group-hover:scale-105 transition-transform duration-500"
                 referrerPolicy="no-referrer"
               />
               {/* Subtle dark gradient overlay for text readability & glow accent */}
-              <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-black/30 pointer-events-none" />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-black/25 pointer-events-none" />
               <div className="absolute -top-12 -left-12 w-28 h-28 bg-nexora-pink/30 rounded-full blur-3xl pointer-events-none" />
               
               <div className="relative z-10">
@@ -617,9 +780,18 @@ export const HomeTab: React.FC<HomeTabProps> = ({
                   <span className="text-[8px] sm:text-[10px] uppercase font-bold tracking-wider bg-nexora-pink text-white px-1.5 py-0.5 rounded-full shadow-md shadow-black/30">
                     FEATURED
                   </span>
-                  <span className="material-symbols-outlined text-nexora-pink text-[16px] sm:text-[20px] transition-transform duration-300 group-hover:scale-110">
-                    spa
-                  </span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedOfferModal(EXCLUSIVE_OFFERS['hydra-facial']);
+                    }}
+                    title="View Package Details"
+                    aria-label="View Hydra Facial Package Details"
+                    className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-black/40 hover:bg-black/70 text-white border border-white/25 flex items-center justify-center backdrop-blur-md transition-all duration-200 active:scale-90 hover:scale-110 cursor-pointer shadow-xs"
+                  >
+                    <span className="material-symbols-outlined text-[15px] sm:text-[17px]">info</span>
+                  </button>
                 </div>
                 <h3 className="font-card-title text-xs sm:text-base font-bold text-white leading-tight mb-1 line-clamp-1">
                   Hydra Facial Deluxe
@@ -641,21 +813,30 @@ export const HomeTab: React.FC<HomeTabProps> = ({
             <div className="rounded-xl p-2.5 sm:p-4 bg-[#111827] border border-amber-400/20 shadow-md transition-all duration-300 hover:scale-105 hover:shadow-xl flex flex-col justify-between h-[180px] sm:h-[210px] relative overflow-hidden group">
               {/* Cinematic Commercial Photography Background */}
               <img 
-                src="/images/offers/bridal-styling-pass.jpg" 
-                alt="Luxury Indian Bridal Beauty & Styling Session"
+                src={bridalStylingOfferImg} 
+                alt="Luxury Indian Bridal Makeup & Styling Session"
                 className="absolute inset-0 w-full h-full object-cover pointer-events-none group-hover:scale-105 transition-transform duration-500"
                 referrerPolicy="no-referrer"
               />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/40 to-black/30 pointer-events-none" />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/40 to-black/25 pointer-events-none" />
               
               <div className="relative z-10">
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="text-[8px] sm:text-[10px] uppercase font-bold tracking-wider bg-amber-400/20 text-amber-300 border border-amber-400/30 px-1.5 py-0.5 rounded-full backdrop-blur-sm">
                     LIMITED
                   </span>
-                  <span className="material-symbols-outlined text-amber-300 text-[16px] sm:text-[20px] transition-transform duration-300 group-hover:scale-110">
-                    auto_awesome
-                  </span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedOfferModal(EXCLUSIVE_OFFERS['bridal-pass']);
+                    }}
+                    title="View Package Details"
+                    aria-label="View Bridal Pass Package Details"
+                    className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-black/40 hover:bg-black/70 text-white border border-white/25 flex items-center justify-center backdrop-blur-md transition-all duration-200 active:scale-90 hover:scale-110 cursor-pointer shadow-xs"
+                  >
+                    <span className="material-symbols-outlined text-[15px] sm:text-[17px]">info</span>
+                  </button>
                 </div>
                 <h3 className="font-card-title text-xs sm:text-base font-bold text-white leading-tight mb-1 line-clamp-2 group-hover:text-amber-200 transition-colors">
                   Bridal & Styling Pass
@@ -918,6 +1099,22 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           </div>
         </div>
       )}
+      {/* Compact Offer Details Preview Modal */}
+      <OfferDetailModal
+        isOpen={!!selectedOfferModal}
+        onClose={() => setSelectedOfferModal(null)}
+        offer={selectedOfferModal}
+        salons={salons}
+        onBookOffer={(offer) => {
+          if (offer.id === 'bridal-pass') {
+            onSelectCategory('Bridal Makeup');
+          } else if (offer.id === 'hydra-facial') {
+            onBookSalon(salons[1] || salons[0]);
+          } else {
+            onBookSalon(salons[0]);
+          }
+        }}
+      />
     </div>
   );
 };

@@ -545,61 +545,6 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* PROFILE COMPLETENESS INDICATOR (TOP PROGRESS BAR)                         */}
-      {/* ========================================================================= */}
-      <div
-        id="profile-completeness-card"
-        className="bg-gradient-to-r from-surface-container-low via-surface-container to-surface-container-low border border-outline-variant/50 rounded-2xl p-3.5 sm:p-4 mb-4 shadow-xs"
-      >
-        <div className="flex items-center justify-between gap-2 mb-2">
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
-              <span className="material-symbols-outlined text-[18px]">verified_user</span>
-            </div>
-            <div>
-              <h4 className="font-card-title text-[13px] sm:text-[14px] font-bold text-on-surface flex items-center gap-1.5">
-                <span>Profile Completeness</span>
-                <span className="text-[11px] font-black text-primary bg-primary/10 px-2 py-0.2 rounded-full">
-                  {completeness.percentage}%
-                </span>
-              </h4>
-            </div>
-          </div>
-
-          <span className="text-[11px] font-semibold text-on-surface-variant hidden sm:inline-block">
-            {completeness.completedCount} of {completeness.totalCount} Essentials Completed
-          </span>
-        </div>
-
-        {/* Progress Track */}
-        <div className="w-full bg-surface-container-highest rounded-full h-2.5 p-0.5 border border-outline-variant/30 overflow-hidden mb-2">
-          <div
-            className="bg-gradient-to-r from-amber-500 via-[#b00055] to-primary h-full rounded-full transition-all duration-500"
-            style={{ width: `${completeness.percentage}%` }}
-          />
-        </div>
-
-        {/* Breakdown Chips */}
-        <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap text-[10px] sm:text-[11px]">
-          {completeness.checks.map((c) => (
-            <span
-              key={c.id}
-              className={`px-2 py-0.5 rounded-md flex items-center gap-1 font-medium ${
-                c.complete
-                  ? 'bg-success-emerald/10 text-success-emerald border border-success-emerald/30'
-                  : 'bg-surface-container-highest text-on-surface-variant border border-outline-variant/30'
-              }`}
-            >
-              <span className="material-symbols-outlined text-[12px]">
-                {c.complete ? 'check' : 'radio_button_unchecked'}
-              </span>
-              <span>{c.label}</span>
-            </span>
-          ))}
-        </div>
-      </div>
-
-      {/* ========================================================================= */}
       {/* HEADER PROFILE HERO CARD                                                  */}
       {/* ========================================================================= */}
       <div

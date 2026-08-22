@@ -17,6 +17,8 @@ import { NotificationsModal } from './components/NotificationsModal';
 import { ServiceCategoryScreen } from './components/ServiceCategoryScreen';
 import { ChooseProfessionalScreen } from './components/ChooseProfessionalScreen';
 import { BookingSummaryModal } from './components/BookingSummaryModal';
+import { AuthPage } from './components/auth/AuthPage';
+import { supabase, isSupabaseConfigured } from './lib/supabase';
 
 const STORAGE_KEYS = {
   appointments: 'nexora-appointments',
@@ -161,6 +163,10 @@ export default function App() {
     // Merge with defaults so fields added in newer versions never come back undefined.
     return stored ? { ...INITIAL_USER, ...stored } : INITIAL_USER;
   });
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    const stored = loadJson(STORAGE_KEYS.user, null as UserProfile | null, sanitizeUserProfile);
+    return Boolean(stored && stored.email);
+  });
   const [currentLocation, setCurrentLocation] = useState<string>('Mansarovar, Jaipur');
   const [salons, setSalons] = useState<Salon[]>(INITIAL_SALONS);
   const [appointments, setAppointments] = useState<Appointment[]>(() =>
@@ -202,6 +208,7 @@ export default function App() {
   } | null>(null);
 
   // Modals state
+  const [showAuthScreen, setShowAuthScreen] = useState(false);
   const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
   const [isSalonDetailModalOpen, setIsSalonDetailModalOpen] = useState(false);
@@ -222,6 +229,48 @@ export default function App() {
   // Active upcoming appointment for reminder banner
   const upcomingAppointment = appointments.find((a) => a.status === 'confirmed') || null;
 
+  // Listen to Supabase Auth state changes & retrieve existing active session
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supabase) return;
+
+    // 1. Initial Session Check
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        const suUser = session.user;
+        setIsAuthenticated(true);
+        setUser((prev) => ({
+          ...prev,
+          email: suUser.email || prev.email,
+          name: suUser.user_metadata?.full_name || prev.name,
+          phone: suUser.user_metadata?.mobile || suUser.phone || prev.phone,
+        }));
+      }
+    });
+
+    // 2. Auth State Change Listener
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (session?.user) {
+        const suUser = session.user;
+        setIsAuthenticated(true);
+        setUser((prev) => ({
+          ...prev,
+          email: suUser.email || prev.email,
+          name: suUser.user_metadata?.full_name || prev.name,
+          phone: suUser.user_metadata?.mobile || suUser.phone || prev.phone,
+        }));
+      } else if (event === 'SIGNED_OUT') {
+        setIsAuthenticated(false);
+        localStorage.removeItem(STORAGE_KEYS.user);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
   useEffect(() => {
     saveJson(STORAGE_KEYS.appointments, appointments);
   }, [appointments]);
@@ -235,8 +284,10 @@ export default function App() {
   }, [savedServices]);
 
   useEffect(() => {
-    saveJson(STORAGE_KEYS.user, user);
-  }, [user]);
+    if (isAuthenticated && user) {
+      saveJson(STORAGE_KEYS.user, user);
+    }
+  }, [user, isAuthenticated]);
 
   // Handlers
   const handleOpenAIAdvisor = (
@@ -353,12 +404,30 @@ export default function App() {
     );
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    if (isSupabaseConfigured && supabase) {
+      try {
+        await supabase.auth.signOut();
+      } catch {
+        // ignore error
+      }
+    }
+    setIsAuthenticated(false);
+    localStorage.removeItem(STORAGE_KEYS.user);
     setUser(INITIAL_USER);
     setActiveTab('home');
+    setShowAuthScreen(true);
   };
 
-  const handleDeleteAccount = () => {
+  const handleDeleteAccount = async () => {
+    if (isSupabaseConfigured && supabase) {
+      try {
+        await supabase.auth.signOut();
+      } catch {
+        // ignore error
+      }
+    }
+    setIsAuthenticated(false);
     localStorage.removeItem(STORAGE_KEYS.appointments);
     localStorage.removeItem(STORAGE_KEYS.savedSalons);
     localStorage.removeItem(STORAGE_KEYS.savedServices);
@@ -368,7 +437,26 @@ export default function App() {
     setSavedSalonIds([]);
     setSavedServices([]);
     setActiveTab('home');
+    setShowAuthScreen(true);
   };
+
+  if (showAuthScreen) {
+    return (
+      <AuthPage
+        onAuthSuccess={(authData) => {
+          setUser((prev) => ({
+            ...prev,
+            name: authData.name || prev.name,
+            email: authData.email || prev.email,
+            phone: authData.phone || prev.phone,
+          }));
+          setIsAuthenticated(true);
+          setShowAuthScreen(false);
+        }}
+        onExploreAsGuest={() => setShowAuthScreen(false)}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-surface-off-white text-on-surface flex flex-col font-body-md selection:bg-nexora-pink/20 selection:text-nexora-pink">
@@ -386,12 +474,20 @@ export default function App() {
           onOpenProfile={() => {
             setChooseProfessionalData(null);
             setSelectedCategoryScreen(null);
-            setActiveTab('profile');
+            if (isAuthenticated) {
+              setActiveTab('profile');
+            } else {
+              setShowAuthScreen(true);
+            }
           }}
           onSelectTab={(tab) => {
             setChooseProfessionalData(null);
             setSelectedCategoryScreen(null);
-            setActiveTab(tab);
+            if (tab === 'profile' && !isAuthenticated) {
+              setShowAuthScreen(true);
+            } else {
+              setActiveTab(tab);
+            }
           }}
           onContinueBooking={(stylist, selectedSlot, updatedServices) => {
             const targetSalon = chooseProfessionalData.salon || salons[0];
@@ -432,11 +528,19 @@ export default function App() {
           onOpenNotifications={() => setIsNotificationsModalOpen(true)}
           onOpenProfile={() => {
             setSelectedCategoryScreen(null);
-            setActiveTab('profile');
+            if (isAuthenticated) {
+              setActiveTab('profile');
+            } else {
+              setShowAuthScreen(true);
+            }
           }}
           onSelectTab={(tab) => {
             setSelectedCategoryScreen(null);
-            setActiveTab(tab);
+            if (tab === 'profile' && !isAuthenticated) {
+              setShowAuthScreen(true);
+            } else {
+              setActiveTab(tab);
+            }
           }}
           onToggleSaveSalon={handleToggleSaveSalon}
           onOpenSalonDetails={handleOpenSalonDetails}
@@ -451,11 +555,19 @@ export default function App() {
         <>
           {/* Fixed Header */}
           <Header
-            user={user}
+            user={isAuthenticated ? user : null}
+            isAuthenticated={isAuthenticated}
             currentLocation={currentLocation}
             onOpenLocation={() => setIsLocationModalOpen(true)}
-            onOpenProfile={() => setActiveTab('profile')}
+            onOpenProfile={() => {
+              if (isAuthenticated) {
+                setActiveTab('profile');
+              } else {
+                setShowAuthScreen(true);
+              }
+            }}
             onOpenNotifications={() => setIsNotificationsModalOpen(true)}
+            onOpenAuth={() => setShowAuthScreen(true)}
           />
 
           {/* Main Content Area */}
@@ -535,7 +647,11 @@ export default function App() {
             activeTab={activeTab}
             onSelectTab={(tab) => {
               setSelectedCategoryScreen(null);
-              setActiveTab(tab);
+              if (tab === 'profile' && !isAuthenticated) {
+                setShowAuthScreen(true);
+              } else {
+                setActiveTab(tab);
+              }
             }}
             activeAppointmentsCount={appointments.filter((a) => a.status === 'confirmed').length}
           />
