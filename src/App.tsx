@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { ActiveTab, Salon, SalonService, Stylist, Appointment, UserProfile, Review, SavedServiceRef } from './types';
 import { INITIAL_SALONS, INITIAL_APPOINTMENTS, INITIAL_USER } from './data/mockSalons';
 import { Header } from './components/Header';
@@ -18,7 +18,11 @@ import { ServiceCategoryScreen } from './components/ServiceCategoryScreen';
 import { ChooseProfessionalScreen } from './components/ChooseProfessionalScreen';
 import { BookingSummaryModal } from './components/BookingSummaryModal';
 import { AuthPage } from './components/auth/AuthPage';
-import { supabase, isSupabaseConfigured } from './lib/supabase';
+import { isSupabaseConfigured } from './lib/supabase';
+import { useAuth } from './providers/AuthProvider';
+import { useLocationSync } from './hooks/useLocationSync';
+import { clearUserLocation, syncUserLocation } from './lib/locationService';
+import { isAuthRoute, redirectToApp, redirectToLogin } from './lib/authRoutes';
 
 const STORAGE_KEYS = {
   appointments: 'nexora-appointments',
@@ -157,6 +161,14 @@ function salonFromAppointment(appointment: Appointment): Salon {
 }
 
 export default function App() {
+  // Nexora universal auth context (single provider, single listener).
+  const {
+    session,
+    userId,
+    isLoading: isAuthLoading,
+    signOut: nexoraSignOut,
+  } = useAuth();
+
   const [activeTab, setActiveTab] = useState<ActiveTab>('home');
   const [user, setUser] = useState<UserProfile>(() => {
     const stored = loadJson(STORAGE_KEYS.user, null as UserProfile | null, sanitizeUserProfile);
@@ -208,7 +220,7 @@ export default function App() {
   } | null>(null);
 
   // Modals state
-  const [showAuthScreen, setShowAuthScreen] = useState(false);
+  const [showAuthScreen, setShowAuthScreen] = useState<boolean>(() => isAuthRoute());
   const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
   const [isSalonDetailModalOpen, setIsSalonDetailModalOpen] = useState(false);
@@ -229,47 +241,89 @@ export default function App() {
   // Active upcoming appointment for reminder banner
   const upcomingAppointment = appointments.find((a) => a.status === 'confirmed') || null;
 
-  // Listen to Supabase Auth state changes & retrieve existing active session
+  // ---------------------------------------------------------------------------
+  // NEXORA UNIVERSAL AUTH
+  // The single auth-state listener lives in <AuthProvider> (src/providers).
+  // App only mirrors the session into the local profile/UI state — it never
+  // registers its own listener, so there is exactly one subscription app-wide.
+  // ---------------------------------------------------------------------------
   useEffect(() => {
-    if (!isSupabaseConfigured || !supabase) return;
+    if (!isSupabaseConfigured) return;
 
-    // 1. Initial Session Check
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        const suUser = session.user;
-        setIsAuthenticated(true);
-        setUser((prev) => ({
-          ...prev,
-          email: suUser.email || prev.email,
-          name: suUser.user_metadata?.full_name || prev.name,
-          phone: suUser.user_metadata?.mobile || suUser.phone || prev.phone,
-        }));
-      }
-    });
+    const sessionUser = session?.user;
 
-    // 2. Auth State Change Listener
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
-      if (session?.user) {
-        const suUser = session.user;
-        setIsAuthenticated(true);
-        setUser((prev) => ({
-          ...prev,
-          email: suUser.email || prev.email,
-          name: suUser.user_metadata?.full_name || prev.name,
-          phone: suUser.user_metadata?.mobile || suUser.phone || prev.phone,
-        }));
-      } else if (event === 'SIGNED_OUT') {
-        setIsAuthenticated(false);
+    if (sessionUser) {
+      // Covers INITIAL_SESSION (restore after reload), SIGNED_IN and
+      // TOKEN_REFRESHED — all surface here as a non-null session.
+      setIsAuthenticated(true);
+      setShowAuthScreen(false);
+      setUser((prev) => ({
+        ...prev,
+        email: sessionUser.email || prev.email,
+        name: sessionUser.user_metadata?.full_name || prev.name,
+        phone: sessionUser.user_metadata?.mobile || sessionUser.phone || prev.phone,
+      }));
+      // Leave /auth/login once a valid session exists (no loop: no-op elsewhere).
+      redirectToApp();
+    } else if (!isAuthLoading) {
+      // SIGNED_OUT, or an invalid/expired session the provider could not renew.
+      setIsAuthenticated(false);
+      try {
         localStorage.removeItem(STORAGE_KEYS.user);
+      } catch {
+        /* storage unavailable */
       }
-    });
+      // The provider already redirected expired sessions to /auth/login;
+      // render the auth screen when we are on that route.
+      if (isAuthRoute()) setShowAuthScreen(true);
+    }
+  }, [session, isAuthLoading]);
 
-    return () => {
-      subscription.unsubscribe();
-    };
+  // ---------------------------------------------------------------------------
+  // NEXORA LIVE LOCATION SYNC
+  // Authenticated users only; one watcher; RLS-enforced writes; cleared on logout.
+  // Reuses the existing header/location UI by feeding it the live label.
+  // ---------------------------------------------------------------------------
+  const handleLivePosition = useCallback((_coords: unknown, liveLabel: string) => {
+    setCurrentLocation((prev) => (prev.startsWith('Current Location') ? liveLabel : prev));
   }, []);
+
+  const locationSync = useLocationSync({
+    userId,
+    enabled: isAuthenticated,
+    onPosition: handleLivePosition,
+  });
+
+  /**
+   * Explicit location teardown used by logout / delete-account.
+   * The hook also cleans up automatically when `userId` clears, but doing it
+   * *before* signOut() guarantees the DELETE is sent while the JWT is still
+   * valid, so RLS authorises it.
+   */
+  /**
+   * Push a manually detected GPS fix (from the existing LocationModal) to the
+   * Nexora backend. No-op for guests — RLS would reject an anonymous write.
+   */
+  const handleManualLocationSync = useCallback(
+    async (latitude: number, longitude: number) => {
+      if (!userId || !isSupabaseConfigured) return;
+      try {
+        await syncUserLocation(userId, { latitude, longitude });
+      } catch {
+        /* non-fatal: the live watcher retries on the next fix */
+      }
+    },
+    [userId]
+  );
+
+  const handleTeardownLocation = useCallback(async () => {
+    if (!userId) return;
+    try {
+      await clearUserLocation(userId);
+    } catch {
+      /* non-fatal: the row is also cleared by the hook on session loss */
+    }
+  }, [userId]);
 
   useEffect(() => {
     saveJson(STORAGE_KEYS.appointments, appointments);
@@ -405,28 +459,26 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    if (isSupabaseConfigured && supabase) {
-      try {
-        await supabase.auth.signOut();
-      } catch {
-        // ignore error
-      }
-    }
+    // Stop live-location sync and purge the stored position before the session
+    // is destroyed, so the delete still passes the RLS `auth.uid()` check.
+    await handleTeardownLocation();
+
+    // Sign out through the provider: it owns the single auth listener and the
+    // loop-safe redirect to /auth/login.
+    await nexoraSignOut();
+
     setIsAuthenticated(false);
     localStorage.removeItem(STORAGE_KEYS.user);
     setUser(INITIAL_USER);
     setActiveTab('home');
     setShowAuthScreen(true);
+    redirectToLogin({ replace: true });
   };
 
   const handleDeleteAccount = async () => {
-    if (isSupabaseConfigured && supabase) {
-      try {
-        await supabase.auth.signOut();
-      } catch {
-        // ignore error
-      }
-    }
+    await handleTeardownLocation();
+    await nexoraSignOut();
+
     setIsAuthenticated(false);
     localStorage.removeItem(STORAGE_KEYS.appointments);
     localStorage.removeItem(STORAGE_KEYS.savedSalons);
@@ -438,6 +490,7 @@ export default function App() {
     setSavedServices([]);
     setActiveTab('home');
     setShowAuthScreen(true);
+    redirectToLogin({ replace: true });
   };
 
   if (showAuthScreen) {
@@ -663,7 +716,15 @@ export default function App() {
         isOpen={isLocationModalOpen}
         onClose={() => setIsLocationModalOpen(false)}
         currentLocation={currentLocation}
-        onSelectLocation={(loc) => setCurrentLocation(loc)}
+        isLiveSyncActive={locationSync.isWatching}
+        onSelectLocation={(loc, lat, lng) => {
+          setCurrentLocation(loc);
+          // A device-GPS pick from the existing modal is pushed straight to the
+          // Nexora secure location backend (authenticated users only).
+          if (typeof lat === 'number' && typeof lng === 'number') {
+            void handleManualLocationSync(lat, lng);
+          }
+        }}
       />
 
       <BookingModal
