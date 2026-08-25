@@ -31,3 +31,14 @@ g.cancelAnimationFrame = (id) => clearTimeout(id);
 g.IS_REACT_ACT_ENVIRONMENT = true;
 g.atob = (s) => Buffer.from(s, 'base64').toString('binary');
 g.btoa = (s) => Buffer.from(s, 'binary').toString('base64');
+
+// Seed public Supabase env for integration tests when a real .env is absent.
+// The harness stubs all HTTP calls, so this only needs to be non-empty and
+// non-privileged; using an anon-shaped JWT keeps the production guard active.
+process.env.VITE_SUPABASE_URL ||= 'https://qwaehqsmodekbgvnaavz.supabase.co';
+process.env.VITE_SUPABASE_STORAGE_KEY ||= 'nexora.auth.qwaehqsmodekbgvnaavz';
+process.env.VITE_SUPABASE_ANON_KEY ||= [
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9',
+  'eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwicmVmIjoicXdhZWhxc21vZGVrYmd2bmFhdnoifQ',
+  'signature',
+].join('.');
