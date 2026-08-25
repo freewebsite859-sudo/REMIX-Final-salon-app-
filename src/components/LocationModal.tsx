@@ -5,6 +5,8 @@ interface LocationModalProps {
   onClose: () => void;
   currentLocation: string;
   onSelectLocation: (area: string, lat?: number, lng?: number) => void;
+  /** True while Nexora live-location sync is streaming for a signed-in user. */
+  isLiveSyncActive?: boolean;
 }
 
 export const LocationModal: React.FC<LocationModalProps> = ({
@@ -12,6 +14,7 @@ export const LocationModal: React.FC<LocationModalProps> = ({
   onClose,
   currentLocation,
   onSelectLocation,
+  isLiveSyncActive = false,
 }) => {
   const [customInput, setCustomInput] = useState('');
   const [isDetectingGps, setIsDetectingGps] = useState(false);
@@ -99,6 +102,22 @@ export const LocationModal: React.FC<LocationModalProps> = ({
 
         {gpsError && (
           <p className="text-[12px] text-error font-medium mb-3 px-1">{gpsError}</p>
+        )}
+
+        {/* Nexora live-location sync indicator (authenticated users only) */}
+        {isLiveSyncActive && (
+          <div
+            id="nexora-live-sync-indicator"
+            className="flex items-center gap-2 mb-3 px-1"
+          >
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-nexora-pink opacity-70" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-nexora-pink" />
+            </span>
+            <p className="text-[12px] text-on-surface-variant font-medium">
+              Live location sync active — securely synced to your Nexora account.
+            </p>
+          </div>
         )}
 
         {/* Search custom input */}
