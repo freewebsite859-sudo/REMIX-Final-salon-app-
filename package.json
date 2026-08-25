@@ -11,7 +11,8 @@
     "lint": "tsc --noEmit",
     "test:nexora": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/nexora.integration.test.tsx",
     "test:smoke": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/smoke.render.mts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify:live": "node scripts/verify-live.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
