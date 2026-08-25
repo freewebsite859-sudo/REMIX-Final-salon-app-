@@ -44,6 +44,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [couponCode, setCouponCode] = useState<string>('');
   const [appliedDiscountPercent, setAppliedDiscountPercent] = useState<number>(0);
   const [couponMessage, setCouponMessage] = useState<string | null>(null);
+  const [bookingError, setBookingError] = useState<string | null>(null);
   const [isSuccess, setIsSuccess] = useState<boolean>(false);
   const [confirmedBooking, setConfirmedBooking] = useState<Appointment | null>(null);
 
@@ -65,6 +66,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     setCouponCode('');
     setAppliedDiscountPercent(0);
     setCouponMessage(null);
+    setBookingError(null);
     setIsSuccess(false);
     setConfirmedBooking(null);
   }, [isOpen, salon, initialService, initialServices, initialStylist, todayStr]);
@@ -115,29 +117,25 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (selectedServices.length === 0) return;
-    const newAppointment: Appointment = {
-      id: `apt-${Date.now()}`,
-      salonId: salon.id,
-      salonName: salon.name,
-      salonAddress: salon.location.address,
-      salonImage: salon.image,
-      salonPhone: salon.phone,
-      services: selectedServices,
-      stylist: selectedStylist || undefined,
-      date: selectedDate,
-      time: selectedTime,
-      status: 'confirmed',
-      totalPrice: finalTotal,
-      discountApplied: discountAmount,
-      bookingRef: `NX-${Math.floor(10000 + Math.random() * 90000)}`,
-      notes: specialNotes,
-      createdAt: new Date().toISOString(),
-      mapsUrl: salon.location.mapsUrl,
-    };
 
-    setConfirmedBooking(newAppointment);
-    setIsSuccess(true);
-    onConfirmBooking(newAppointment);
+    if (onOpenSummary) {
+      // Every booking must go through the server-side payment contract. The
+      // old direct-confirm path created a local appointment without a hold or
+      // verified deposit, so it is intentionally removed.
+      onOpenSummary({
+        salon,
+        services: selectedServices,
+        stylist: selectedStylist,
+        date: selectedDate,
+        time: selectedTime,
+        notes: specialNotes,
+      });
+      return;
+    }
+
+    setBookingError(
+      'Booking is unavailable because the secure booking and payment service is not configured. No appointment was created.'
+    );
   };
 
   return (
@@ -440,6 +438,12 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   className="w-full p-2.5 text-[12px] bg-surface-container-highest text-on-surface rounded-xl border-0 focus:ring-1 focus:ring-nexora-pink"
                 />
               </div>
+
+              {bookingError && (
+                <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-relaxed text-amber-900">
+                  {bookingError}
+                </div>
+              )}
 
               {/* Submit & Summary Buttons */}
               <div className="flex flex-col gap-2.5">

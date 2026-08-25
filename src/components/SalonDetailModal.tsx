@@ -29,7 +29,7 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
   onToggleSave,
   onAddReview,
   initialTab = 'services',
-  userLocation = 'Vaishali Nagar, Jaipur',
+  userLocation = '',
   savedServiceIds = [],
   onToggleSaveService,
   onOpenAIAdvisorSentiment,
@@ -42,7 +42,7 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
   const [showReviewForm, setShowReviewForm] = useState<boolean>(false);
   const [reviewRating, setReviewRating] = useState<number>(5);
   const [hoverRating, setHoverRating] = useState<number>(0);
-  const [reviewName, setReviewName] = useState<string>('Sarah');
+  const [reviewName, setReviewName] = useState<string>('');
   const [reviewService, setReviewService] = useState<string>('');
   const [reviewStylist, setReviewStylist] = useState<string>('');
   const [reviewComment, setReviewComment] = useState<string>('');
@@ -62,7 +62,7 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
     ? salon.services
     : salon.services.filter((s) => s.category === activeCategory);
 
-  const images = salon.gallery?.length ? salon.gallery : [salon.image];
+  const images = (salon.gallery?.length ? salon.gallery : [salon.image]).filter(Boolean);
 
   // Quick compliment tag options
   const quickCompliments = [
@@ -75,16 +75,14 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
     '💰 Great Value for Money',
   ];
 
-  // Calculate rating distributions
+  // Calculate rating distributions from reviews actually returned by the
+  // catalog. Never manufacture a distribution from an aggregate count.
   const allReviews = salon.reviews || [];
-  const totalReviewsCount = salon.reviewCount || allReviews.length;
-  
-  // Calculate distribution percentages
+  const totalReviewsCount = allReviews.length;
   const ratingDistribution = [5, 4, 3, 2, 1].map((stars) => {
-    const matchingCount = allReviews.filter((r) => r.rating === stars).length;
-    const baseCount = matchingCount > 0 ? matchingCount : (stars === 5 ? Math.round(totalReviewsCount * 0.82) : stars === 4 ? Math.round(totalReviewsCount * 0.12) : stars === 3 ? Math.round(totalReviewsCount * 0.04) : 1);
-    const percentage = totalReviewsCount > 0 ? Math.round((baseCount / totalReviewsCount) * 100) : 0;
-    return { stars, count: baseCount, percentage: Math.min(100, Math.max(2, percentage)) };
+    const count = allReviews.filter((review) => review.rating === stars).length;
+    const percentage = totalReviewsCount > 0 ? Math.round((count / totalReviewsCount) * 100) : 0;
+    return { stars, count, percentage };
   });
 
   // Filter and sort reviews
@@ -136,26 +134,28 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
       ? `${reviewComment.trim()} (${selectedTags.join(', ')})`
       : reviewComment.trim();
 
-    const newReview: Review = {
-      id: `rev-${Date.now()}`,
-      userName: reviewName.trim() || 'Sarah',
-      userAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
-      rating: reviewRating,
-      date: 'Just now',
-      comment: fullComment,
-      serviceUsed: reviewService || (salon.services[0]?.name ?? 'Hair Care'),
-    };
-
-    if (onAddReview) {
-      onAddReview(salon.id, newReview);
-    } else {
-      salon.reviews = [newReview, ...salon.reviews];
+    if (!onAddReview) {
+      setSubmitSuccessMessage('Reviews are unavailable until the authenticated review service is configured. No review was published.');
+      return;
     }
 
+    const newReview: Review = {
+      id: '',
+      userName: reviewName.trim(),
+      userAvatar: '',
+      rating: reviewRating,
+      date: new Date().toISOString(),
+      comment: fullComment,
+      serviceUsed: reviewService || undefined,
+    };
+
+    // The parent callback is the seam for an authenticated, server-side
+    // review mutation. This component never mutates the salon prop directly.
+    onAddReview(salon.id, newReview);
     setReviewComment('');
     setSelectedTags([]);
     setShowReviewForm(false);
-    setSubmitSuccessMessage('Thank you! Your verified review has been published.');
+    setSubmitSuccessMessage('Review submitted for verification.');
     setTimeout(() => setSubmitSuccessMessage(null), 4000);
   };
 

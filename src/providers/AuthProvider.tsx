@@ -161,9 +161,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         setIsLoading(false);
       })
-      .catch(() => {
+      .catch((err) => {
         if (cancelled) return;
+        console.error('[Nexora] Session bootstrap failed:', err);
+        applySession(null);
         setIsLoading(false);
+        // A persisted session that cannot be restored is not an authenticated
+        // session. Route it through the same guarded path as an expired token.
+        guardedRedirectToLogin(hadPersistedSession() ? 'expired' : 'absent');
       });
 
     return () => {

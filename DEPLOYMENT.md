@@ -42,8 +42,16 @@ vercel env add VITE_SUPABASE_ANON_KEY production
 vercel --prod
 ```
 
-Until this step is done the app runs in its existing offline/demo mode: the UI
-works, but no real authentication or location sync occurs.
+Until this step is done the app remains a read-only shell: no authentication,
+booking, payment, or location sync is available. Authentication is never
+simulated and a local profile cannot unlock protected features.
+
+The customer app uses a hybrid catalog strategy. It renders the in-repo
+catalog immediately as a graceful fallback while Supabase is unavailable or
+empty, then atomically replaces it with valid Supabase salon rows. It never
+mixes fallback rows into a non-empty real catalog. Set `VITE_NEXORA_DEMO_MODE=true`
+only to force the fixture for visual QA; a demo catalog is never a production
+source of truth.
 
 ---
 
@@ -74,7 +82,27 @@ touch their own row, and `anon` gets no access at all.
 
 ---
 
-## 3. Run live end-to-end verification
+## 3. Required canonical backend work before release
+
+This checkout contains only the customer-web shell and the `user_locations`
+RLS contract. It does not contain the ecosystem's claimed organization,
+membership, salon catalog, availability, booking, payment-order, or webhook
+migrations/API. Do not mark a deployment production-ready until the existing
+canonical Nexora backend is connected and these contracts are verified:
+
+- salon/service/location reads come from the canonical catalog;
+- profile → organization membership → salon ownership resolves from Supabase;
+- availability holds and booking mutations are server-side and idempotent;
+- Razorpay order creation, signature verification, webhook reconciliation, and
+  duplicate protection run server-side; and
+- RLS policies cover every tenant-owned table and reject cross-tenant reads and
+  writes.
+
+The booking UI intentionally refuses to create local appointments when that
+adapter is absent. It does not display a static QR code or claim a payment
+succeeded.
+
+## 4. Run live end-to-end verification
 
 Requires a real Supabase user. Create a throwaway one in
 **Authentication → Users** if needed.
@@ -121,7 +149,7 @@ Exits non-zero on any failure and cleans up after itself.
 
 ---
 
-## 4. Browser smoke test
+## 5. Browser smoke test
 
 After deploying, confirm in a real browser:
 
@@ -137,11 +165,17 @@ Location requires a **secure context** (HTTPS or `localhost`); browsers block
 
 ---
 
-## CI checks (already passing)
+## CI checks
 
 ```bash
 npm run typecheck   # 0 errors
-npm run build       # 0 errors
-npm run test:nexora # 22/22 integration checks
+npm run build       # 0 errors (with a bundle-size warning)
+npm run test:nexora # 22/22 auth + location integration checks
+npm run test:catalog # 7/7 hybrid catalog strategy checks
 npm run test:smoke  # renders cleanly
+npm run verify:live # requires real anon key + test user + applied RLS
 ```
+
+`verify:live` is expected to stop before network checks when its required
+credentials are absent; that is an external release blocker, not a passing
+production verification.

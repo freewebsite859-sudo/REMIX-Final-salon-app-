@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { ActiveTab, Salon, SalonService, Stylist, Appointment, UserProfile, Review, SavedServiceRef } from './types';
-import { INITIAL_SALONS, INITIAL_APPOINTMENTS, INITIAL_USER } from './data/mockSalons';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ActiveTab, Salon, SalonService, Stylist, Appointment, UserProfile, SavedServiceRef } from './types';
+import { useCatalog } from './hooks/useCatalog';
 import { Header } from './components/Header';
 import { BottomNav } from './components/BottomNav';
 import { HomeTab } from './components/HomeTab';
@@ -18,18 +18,39 @@ import { ServiceCategoryScreen } from './components/ServiceCategoryScreen';
 import { ChooseProfessionalScreen } from './components/ChooseProfessionalScreen';
 import { BookingSummaryModal } from './components/BookingSummaryModal';
 import { AuthPage } from './components/auth/AuthPage';
+import { PasswordUpdatePage } from './components/auth/PasswordUpdatePage';
 import { isSupabaseConfigured } from './lib/supabase';
 import { useAuth } from './providers/AuthProvider';
 import { useLocationSync } from './hooks/useLocationSync';
 import { clearUserLocation, syncUserLocation } from './lib/locationService';
-import { isAuthRoute, redirectToApp, redirectToLogin } from './lib/authRoutes';
+import { isAppointmentUpcoming } from './lib/appointments';
+import { currentPath, isAuthRoute, redirectToApp, redirectToLogin } from './lib/authRoutes';
 
 const STORAGE_KEYS = {
+  // These keys hold UI drafts/preferences only. They are never the source of
+  // truth for authentication, ownership, bookings, or payment state.
   appointments: 'nexora-appointments',
   savedSalons: 'nexora-saved-salons',
   savedServices: 'nexora-saved-services',
-  user: 'nexora-user',
+  profile: 'nexora-profile',
 };
+
+/** A blank profile keeps guest browsing free of fabricated personal data. */
+const EMPTY_USER: UserProfile = {
+  name: '',
+  email: '',
+  phone: '',
+  avatar: '',
+  locationArea: '',
+  city: '',
+  loyaltyPoints: 0,
+  preferredServices: [],
+  genderPreference: 'all',
+};
+
+function scopedStorageKey(baseKey: string, userId: string): string {
+  return `${baseKey}:${userId}`;
+}
 
 /**
  * Safely load JSON from localStorage.
@@ -91,18 +112,24 @@ function sanitizeSalonIds(value: unknown): string[] | null {
 
 function sanitizeAppointments(value: unknown): Appointment[] | null {
   if (!Array.isArray(value)) return null;
-  return value.filter(isRecord).map((a) => ({
-    ...a,
-    id: typeof a.id === 'string' ? a.id : `apt-${Math.random().toString(36).slice(2, 10)}`,
-    salonId: typeof a.salonId === 'string' ? a.salonId : '',
-    salonName: typeof a.salonName === 'string' ? a.salonName : 'Salon',
-    services: Array.isArray(a.services) ? a.services : [],
-    status: ['confirmed', 'in_progress', 'completed', 'cancelled'].includes(a.status as string)
-      ? a.status
-      : 'confirmed',
-    date: typeof a.date === 'string' ? a.date : '',
-    time: typeof a.time === 'string' ? a.time : '',
-  })) as Appointment[];
+  const clean = value
+    .filter(isRecord)
+    .filter(
+      (a) =>
+        typeof a.id === 'string' &&
+        typeof a.salonId === 'string' &&
+        typeof a.salonName === 'string' &&
+        typeof a.salonAddress === 'string' &&
+        typeof a.date === 'string' &&
+        /^\d{4}-\d{2}-\d{2}$/.test(a.date) &&
+        typeof a.time === 'string' &&
+        Array.isArray(a.services) &&
+        typeof a.totalPrice === 'number' &&
+        Number.isFinite(a.totalPrice) &&
+        typeof a.bookingRef === 'string' &&
+        ['confirmed', 'in_progress', 'completed', 'cancelled'].includes(a.status as string)
+    );
+  return clean as unknown as Appointment[];
 }
 
 function sanitizeSavedServices(value: unknown): SavedServiceRef[] | null {
@@ -129,32 +156,44 @@ function slotToIsoDate(slot?: { day?: string; date?: string; time?: string } | n
   return todayStr;
 }
 
-function salonFromAppointment(appointment: Appointment): Salon {
+function salonFromAppointment(appointment: Appointment): Salon | null {
+  // A booking must carry the canonical salon coordinates. Never invent a
+  // location for stale/partial records; callers should ask the API to refresh
+  // the booking instead of showing a misleading map pin or distance.
+  if (
+    typeof appointment.salonLatitude !== 'number' ||
+    typeof appointment.salonLongitude !== 'number' ||
+    !Number.isFinite(appointment.salonLatitude) ||
+    !Number.isFinite(appointment.salonLongitude)
+  ) {
+    return null;
+  }
+
   return {
     id: appointment.salonId,
     name: appointment.salonName,
-    tagline: 'Premium salon and grooming studio in Jaipur.',
-    rating: 4.8,
-    reviewCount: 120,
+    tagline: 'Premium salon and grooming studio.',
+    rating: 0,
+    reviewCount: 0,
     image: appointment.salonImage,
-    gallery: [appointment.salonImage],
-    categories: ['Hair', 'Grooming'],
+    gallery: appointment.salonImage ? [appointment.salonImage] : [],
+    categories: [],
     priceRange: '₹₹',
-    distance: '1.5 km',
-    isOpen: true,
-    openingHours: '10:00 AM - 8:00 PM',
+    distance: '',
+    isOpen: false,
+    openingHours: '',
     gender: 'unisex',
     reviews: [],
     location: {
       address: appointment.salonAddress,
-      area: appointment.salonAddress.split(',')[0] || 'Mansarovar',
-      city: 'Jaipur',
-      latitude: 26.85,
-      longitude: 75.78,
+      area: appointment.salonAddress.split(',')[0] || '',
+      city: appointment.salonAddress.split(',').slice(-2, -1)[0]?.trim() || '',
+      latitude: appointment.salonLatitude,
+      longitude: appointment.salonLongitude,
       mapsUrl: appointment.mapsUrl,
     },
-    phone: appointment.salonPhone || '+91 98290 12345',
-    amenities: ['AC', 'Wi-Fi', 'Card Payment', 'Parking'],
+    phone: appointment.salonPhone,
+    amenities: [],
     services: appointment.services,
     stylists: appointment.stylist ? [appointment.stylist] : [],
   };
@@ -168,35 +207,20 @@ export default function App() {
     isLoading: isAuthLoading,
     signOut: nexoraSignOut,
   } = useAuth();
+  const catalog = useCatalog();
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('home');
-  const [user, setUser] = useState<UserProfile>(() => {
-    const stored = loadJson(STORAGE_KEYS.user, null as UserProfile | null, sanitizeUserProfile);
-    // Merge with defaults so fields added in newer versions never come back undefined.
-    return stored ? { ...INITIAL_USER, ...stored } : INITIAL_USER;
-  });
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    const stored = loadJson(STORAGE_KEYS.user, null as UserProfile | null, sanitizeUserProfile);
-    return Boolean(stored && stored.email);
-  });
+  // Auth state is derived exclusively from Supabase. A profile/preferences
+  // record may be cached per user for resilience, but it can never establish
+  // an authenticated session or ownership.
+  const [user, setUser] = useState<UserProfile>(EMPTY_USER);
+  const isAuthenticated = Boolean(session?.user);
   const [currentLocation, setCurrentLocation] = useState<string>('Mansarovar, Jaipur');
-  const [salons, setSalons] = useState<Salon[]>(INITIAL_SALONS);
-  const [appointments, setAppointments] = useState<Appointment[]>(() =>
-    loadJson(STORAGE_KEYS.appointments, INITIAL_APPOINTMENTS, sanitizeAppointments)
-  );
-  const [savedSalonIds, setSavedSalonIds] = useState<string[]>(() =>
-    loadJson(STORAGE_KEYS.savedSalons, ['salon-1', 'salon-2', 'salon-5'], sanitizeSalonIds)
-  );
-  const [savedServices, setSavedServices] = useState<SavedServiceRef[]>(() =>
-    loadJson(
-      STORAGE_KEYS.savedServices,
-      [
-        { salonId: 'salon-1', serviceId: 'srv-101' },
-        { salonId: 'salon-2', serviceId: 'srv-201' },
-      ],
-      sanitizeSavedServices
-    )
-  );
+  const salons = catalog.salons;
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [savedSalonIds, setSavedSalonIds] = useState<string[]>([]);
+  const [savedServices, setSavedServices] = useState<SavedServiceRef[]>([]);
+  const hydratedUserIdRef = useRef<string | null>(null);
   
   // Dedicated Category & Service Screen
   const [selectedCategoryScreen, setSelectedCategoryScreen] = useState<string | null>(null);
@@ -238,8 +262,9 @@ export default function App() {
   const [selectedStylistForBooking, setSelectedStylistForBooking] = useState<Stylist | null>(null);
   const [exploreQuery, setExploreQuery] = useState<string>('');
 
-  // Active upcoming appointment for reminder banner
-  const upcomingAppointment = appointments.find((a) => a.status === 'confirmed') || null;
+  // Active upcoming appointment for reminder banner. A stale `confirmed` row
+  // must not be presented as an upcoming visit after a reload.
+  const upcomingAppointment = appointments.find((a) => isAppointmentUpcoming(a)) || null;
 
   // ---------------------------------------------------------------------------
   // NEXORA UNIVERSAL AUTH
@@ -253,31 +278,84 @@ export default function App() {
     const sessionUser = session?.user;
 
     if (sessionUser) {
-      // Covers INITIAL_SESSION (restore after reload), SIGNED_IN and
-      // TOKEN_REFRESHED — all surface here as a non-null session.
-      setIsAuthenticated(true);
-      setShowAuthScreen(false);
-      setUser((prev) => ({
-        ...prev,
-        email: sessionUser.email || prev.email,
-        name: sessionUser.user_metadata?.full_name || prev.name,
-        phone: sessionUser.user_metadata?.mobile || sessionUser.phone || prev.phone,
-      }));
-      // Leave /auth/login once a valid session exists (no loop: no-op elsewhere).
-      redirectToApp();
+      // Keep the recovery session on /auth/reset until updateUser() completes.
+      // Other authenticated routes can immediately return to the app shell.
+      if (currentPath() !== '/auth/reset') {
+        setShowAuthScreen(false);
+        redirectToApp();
+      }
     } else if (!isAuthLoading) {
       // SIGNED_OUT, or an invalid/expired session the provider could not renew.
-      setIsAuthenticated(false);
-      try {
-        localStorage.removeItem(STORAGE_KEYS.user);
-      } catch {
-        /* storage unavailable */
-      }
       // The provider already redirected expired sessions to /auth/login;
       // render the auth screen when we are on that route.
       if (isAuthRoute()) setShowAuthScreen(true);
     }
   }, [session, isAuthLoading]);
+
+  // Load only this authenticated user's UI profile and local drafts. These
+  // values are deliberately namespaced by the authoritative Supabase user id;
+  // data from one account can never appear in another account's UI.
+  useEffect(() => {
+    if (!userId) {
+      hydratedUserIdRef.current = null;
+      setUser(EMPTY_USER);
+      setAppointments([]);
+      setSavedSalonIds([]);
+      setSavedServices([]);
+      setCurrentLocation('Mansarovar, Jaipur');
+      return;
+    }
+
+    if (hydratedUserIdRef.current === userId) return;
+    hydratedUserIdRef.current = userId;
+
+    const storedProfile = loadJson(
+      scopedStorageKey(STORAGE_KEYS.profile, userId),
+      null as UserProfile | null,
+      sanitizeUserProfile
+    );
+    const sessionUser = session?.user;
+    setUser({
+      ...EMPTY_USER,
+      ...(storedProfile || {}),
+      email: sessionUser?.email || storedProfile?.email || '',
+      name:
+        sessionUser?.user_metadata?.full_name ||
+        storedProfile?.name ||
+        sessionUser?.email?.split('@')[0] ||
+        '',
+      phone: sessionUser?.user_metadata?.mobile || sessionUser?.phone || storedProfile?.phone || '',
+    });
+    setAppointments(
+      loadJson(scopedStorageKey(STORAGE_KEYS.appointments, userId), [], sanitizeAppointments)
+    );
+    setSavedSalonIds(loadJson(scopedStorageKey(STORAGE_KEYS.savedSalons, userId), [], sanitizeSalonIds));
+    setSavedServices(
+      loadJson(scopedStorageKey(STORAGE_KEYS.savedServices, userId), [], sanitizeSavedServices)
+    );
+    // Reviews edited in memory are not authoritative and must not bleed into a
+    // different account after switching sessions.
+  }, [userId, session?.user]);
+
+  // Rebind open views to the newest catalog snapshot. This lets a remote row
+  // replace its fallback counterpart without leaving a stale modal behind.
+  useEffect(() => {
+    const rebindSalon = (current: Salon | null): Salon | null => {
+      if (!current) return null;
+      return salons.find((salon) => salon.id === current.id) || null;
+    };
+    setSelectedSalonForDetail((current) => rebindSalon(current));
+    setSelectedSalonForBooking((current) => rebindSalon(current));
+    setBookingSummaryDraft((current) => {
+      if (!current) return null;
+      const nextSalon = rebindSalon(current.salon);
+      if (!nextSalon) return null;
+      const nextServices = current.services.filter((service) =>
+        nextSalon.services.some((catalogService) => catalogService.id === service.id)
+      );
+      return nextServices.length ? { ...current, salon: nextSalon, services: nextServices } : null;
+    });
+  }, [salons]);
 
   // ---------------------------------------------------------------------------
   // NEXORA LIVE LOCATION SYNC
@@ -285,7 +363,10 @@ export default function App() {
   // Reuses the existing header/location UI by feeding it the live label.
   // ---------------------------------------------------------------------------
   const handleLivePosition = useCallback((_coords: unknown, liveLabel: string) => {
-    setCurrentLocation((prev) => (prev.startsWith('Current Location') ? liveLabel : prev));
+    // A successful device fix is more authoritative than the last manually
+    // selected label. Keep the UI aligned with the coordinate written to the
+    // backend instead of displaying a stale area name.
+    setCurrentLocation(liveLabel);
   }, []);
 
   const locationSync = useLocationSync({
@@ -308,9 +389,13 @@ export default function App() {
     async (latitude: number, longitude: number) => {
       if (!userId || !isSupabaseConfigured) return;
       try {
-        await syncUserLocation(userId, { latitude, longitude });
-      } catch {
-        /* non-fatal: the live watcher retries on the next fix */
+        const result = await syncUserLocation(userId, { latitude, longitude });
+        if (!result.ok && !result.disabled) {
+          console.warn('[Nexora] Manual location sync failed:', result.error);
+        }
+      } catch (err) {
+        // Non-fatal for the picker, but preserve the diagnostic for support.
+        console.warn('[Nexora] Manual location sync failed:', err);
       }
     },
     [userId]
@@ -319,29 +404,39 @@ export default function App() {
   const handleTeardownLocation = useCallback(async () => {
     if (!userId) return;
     try {
-      await clearUserLocation(userId);
-    } catch {
-      /* non-fatal: the row is also cleared by the hook on session loss */
+      const result = await clearUserLocation(userId);
+      if (!result.ok) {
+        console.warn('[Nexora] Location cleanup failed:', result.error);
+      }
+    } catch (err) {
+      // The hook retries cleanup on session loss; retain the root cause in logs.
+      console.warn('[Nexora] Location cleanup failed:', err);
     }
   }, [userId]);
 
   useEffect(() => {
-    saveJson(STORAGE_KEYS.appointments, appointments);
-  }, [appointments]);
-
-  useEffect(() => {
-    saveJson(STORAGE_KEYS.savedSalons, savedSalonIds);
-  }, [savedSalonIds]);
-
-  useEffect(() => {
-    saveJson(STORAGE_KEYS.savedServices, savedServices);
-  }, [savedServices]);
-
-  useEffect(() => {
-    if (isAuthenticated && user) {
-      saveJson(STORAGE_KEYS.user, user);
+    if (userId && hydratedUserIdRef.current === userId) {
+      saveJson(scopedStorageKey(STORAGE_KEYS.appointments, userId), appointments);
     }
-  }, [user, isAuthenticated]);
+  }, [appointments, userId]);
+
+  useEffect(() => {
+    if (userId && hydratedUserIdRef.current === userId) {
+      saveJson(scopedStorageKey(STORAGE_KEYS.savedSalons, userId), savedSalonIds);
+    }
+  }, [savedSalonIds, userId]);
+
+  useEffect(() => {
+    if (userId && hydratedUserIdRef.current === userId) {
+      saveJson(scopedStorageKey(STORAGE_KEYS.savedServices, userId), savedServices);
+    }
+  }, [savedServices, userId]);
+
+  useEffect(() => {
+    if (userId && hydratedUserIdRef.current === userId) {
+      saveJson(scopedStorageKey(STORAGE_KEYS.profile, userId), user);
+    }
+  }, [user, userId]);
 
   // Handlers
   const handleOpenAIAdvisor = (
@@ -364,6 +459,18 @@ export default function App() {
     stylist?: Stylist,
     services?: SalonService[]
   ) => {
+    if (!salon) {
+      console.warn('[Nexora] Cannot start booking without a canonical salon record.');
+      return;
+    }
+    // Booking is a protected operation. Guests must authenticate first, and a
+    // missing Supabase configuration must never fall through to a local/fake
+    // booking path.
+    if (!isSupabaseConfigured || !userId) {
+      setShowAuthScreen(true);
+      return;
+    }
+
     setSelectedSalonForBooking(salon);
     setSelectedServiceForBooking(service || null);
     setSelectedServicesForBooking(services || (service ? [service] : null));
@@ -373,15 +480,18 @@ export default function App() {
 
   const handleBookAgain = (appointment: Appointment) => {
     const salon = salons.find((s) => s.id === appointment.salonId) || salonFromAppointment(appointment);
-    handleOpenBooking(
-      salon,
-      appointment.services[0],
-      appointment.stylist,
-      appointment.services
-    );
+    if (!salon) {
+      console.warn('[Nexora] Booking record has no canonical salon data; refresh is required before booking again.');
+      return;
+    }
+    handleOpenBooking(salon, appointment.services[0], appointment.stylist, appointment.services);
   };
 
   const handleConfirmBooking = (newAppointment: Appointment) => {
+    // The UI may receive a booking only from a future server-side payment
+    // adapter. Keep the guard here as a second line of defence; appointment
+    // state must never be created from an unauthenticated client event.
+    if (!isSupabaseConfigured || !userId) return;
     setAppointments((prev) => [newAppointment, ...prev.filter((a) => a.id !== newAppointment.id)]);
   };
 
@@ -429,33 +539,13 @@ export default function App() {
   const handleRescheduleAppointment = (id: string) => {
     const apt = appointments.find((a) => a.id === id);
     if (apt) {
-      const salon = salons.find((s) => s.id === apt.salonId) || salons[0];
+      const salon = salons.find((s) => s.id === apt.salonId);
+      if (!salon) {
+        console.warn('[Nexora] Cannot reschedule without the canonical salon record.');
+        return;
+      }
       handleOpenBooking(salon, apt.services[0], apt.stylist);
     }
-  };
-
-  const handleAddReview = (salonId: string, newReview: Review) => {
-    setSalons((prevSalons) =>
-      prevSalons.map((salon) => {
-        if (salon.id === salonId) {
-          const updatedReviews = [newReview, ...salon.reviews];
-          const newReviewCount = salon.reviewCount + 1;
-          const totalRating = updatedReviews.reduce((sum, r) => sum + r.rating, 0);
-          const newRating = Number((totalRating / updatedReviews.length).toFixed(1));
-          const updatedSalon = {
-            ...salon,
-            reviews: updatedReviews,
-            reviewCount: newReviewCount,
-            rating: newRating > 0 ? newRating : salon.rating,
-          };
-          if (selectedSalonForDetail && selectedSalonForDetail.id === salonId) {
-            setSelectedSalonForDetail(updatedSalon);
-          }
-          return updatedSalon;
-        }
-        return salon;
-      })
-    );
   };
 
   const handleLogout = async () => {
@@ -467,24 +557,9 @@ export default function App() {
     // loop-safe redirect to /auth/login.
     await nexoraSignOut();
 
-    setIsAuthenticated(false);
-    localStorage.removeItem(STORAGE_KEYS.user);
-    setUser(INITIAL_USER);
-    setActiveTab('home');
-    setShowAuthScreen(true);
-    redirectToLogin({ replace: true });
-  };
-
-  const handleDeleteAccount = async () => {
-    await handleTeardownLocation();
-    await nexoraSignOut();
-
-    setIsAuthenticated(false);
-    localStorage.removeItem(STORAGE_KEYS.appointments);
-    localStorage.removeItem(STORAGE_KEYS.savedSalons);
-    localStorage.removeItem(STORAGE_KEYS.savedServices);
-    localStorage.removeItem(STORAGE_KEYS.user);
-    setUser(INITIAL_USER);
+    // The provider/session is the only auth authority. Local UI state is
+    // cleared by the user-id hydration effect after SIGNED_OUT.
+    setUser(EMPTY_USER);
     setAppointments([]);
     setSavedSalonIds([]);
     setSavedServices([]);
@@ -493,7 +568,36 @@ export default function App() {
     redirectToLogin({ replace: true });
   };
 
+  const handleDeleteAccount = async (): Promise<boolean> => {
+    // Supabase user deletion requires a trusted server/Edge Function. Signing
+    // out and deleting browser keys is not account deletion, so refuse to make
+    // a destructive promise until that canonical endpoint is wired in.
+    console.warn('[Nexora] Account deletion requested but no secure deletion service is configured.');
+    return false;
+  };
+
+  // Do not render protected controls or guest fallback data while Supabase is
+  // still restoring the session. This closes the auth/session race on refresh.
+  if (isSupabaseConfigured && isAuthLoading) {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-surface-off-white text-on-surface">
+        <p className="text-sm text-on-surface-variant" role="status">Restoring your secure session…</p>
+      </main>
+    );
+  }
+
   if (showAuthScreen) {
+    if (currentPath() === '/auth/reset') {
+      return (
+        <PasswordUpdatePage
+          onComplete={() => {
+            setShowAuthScreen(false);
+            redirectToApp();
+          }}
+        />
+      );
+    }
+
     return (
       <AuthPage
         onAuthSuccess={(authData) => {
@@ -503,7 +607,8 @@ export default function App() {
             email: authData.email || prev.email,
             phone: authData.phone || prev.phone,
           }));
-          setIsAuthenticated(true);
+          // AuthPage calls this after Supabase accepts the credentials; the
+          // provider's session remains the authority for authenticated UI.
           setShowAuthScreen(false);
         }}
         onExploreAsGuest={() => setShowAuthScreen(false)}
@@ -811,7 +916,6 @@ export default function App() {
         userLocation={currentLocation}
         isSaved={selectedSalonForDetail ? savedSalonIds.includes(selectedSalonForDetail.id) : false}
         onToggleSave={handleToggleSaveSalon}
-        onAddReview={handleAddReview}
         savedServiceIds={
           selectedSalonForDetail
             ? savedServices.filter((s) => s.salonId === selectedSalonForDetail.id).map((s) => s.serviceId)
@@ -858,7 +962,12 @@ export default function App() {
         onClose={() => setIsQuickNearestModalOpen(false)}
         salons={salons}
         currentLocation={currentLocation}
-        onConfirmBooking={handleConfirmBooking}
+        onBookingUnavailable={() => {
+          if (!isSupabaseConfigured || !userId) {
+            setIsQuickNearestModalOpen(false);
+            setShowAuthScreen(true);
+          }
+        }}
         onViewAppointments={handleViewAppointments}
       />
 

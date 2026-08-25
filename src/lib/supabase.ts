@@ -81,6 +81,13 @@ export const isSupabaseConfigured = Boolean(
 );
 
 /**
+ * Explicit QA switch for the hybrid catalog. In normal operation the same
+ * fixture is used only as a graceful fallback when the canonical catalog is
+ * empty/unavailable; valid remote rows always win and are never mixed with it.
+ */
+export const isNexoraDemoMode = readEnv('VITE_NEXORA_DEMO_MODE') === 'true';
+
+/**
  * Singleton guard: Vite HMR (and React StrictMode double-invocation) can
  * re-evaluate this module. Reusing the instance stored on `globalThis`
  * guarantees exactly one GoTrue client — multiple clients on one storage key

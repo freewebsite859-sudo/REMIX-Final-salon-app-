@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { Salon, SalonService, Appointment } from '../types';
+import { Salon } from '../types';
 
 interface QuickNearestModalProps {
   isOpen: boolean;
   onClose: () => void;
   salons: Salon[];
   currentLocation: string;
-  onConfirmBooking: (appointment: Appointment) => void;
+  /** No local booking fallback is allowed. The app must supply a real API adapter. */
+  onBookingUnavailable?: () => void;
   onViewAppointments?: () => void;
 }
 
@@ -15,19 +16,21 @@ export const QuickNearestModal: React.FC<QuickNearestModalProps> = ({
   onClose,
   salons,
   currentLocation,
-  onConfirmBooking,
+  onBookingUnavailable,
   onViewAppointments,
 }) => {
   const nearestSalon = salons[0] || null;
   const [selectedServiceType, setSelectedServiceType] = useState<'haircut' | 'beard' | 'facial' | 'blowdry'>('haircut');
   const [selectedSlot, setSelectedSlot] = useState<string>('In 15 mins (Ready)');
   const [isBooked, setIsBooked] = useState(false);
+  const [bookingError, setBookingError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
     setSelectedServiceType('haircut');
     setSelectedSlot('In 15 mins (Ready)');
     setIsBooked(false);
+    setBookingError(null);
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -50,36 +53,13 @@ export const QuickNearestModal: React.FC<QuickNearestModalProps> = ({
 
   const handleInstantConfirm = () => {
     if (!nearestSalon) return;
-    const srv: SalonService = {
-      id: `quick-${chosenService.id}`,
-      name: chosenService.name,
-      category: 'hair',
-      duration: parseInt(chosenService.duration),
-      price: chosenService.price,
-      description: 'Quick Express Chair Reservation',
-    };
-
-    const apt: Appointment = {
-      id: `apt-quick-${Date.now()}`,
-      salonId: nearestSalon.id,
-      salonName: nearestSalon.name,
-      salonAddress: nearestSalon.location.address,
-      salonImage: nearestSalon.image,
-      salonPhone: nearestSalon.phone,
-      services: [srv],
-      stylist: nearestSalon.stylists[0],
-      date: new Date().toISOString().split('T')[0],
-      time: selectedSlot,
-      status: 'confirmed',
-      totalPrice: chosenService.price,
-      bookingRef: `NX-Q${Math.floor(1000 + Math.random() * 9000)}`,
-      notes: 'Express 1-Tap Urgent Booking',
-      createdAt: new Date().toISOString(),
-      mapsUrl: nearestSalon.location.mapsUrl,
-    };
-
-    setIsBooked(true);
-    onConfirmBooking(apt);
+    // An express booking still needs the same availability hold, payment
+    // verification, and server-side ownership checks as a normal booking.
+    // Never manufacture a confirmed appointment in the browser.
+    setBookingError(
+      'Instant reservations are not available until the canonical booking and payment service is configured. No appointment was created.'
+    );
+    onBookingUnavailable?.();
   };
 
   return (
@@ -195,13 +175,22 @@ export const QuickNearestModal: React.FC<QuickNearestModalProps> = ({
               </div>
             </div>
 
+            {bookingError && (
+              <div
+                role="alert"
+                className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-relaxed text-amber-900"
+              >
+                {bookingError}
+              </div>
+            )}
+
             {/* Book Now Button */}
             <button
               onClick={handleInstantConfirm}
               className="w-full py-3.5 bg-nexora-pink text-white font-button-text rounded-xl hover:bg-primary transition-all shadow-md flex items-center justify-center gap-2"
             >
               <span>⚡</span>
-              <span>Instant Reserve Chair (₹{chosenService.price})</span>
+              <span>Check Availability & Continue (₹{chosenService.price})</span>
             </button>
           </div>
         )}

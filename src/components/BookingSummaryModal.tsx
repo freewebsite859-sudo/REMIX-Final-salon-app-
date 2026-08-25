@@ -1,6 +1,17 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Salon, SalonService, Stylist, Appointment } from '../types';
 
+export interface BookingPaymentRequest {
+  salonId: string;
+  serviceIds: string[];
+  stylistId?: string;
+  date: string;
+  time: string;
+  amount: number;
+  couponCode?: string;
+  notes?: string;
+}
+
 export interface BookingSummaryModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -10,7 +21,13 @@ export interface BookingSummaryModalProps {
   date: string;
   time: string;
   specialNotes?: string;
-  onConfirmBooking: (appointment: Appointment) => void;
+  /**
+   * Server-side payment/booking adapter. It must create the order, verify the
+   * gateway signature, enforce availability/ownership, and return the
+   * canonical booking. There is intentionally no browser fallback.
+   */
+  onPayDeposit?: (request: BookingPaymentRequest) => Promise<Appointment>;
+  onConfirmBooking?: (appointment: Appointment) => void;
   onChangeSalon?: () => void;
   onChangeServices?: () => void;
   onChangeProfessional?: () => void;
@@ -82,6 +99,7 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
   date,
   time,
   specialNotes = '',
+  onPayDeposit,
   onConfirmBooking,
   onChangeSalon,
   onChangeServices,
@@ -100,7 +118,6 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
   const [isEditingNotes, setIsEditingNotes] = useState<boolean>(false);
   const [buttonState, setButtonState] = useState<'idle' | 'loading' | 'success'>('idle');
   const [paymentError, setPaymentError] = useState<string | null>(null);
-  const [copiedUpi, setCopiedUpi] = useState<boolean>(false);
   const isSubmitting = buttonState !== 'idle';
 
   useEffect(() => {
@@ -114,7 +131,6 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
     setIsEditingNotes(false);
     setButtonState('idle');
     setPaymentError(null);
-    setCopiedUpi(false);
   }, [isOpen, salon?.id, date, time, specialNotes]);
 
   // Total duration & price calculations
@@ -143,12 +159,6 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
     return Math.max(0, finalTotal - advanceAmount);
   }, [finalTotal, advanceAmount]);
 
-  const handleCopyUpi = () => {
-    navigator.clipboard.writeText('nexorasalon@upi');
-    setCopiedUpi(true);
-    setTimeout(() => setCopiedUpi(false), 2000);
-  };
-
   const formattedDate = useMemo(() => formatReadableDate(date), [date]);
   const estimatedEndTime = useMemo(() => calculateEndTime(time, totalDuration), [time, totalDuration]);
 
@@ -163,9 +173,6 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
       setAppliedDiscountPercent(30);
       setCouponMessage('✨ VIP Discount: 30% Off Applied!');
       setPaymentError(null);
-    } else if (code === 'FAIL') {
-      setCouponMessage('⚠️ "FAIL" code active — Will simulate payment failure on confirmation.');
-      setAppliedDiscountPercent(0);
     } else {
       setCouponMessage('❌ Invalid coupon code. Try NEXORA20 or SPA50');
       setAppliedDiscountPercent(0);
@@ -186,52 +193,44 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
   const handleConfirm = async () => {
     if (buttonState !== 'idle' || !salon) return;
     setPaymentError(null);
+
+    if (!onPayDeposit) {
+      // This build has no Razorpay/order/signature adapter. Do not display a
+      // success state or create a local appointment that the backend does not
+      // know about.
+      setPaymentError(
+        'Online booking is temporarily unavailable because the secure payment and booking service is not configured. No appointment was created.'
+      );
+      return;
+    }
+
     setButtonState('loading');
-
     try {
-      // Simulate async payment gateway verification call
-      await new Promise((resolve) => setTimeout(resolve, 800));
+      const appointment = await onPayDeposit({
+        salonId: salon.id,
+        serviceIds: services.map((service) => service.id),
+        stylistId: stylist?.id,
+        date,
+        time,
+        amount: advanceAmount,
+        couponCode: couponCode.trim() || undefined,
+        notes: notes || undefined,
+      });
 
-      // Trigger payment verification error if code 'FAIL' is entered
-      if (couponCode.trim().toUpperCase() === 'FAIL') {
-        throw new Error(
-          `Payment Verification Failed: Your 25% advance deposit of ₹${advanceAmount} could not be authorized by Nexora SalonOS Merchant Gateway. Transaction timed out or was declined by issuing bank.`
-        );
+      if (!appointment?.id || appointment.status !== 'confirmed') {
+        throw new Error('The booking service returned an invalid confirmation. No appointment was created.');
       }
 
-      // Visual checkmark feedback state on the button
       setButtonState('success');
-      await new Promise((resolve) => setTimeout(resolve, 600));
-
-      const bookingRef = `NX-${Math.floor(10000 + Math.random() * 90000)}`;
-      const newAppointment: Appointment = {
-        id: `apt-${Date.now()}`,
-        salonId: salon.id,
-        salonName: salon.name,
-        salonAddress: salon.location.address,
-        salonImage: salon.image,
-        salonPhone: salon.phone,
-        services: services,
-        stylist: stylist || undefined,
-        date: date || new Date().toISOString().split('T')[0],
-        time: time || '2:30 PM',
-        status: 'confirmed',
-        totalPrice: finalTotal,
-        discountApplied: discountAmount,
-        bookingRef,
-        notes: notes,
-        createdAt: new Date().toISOString(),
-        mapsUrl: salon.location.mapsUrl,
-      };
-
-      setConfirmedBooking(newAppointment);
+      setConfirmedBooking(appointment);
       setIsSuccess(true);
-      onConfirmBooking(newAppointment);
-    } catch (err: any) {
-      console.error('Payment verification error:', err);
+      onConfirmBooking?.(appointment);
+    } catch (err) {
+      console.error('[Nexora] Payment/booking request failed:', err);
       setPaymentError(
-        err.message ||
-          'Payment verification failed. Your 25% advance deposit could not be processed. No appointment was created.'
+        err instanceof Error
+          ? err.message
+          : 'Payment verification failed. No appointment was created.'
       );
       setButtonState('idle');
     }
@@ -781,7 +780,7 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
                     type="text"
                     value={couponCode}
                     onChange={(e) => setCouponCode(e.target.value)}
-                    placeholder="Coupon (e.g. NEXORA20, SPA50, FAIL)"
+                    placeholder="Coupon (e.g. NEXORA20 or SPA50)"
                     className="flex-1 px-3 py-1.5 text-[12px] bg-surface text-on-surface rounded-lg border border-outline-variant uppercase font-mono"
                   />
                   <button
@@ -796,7 +795,7 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
                   <p className="text-[11px] font-medium text-nexora-pink">{couponMessage}</p>
                 )}
                 <p className="text-[10px] text-on-surface-variant/70 italic">
-                  💡 Promo tips: Enter <code className="font-mono bg-surface px-1 py-0.5 rounded text-primary">NEXORA20</code> for 20% off, or <code className="font-mono bg-surface px-1 py-0.5 rounded text-red-500">FAIL</code> to test payment failure handling.
+                  Promotional codes are validated by the booking service before payment. The client never decides the final charge.
                 </p>
 
                 {/* Service Amount & Advance Calculation Table */}
@@ -849,48 +848,16 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
                   </div>
                 </div>
 
-                {/* Nexora SalonOS QR Code & UPI Gate */}
-                <div className="bg-surface rounded-xl p-3.5 border border-outline-variant/60 flex flex-col items-center text-center">
-                  <div className="flex items-center gap-1.5 mb-2">
-                    <span className="material-symbols-outlined text-nexora-pink text-[18px]">qr_code_scanner</span>
-                    <span className="text-[11px] font-extrabold uppercase tracking-wider text-primary">
-                      Nexora SalonOS Merchant UPI Pay
-                    </span>
-                  </div>
-
-                  {/* QR Code Image Placeholder Container */}
-                  <div className="p-2 bg-neutral-900 rounded-2xl shadow-md border border-neutral-800 my-1 flex flex-col items-center">
-                    <img
-                      src="/src/assets/images/nexora_qr_code_1787067887544.jpg"
-                      alt="Nexora SalonOS Payment QR Code"
-                      referrerPolicy="no-referrer"
-                      className="w-36 h-36 object-cover rounded-xl border border-neutral-700 shadow-xs"
-                      onError={(e) => {
-                        // Fallback to SVG if image asset fails to load
-                        e.currentTarget.style.display = 'none';
-                      }}
-                    />
-                  </div>
-
-                  <span className="text-[12px] font-bold text-on-surface mt-1.5 block">
-                    Scan to Pay ₹{advanceAmount} Deposit
-                  </span>
-                  <span className="text-[10px] text-on-surface-variant block">
-                    GPay · PhonePe · Paytm · BHIM · Any UPI App
-                  </span>
-
-                  {/* Copy UPI shortcut */}
-                  <div className="flex items-center gap-2 mt-2 bg-surface-container px-3 py-1.5 rounded-lg border border-outline-variant/50">
-                    <span className="text-[11px] font-mono font-medium text-on-surface">nexorasalon@upi</span>
-                    <button
-                      type="button"
-                      onClick={handleCopyUpi}
-                      className="text-[11px] font-bold text-nexora-pink hover:underline flex items-center gap-1"
-                    >
-                      <span className="material-symbols-outlined text-[13px]">content_copy</span>
-                      <span>{copiedUpi ? 'Copied!' : 'Copy'}</span>
-                    </button>
-                  </div>
+                {/* Payment contract status */}
+                <div
+                  role="status"
+                  className="rounded-xl border border-amber-300 bg-amber-50 p-3.5 text-center text-amber-900"
+                >
+                  <span className="material-symbols-outlined text-[22px]">lock</span>
+                  <p className="mt-1 text-[12px] font-bold">Secure deposit required to lock this slot</p>
+                  <p className="mt-1 text-[11px] leading-relaxed">
+                    No merchant QR code or client-side payment shortcut is used. The booking is created only after a server-side gateway order and signature verification succeed.
+                  </p>
                 </div>
               </div>
             </div>
@@ -952,7 +919,9 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
                   ) : (
                     <>
                       <span className="material-symbols-outlined text-[18px]">lock</span>
-                      <span>Pay ₹{advanceAmount} & Lock Slot</span>
+                      <span>
+                        {onPayDeposit ? `Pay ₹${advanceAmount} & Lock Slot` : 'Booking unavailable'}
+                      </span>
                     </>
                   )}
                 </button>

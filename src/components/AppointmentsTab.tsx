@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Appointment } from '../types';
+import { isAppointmentUpcoming } from '../lib/appointments';
 
 interface AppointmentsTabProps {
   appointments: Appointment[];
@@ -22,8 +23,11 @@ export const AppointmentsTab: React.FC<AppointmentsTabProps> = ({
   const [reviewNote, setReviewNote] = useState<string>('');
   const [reviewSubmittedId, setReviewSubmittedId] = useState<string | null>(null);
 
-  const upcomingApts = appointments.filter((a) => a.status === 'confirmed' || a.status === 'in_progress');
-  const completedApts = appointments.filter((a) => a.status === 'completed');
+  const upcomingApts = appointments.filter((a) => isAppointmentUpcoming(a));
+  // A stale confirmed record is still a visit record, not an upcoming booking.
+  const completedApts = appointments.filter(
+    (a) => a.status === 'completed' || (a.status === 'confirmed' && !isAppointmentUpcoming(a))
+  );
   const cancelledApts = appointments.filter((a) => a.status === 'cancelled');
 
   const displayedList =
@@ -111,7 +115,7 @@ export const AppointmentsTab: React.FC<AppointmentsTabProps> = ({
       ) : (
         <div className="flex flex-col gap-4">
           {displayedList.map((apt) => {
-            const isUpcoming = apt.status === 'confirmed';
+            const isUpcoming = isAppointmentUpcoming(apt);
 
             return (
               <div

@@ -199,7 +199,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
       return false;
     }
   });
-  const [recentSearches, setRecentSearches] = useState(['Hair Cut', 'Nail Art']);
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [selectedFilter, setSelectedFilter] = useState<string | null>(null);
 
   const handleDismissNearestBanner = (e: React.MouseEvent) => {
@@ -268,6 +268,22 @@ export const HomeTab: React.FC<HomeTabProps> = ({
     }, 4500);
     return () => clearInterval(interval);
   }, [isPaused, heroSlides.length]);
+
+  if (salons.length === 0) {
+    return (
+      <section className="flex-1 px-page-margin py-16 max-w-2xl mx-auto text-center">
+        <div className="w-16 h-16 mx-auto rounded-2xl bg-primary/10 text-primary flex items-center justify-center">
+          <span className="material-symbols-outlined text-[32px]">storefront</span>
+        </div>
+        <h1 className="mt-5 font-page-heading text-2xl font-bold text-on-surface">
+          Salon catalog unavailable
+        </h1>
+        <p className="mt-2 text-sm leading-relaxed text-on-surface-variant">
+          Nexora is not showing placeholder salons. Connect the canonical catalog service to load verified businesses, services, pricing, and locations.
+        </p>
+      </section>
+    );
+  }
 
   const handlePrevSlide = (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
@@ -401,7 +417,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
       <section className="px-page-margin pt-4 pb-3 flex items-start justify-between">
         <div>
           <h1 className="font-hero-heading-mobile text-[24px] sm:text-[28px] font-bold text-on-surface mb-0.5">
-            Hello, {user.name}
+            {user.name ? `Hello, ${user.name}` : 'Find your next salon'}
           </h1>
           <p className="font-body-md text-[14px] text-on-surface-variant">
             Find your perfect beauty experience

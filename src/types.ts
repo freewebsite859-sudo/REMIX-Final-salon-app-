@@ -91,6 +91,9 @@ export interface Appointment {
   notes?: string;
   createdAt: string;
   mapsUrl?: string;
+  /** Canonical salon coordinates copied from the backend booking record. */
+  salonLatitude?: number;
+  salonLongitude?: number;
 }
 
 export interface GroundingChunk {

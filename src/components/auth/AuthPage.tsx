@@ -115,95 +115,76 @@ export const AuthPage: React.FC<AuthPageProps> = ({
 
     if (!validateForm()) return;
 
+    if (!isSupabaseConfigured || !supabase) {
+      // Never simulate authentication. A local flag/profile is not a session
+      // and must not be allowed to unlock protected features.
+      setErrorMessage(
+        'Live authentication is unavailable. Configure the public Supabase URL and anon key, then rebuild the app.'
+      );
+      return;
+    }
+
     setIsLoading(true);
 
     try {
       if (authMode === 'login') {
-        // Login Flow
-        if (isSupabaseConfigured && supabase) {
-          const { data, error } = await supabase.auth.signInWithPassword({
-            email: email.trim(),
-            password,
-          });
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
 
-          if (error) {
-            // User-friendly error message format
-            if (error.message.toLowerCase().includes('invalid login credentials')) {
-              setErrorMessage('The email or password you entered is incorrect. Please try again.');
-            } else {
-              setErrorMessage(error.message || 'Failed to sign in. Please check your credentials.');
-            }
-            setIsLoading(false);
-            return;
+        if (error) {
+          if (error.message.toLowerCase().includes('invalid login credentials')) {
+            setErrorMessage('The email or password you entered is incorrect. Please try again.');
+          } else {
+            setErrorMessage(error.message || 'Failed to sign in. Please check your credentials.');
           }
-
           setIsLoading(false);
-          setSuccessMessage('Welcome back to Nexora Luxury Management.');
-          setTimeout(() => {
-            onAuthSuccess({
-              email: data.user?.email || email.trim(),
-              name: data.user?.user_metadata?.full_name || email.split('@')[0],
-              phone: data.user?.user_metadata?.mobile || '+91 98290 12345',
-            });
-          }, 800);
-        } else {
-          // Simulated local authentication with instant response
-          await new Promise((resolve) => setTimeout(resolve, 800));
-          setIsLoading(false);
-          setSuccessMessage('Welcome back to Nexora Luxury Management.');
-          setTimeout(() => {
-            onAuthSuccess({
-              email: email.trim(),
-              name: email.split('@')[0].replace('.', ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
-              phone: '+91 98290 12345',
-            });
-          }, 800);
+          return;
         }
+
+        setIsLoading(false);
+        setSuccessMessage('Welcome back to Nexora Luxury Management.');
+        onAuthSuccess({
+          email: data.user?.email || email.trim(),
+          name: data.user?.user_metadata?.full_name || email.split('@')[0],
+          phone: data.user?.user_metadata?.mobile || '',
+        });
       } else {
-        // Sign Up Flow
-        if (isSupabaseConfigured && supabase) {
-          const { data, error } = await supabase.auth.signUp({
-            email: email.trim(),
-            password,
-            options: {
-              data: {
-                full_name: fullName.trim(),
-                mobile: mobile.trim(),
-              },
+        const { data, error } = await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+          options: {
+            data: {
+              full_name: fullName.trim(),
+              mobile: mobile.trim(),
             },
+          },
+        });
+
+        if (error) {
+          setErrorMessage(error.message || 'Unable to create account. Please try again.');
+          setIsLoading(false);
+          return;
+        }
+
+        setIsLoading(false);
+        setSuccessMessage(
+          data.session
+            ? 'Account created. Welcome to Nexora Luxury Management.'
+            : 'Account created. Check your email to confirm your account before signing in.'
+        );
+        if (data.session) {
+          onAuthSuccess({
+            email: data.user?.email || email.trim(),
+            name: fullName.trim(),
+            phone: mobile.trim(),
           });
-
-          if (error) {
-            setErrorMessage(error.message || 'Unable to create account. Please try again.');
-            setIsLoading(false);
-            return;
-          }
-
-          setIsLoading(false);
-          setSuccessMessage('Account Created. Welcome to Nexora Luxury Management.');
-          setTimeout(() => {
-            onAuthSuccess({
-              email: data.user?.email || email.trim(),
-              name: fullName.trim(),
-              phone: mobile.trim(),
-            });
-          }, 1000);
-        } else {
-          // Simulated local registration
-          await new Promise((resolve) => setTimeout(resolve, 900));
-          setIsLoading(false);
-          setSuccessMessage('Account Created. Welcome to Nexora Luxury Management.');
-          setTimeout(() => {
-            onAuthSuccess({
-              email: email.trim(),
-              name: fullName.trim(),
-              phone: mobile.trim(),
-            });
-          }, 1000);
         }
       }
-    } catch {
+    } catch (err) {
       setIsLoading(false);
+      console.error('[Nexora] Authentication request failed:', err);
       setErrorMessage('A network error occurred. Please check your connection and try again.');
     }
   };

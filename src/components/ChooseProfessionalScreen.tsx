@@ -49,118 +49,6 @@ interface ProfessionalOption {
   };
 }
 
-const PROFESSIONALS_DATA: ProfessionalOption[] = [
-  {
-    id: 'aarav',
-    name: 'Aarav M.',
-    role: 'Senior Stylist',
-    avatar:
-      'https://lh3.googleusercontent.com/aida-public/AB6AXuCpvbwV8DVAqOSqvUmMP6KSYzesISjq83k-KXepJ9p4GDaaqFQP_pdbHorc1fCdhGx-Fc7SxEMOQDNUDX3YTMLEdEihUnm_jkyxixm84MvoeuWZddE-BD-Z1DQ0vkpGjeqiGDxk-0zQK9KsAsfvC_s0nuVH77QxsVVtEIy3IbK2CKiKqPUGH6fRTXIGrvvQPy6SRj7PFIyz4uoO_9JudWYP1PUfl1DxN_ldC8vMC_Z8Gy-yPExM5pbjnw',
-    rating: 4.9,
-    reviewCount: 120,
-    experience: '8+ Years Exp',
-    specialty: ['Hair Specialist', 'Precision Fades'],
-    isVerified: true,
-    statusColor: 'emerald',
-    maxContinuousSlotMinutes: 60,
-    availableSlots: [
-      { day: 'Today', time: '2:30 PM', durationMinutes: 45 },
-      { day: 'Today', time: '4:00 PM', durationMinutes: 60 },
-      { day: 'Tomorrow', time: '10:00 AM', durationMinutes: 45 },
-    ],
-    portfolioImages: [
-      'https://lh3.googleusercontent.com/aida/AP1WRLvtAexqWMX4CSwndvzz5LADlTmgaj4sMR5A_w89yWdIx4oz6RFW7gA6OTgh-rmN2Fgq9mc2u1PiVjBtTMNpZJbiZLpFyAnHplJMhaITJ-a0xVqYD47ibt5iQF6zmaVKBzloa2VzKuF22VgAF5HQwKIQO6GhU4N7V10N22bUU8fsyc4FmiKuKcvd9OUtfkpdzHBA_rRV6rlEHoo80mRE4XFRlLd051uXuL8n8hmX6bPZ4SANDtwSX6s3wyT1',
-      'https://lh3.googleusercontent.com/aida/AP1WRLtukkSGwwO2_q2VvROHAw1Fj8jvbmxx034UUvopSFaEB8w3Q_JjEZko4plC85iMwk9YWmNYDXNdmKQXwwX1W2gpEjo6vgAPKfK1g4BHtfXAuraRA_p1KnLmwIMnuhyXT3oJ4qj6yoxTDxjBM6BIlx-I1W9wZRV3rc7FSPKWraAHl-9ia_UH-X-2OLwMVK1pImyGKQHIO8YTkmgrTX8WrfqDGvZ3NPNH8HxbPYWjwmjMvtyHkNcOgnwsFGN7',
-      'https://lh3.googleusercontent.com/aida/AP1WRLvtAexqWMX4CSwndvzz5LADlTmgaj4sMR5A_w89yWdIx4oz6RFW7gA6OTgh-rmN2Fgq9mc2u1PiVjBtTMNpZJbiZLpFyAnHplJMhaITJ-a0xVqYD47ibt5iQF6zmaVKBzloa2VzKuF22VgAF5HQwKIQO6GhU4N7V10N22bUU8fsyc4FmiKuKcvd9OUtfkpdzHBA_rRV6rlEHoo80mRE4XFRlLd051uXuL8n8hmX6bPZ4SANDtwSX6s3wyT1',
-    ],
-    recentReview: {
-      text: "Aarav gave me the best haircut I've had in years. Very professional!",
-      timeAgo: '2 days ago',
-    },
-  },
-  {
-    id: 'priya',
-    name: 'Priya S.',
-    role: 'Master Colorist',
-    avatar:
-      'https://lh3.googleusercontent.com/aida-public/AB6AXuAtSrifepqcTOFujIfnaav10v_FCKl7B4WE6PQ0g9ihLzC3rqUMhQR-io6o_VgSiNMvBYhZs7w5NvTLrAEs9DsGy85SSFp_w31eGaewTVWkbl0riGTCcSiXmr3K9Fc0saP7guQ8NiCX_jWPgWTDp6jxrpPwp75LIjE6XhuGd2VDuyZlInlaZg_K4oyxJqTpCW4QS6cjSez31aUT8e_Au7jz_D4myAWFiYbgKujbdZto32l7S-ZZoaYguw',
-    rating: 4.7,
-    reviewCount: 85,
-    experience: '10 Years Exp',
-    specialty: ['Color Expert', 'Balayage'],
-    isTopRated: true,
-    statusColor: 'amber',
-    maxContinuousSlotMinutes: 60,
-    availableSlots: [
-      { day: 'Tomorrow', time: '11:00 AM', durationMinutes: 60 },
-      { day: 'Tomorrow', time: '1:30 PM', durationMinutes: 60 },
-      { day: 'Tomorrow', time: '4:00 PM', durationMinutes: 45, isDimmed: true },
-    ],
-    recentReview: {
-      text: 'Priya is a true artist. My hair color looks natural and vibrant!',
-      timeAgo: '1 week ago',
-    },
-  },
-];
-
-const DEFAULT_CATALOG_SERVICES: SalonService[] = [
-  {
-    id: 'cat-srv-1',
-    name: 'Signature Hair Cut & Wash',
-    category: 'hair',
-    duration: 30,
-    price: 499,
-    discountPrice: 399,
-    description: 'Precision haircut with clarifying wash and thermal blow-dry finish.',
-    popular: true,
-  },
-  {
-    id: 'cat-srv-2',
-    name: 'L’Oréal Deep Hair Spa',
-    category: 'hair',
-    duration: 45,
-    price: 899,
-    discountPrice: 699,
-    description: 'Nourishing cream bath massage, steam infusion & frizz control mask.',
-    popular: true,
-  },
-  {
-    id: 'cat-srv-3',
-    name: 'Beard Sculpt & Hot Towel',
-    category: 'grooming',
-    duration: 20,
-    price: 249,
-    description: 'Razor sharp contour line-up, warm aromatic towel & beard oil.',
-    popular: true,
-  },
-  {
-    id: 'cat-srv-4',
-    name: 'Relaxing Head & Neck Massage',
-    category: 'spa',
-    duration: 25,
-    price: 349,
-    description: 'Herbal oil pressure-point massage relieving tension and stress.',
-  },
-  {
-    id: 'cat-srv-5',
-    name: 'Instant Radiance Clean-Up',
-    category: 'skin',
-    duration: 30,
-    price: 599,
-    discountPrice: 499,
-    description: 'Gentle fruit enzyme exfoliation, steam, blackhead removal & soothing pack.',
-  },
-  {
-    id: 'cat-srv-6',
-    name: 'Balayage / Global Hair Color',
-    category: 'hair',
-    duration: 90,
-    price: 2499,
-    discountPrice: 1999,
-    description: 'Custom sun-kissed dimension using premium ammonia-free tones.',
-  },
-];
-
 // Helper functions for duration calculation and formatting
 function formatDurationDisplay(minutes: number): { formatted: string; short: string } {
   if (minutes < 60) {
@@ -228,38 +116,35 @@ export const ChooseProfessionalScreen: React.FC<ChooseProfessionalScreenProps> =
   const availableServices = useMemo(() => {
     const map = new Map<string, SalonService>();
 
-    // Add salon's own services
-    if (salon?.services && salon.services.length > 0) {
-      salon.services.forEach((s) => map.set(s.id, s));
-    }
-
-    // Add passed services
-    if (services && services.length > 0) {
-      services.forEach((s) => map.set(s.id, s));
-    }
-    if (service) {
-      map.set(service.id, service);
-    }
-
-    // Add default catalog services if not already present
-    DEFAULT_CATALOG_SERVICES.forEach((s) => {
-      const exists = Array.from(map.values()).some(
-        (existing) => existing.name.toLowerCase() === s.name.toLowerCase() || existing.id === s.id
-      );
-      if (!exists) {
-        map.set(s.id, s);
-      }
-    });
+    // Services are limited to the selected salon and the current booking
+    // selection. The previous implementation appended an unrelated catalog.
+    salon?.services?.forEach((item) => map.set(item.id, item));
+    services?.forEach((item) => map.set(item.id, item));
+    if (service) map.set(service.id, service);
 
     return Array.from(map.values());
   }, [salon, service, services]);
+
+  const professionalOptions = useMemo<ProfessionalOption[]>(
+    () =>
+      (salon?.stylists || []).map((stylist) => ({
+        ...stylist,
+        // Availability is deliberately empty until the canonical availability
+        // API supplies it. It must not be fabricated in the client.
+        reviewCount: 0,
+        statusColor: 'gray',
+        maxContinuousSlotMinutes: 0,
+        availableSlots: [],
+      })),
+    [salon]
+  );
 
   // Selected Services state (multi-service toggle support)
   const [selectedServices, setSelectedServices] = useState<SalonService[]>(() => {
     if (services && services.length > 0) return services;
     if (service) return [service];
     if (salon?.services && salon.services.length > 0) return [salon.services[0]];
-    return [availableServices[0] || DEFAULT_CATALOG_SERVICES[0]];
+    return availableServices[0] ? [availableServices[0]] : [];
   });
 
   const [isServicesExpanded, setIsServicesExpanded] = useState<boolean>(false);
@@ -272,9 +157,7 @@ export const ChooseProfessionalScreen: React.FC<ChooseProfessionalScreenProps> =
     day: 'Today',
     time: '2:30 PM',
   });
-  const [showSimulatedWarning, setShowSimulatedWarning] = useState<boolean>(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
-  const [viewState, setViewState] = useState<'normal' | 'empty' | 'error'>('normal');
 
   // Compute total service duration & total price
   const totalDuration = useMemo(() => {
@@ -296,8 +179,8 @@ export const ChooseProfessionalScreen: React.FC<ChooseProfessionalScreenProps> =
   // Selected Professional Object (if specific stylist is chosen)
   const selectedProfessional = useMemo(() => {
     if (selectedProfessionalId === 'any') return null;
-    return PROFESSIONALS_DATA.find((p) => p.id === selectedProfessionalId) || null;
-  }, [selectedProfessionalId]);
+    return professionalOptions.find((p) => p.id === selectedProfessionalId) || null;
+  }, [professionalOptions, selectedProfessionalId]);
 
   // Slot duration length calculation & overage detection
   const slotOverageData = useMemo(() => {
@@ -319,9 +202,11 @@ export const ChooseProfessionalScreen: React.FC<ChooseProfessionalScreenProps> =
 
     const slotDuration = activeSlot
       ? activeSlot.durationMinutes
-      : selectedProfessional.maxContinuousSlotMinutes || 45;
+      : selectedProfessional.maxContinuousSlotMinutes;
 
-    const isExceeded = totalDuration > slotDuration;
+    // A missing availability value is not a 45-minute slot. Treat it as
+    // unknown and require the canonical booking service to resolve it.
+    const isExceeded = slotDuration > 0 && totalDuration > slotDuration;
     const exceededMinutes = isExceeded ? totalDuration - slotDuration : 0;
     const slotLabel = activeSlot
       ? `${activeSlot.day} at ${activeSlot.time}`
@@ -360,27 +245,38 @@ export const ChooseProfessionalScreen: React.FC<ChooseProfessionalScreenProps> =
   };
 
   // Display name for selected professional
-  let selectedDisplayName = 'Any Available Professional';
-  if (selectedProfessionalId === 'aarav') selectedDisplayName = 'Aarav M.';
-  if (selectedProfessionalId === 'priya') selectedDisplayName = 'Priya S.';
+  const selectedDisplayName = selectedProfessional?.name || 'Any Available Professional';
 
   const handleContinue = () => {
-    const effectiveServices = selectedServices.length > 0 ? selectedServices : [availableServices[0]];
+    const effectiveServices = selectedServices.length > 0
+      ? selectedServices
+      : availableServices[0]
+      ? [availableServices[0]]
+      : [];
 
-    // If slot duration is exceeded, inform user and allow smooth flow or prompt
+    if (effectiveServices.length === 0) {
+      showToast('No canonical service records are available for this salon.');
+      return;
+    }
+
+    if (selectedProfessionalId !== 'any' && selectedProfessional && selectedProfessional.availableSlots.length === 0) {
+      showToast('Live availability is not available for this professional yet. No booking was created.');
+      return;
+    }
+
+    // A capacity conflict must be resolved explicitly. Never silently replace
+    // the selected professional with another owner of the booking.
     if (selectedProfessionalId !== 'any' && slotOverageData.isExceeded) {
       showToast(
-        `Selected ${totalDuration}m services exceed ${selectedDisplayName}'s ${slotOverageData.slotDuration}m slot. Switched to Any Available for flexible scheduling.`
+        `Selected ${totalDuration}m services exceed ${selectedDisplayName}'s ${slotOverageData.slotDuration}m slot. Choose another slot or Any Available.`
       );
-      // Auto fallback to flexible team scheduling so booking succeeds seamlessly
-      onContinueBooking(null, selectedSlot || undefined, effectiveServices);
       return;
     }
 
     if (selectedProfessionalId === 'any') {
       onContinueBooking(null, selectedSlot || undefined, effectiveServices);
     } else {
-      const match = PROFESSIONALS_DATA.find((p) => p.id === selectedProfessionalId);
+      const match = professionalOptions.find((p) => p.id === selectedProfessionalId);
       if (match) {
         const stylistObj: Stylist = {
           id: match.id,
@@ -793,56 +689,22 @@ export const ChooseProfessionalScreen: React.FC<ChooseProfessionalScreenProps> =
             </div>
           </div>
 
-          {/* Simulated unavailability warning (Toggleable/Dismissible) */}
-          {showSimulatedWarning && (
-            <div id="unavailability-warning" className="px-page-margin mb-4">
-              <div className="bg-warning-amber/10 border border-warning-amber/20 rounded-xl p-3 flex items-start gap-3 shadow-xs">
-                <span className="material-symbols-outlined text-warning-amber text-[20px]">warning</span>
-                <div className="flex-1">
-                  <p className="text-[12px] font-medium text-on-surface">Professional Unavailable</p>
-                  <p className="text-[11px] text-on-surface-variant">
-                    Your previously selected professional is no longer available for this slot. Please choose another.
-                  </p>
-                </div>
-                <button
-                  onClick={() => setShowSimulatedWarning(false)}
-                  className="text-on-surface-variant hover:text-on-surface"
-                >
-                  <span className="material-symbols-outlined text-[18px]">close</span>
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Professional Selection Header & Simulation Controls */}
+          {/* Professional selection header */}
           <div className="px-page-margin mb-3 flex items-center justify-between gap-2">
             <div>
               <h2 className="text-[14px] font-bold text-on-surface">
                 Select Stylist / Specialist
               </h2>
               <span className="text-[11px] text-on-surface-variant">
-                Matching available professionals for {totalDuration} min session
+                {professionalOptions.length > 0
+                  ? `Select a professional listed for ${salonName}. Live availability is checked during booking.`
+                  : 'No professional records were returned for this salon.'}
               </span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={() => setShowSimulatedWarning(!showSimulatedWarning)}
-                className="px-2.5 py-1 text-[11px] rounded-full border border-outline-variant text-on-surface-variant hover:border-nexora-pink hover:text-nexora-pink transition-colors"
-                title="Toggle slot warning banner"
-              >
-                {showSimulatedWarning ? 'Hide Alert' : 'Simulate Alert'}
-              </button>
-              <button
-                onClick={() => setViewState(viewState === 'normal' ? 'empty' : 'normal')}
-                className="px-2.5 py-1 text-[11px] rounded-full border border-outline-variant text-on-surface-variant hover:border-nexora-pink hover:text-nexora-pink transition-colors"
-              >
-                {viewState === 'empty' ? 'Show All' : 'Simulate Empty'}
-              </button>
             </div>
           </div>
 
           {/* Normal View: Professionals List */}
-          {viewState === 'normal' && (
+          <>
             <div className="px-page-margin flex flex-col gap-component-gap">
               {/* Option 1: Any Available Professional */}
               <label
@@ -879,8 +741,8 @@ export const ChooseProfessionalScreen: React.FC<ChooseProfessionalScreenProps> =
                       <span className="font-card-title text-card-title text-on-surface font-bold">
                         Any Available Professional
                       </span>
-                      <span className="bg-emerald-500/10 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                        Up to 180 min capacity
+                      <span className="bg-surface-container text-on-surface-variant text-[10px] font-bold px-2 py-0.5 rounded-full">
+                        Availability checked at booking
                       </span>
                     </div>
                     <span className="font-body-md text-metadata text-on-surface-variant leading-tight text-[12px] mt-0.5">
@@ -907,7 +769,7 @@ export const ChooseProfessionalScreen: React.FC<ChooseProfessionalScreenProps> =
               </label>
 
               {/* Dynamic / Detailed Professionals List */}
-              {PROFESSIONALS_DATA.map((prof) => {
+              {professionalOptions.map((prof) => {
                 const isSelected = selectedProfessionalId === prof.id;
 
                 // Check if this professional has an active slot selected and if that slot length is exceeded
@@ -915,9 +777,9 @@ export const ChooseProfessionalScreen: React.FC<ChooseProfessionalScreenProps> =
                   (s) => s.day === selectedSlot?.day && s.time === selectedSlot?.time
                 ) || prof.availableSlots[0];
 
-                const currentSlotLimit = activeSlotForThisProf?.durationMinutes || prof.maxContinuousSlotMinutes || 45;
-                const isSlotDurationExceeded = isSelected && totalDuration > currentSlotLimit;
-                const exceededByMin = totalDuration - currentSlotLimit;
+                const currentSlotLimit = activeSlotForThisProf?.durationMinutes || prof.maxContinuousSlotMinutes;
+                const isSlotDurationExceeded = isSelected && currentSlotLimit > 0 && totalDuration > currentSlotLimit;
+                const exceededByMin = Math.max(0, totalDuration - currentSlotLimit);
 
                 return (
                   <label
@@ -1008,7 +870,9 @@ export const ChooseProfessionalScreen: React.FC<ChooseProfessionalScreenProps> =
                           </div>
                           <div className="inline-flex items-center gap-1 bg-surface-variant text-on-surface-variant text-[11px] font-medium px-2 py-1 rounded-md">
                             <span className="material-symbols-outlined text-[14px]">schedule</span>
-                            Max Slot: {prof.maxContinuousSlotMinutes} min
+                            {prof.maxContinuousSlotMinutes > 0
+                              ? `Max Slot: ${prof.maxContinuousSlotMinutes} min`
+                              : 'Live availability at booking'}
                           </div>
                         </div>
 
@@ -1205,53 +1069,17 @@ export const ChooseProfessionalScreen: React.FC<ChooseProfessionalScreenProps> =
                 );
               })}
             </div>
-          )}
+          </>
 
-          {/* Empty State */}
-          {viewState === 'empty' && (
-            <div
-              id="empty-state"
-              className="mx-page-margin flex flex-col items-center justify-center py-12 px-4 text-center bg-surface rounded-2xl border border-dashed border-neutral-soft-gray"
-            >
-              <span className="material-symbols-outlined text-[48px] text-on-surface-variant mb-4">
-                person_off
-              </span>
+          {professionalOptions.length === 0 && (
+            <div className="mx-page-margin py-8 px-4 text-center bg-surface rounded-2xl border border-dashed border-neutral-soft-gray">
+              <span className="material-symbols-outlined text-[40px] text-on-surface-variant mb-3">person_off</span>
               <h3 className="font-card-title text-[16px] font-bold text-on-surface mb-2">
-                No professionals available
+                No professional records available
               </h3>
-              <p className="text-metadata text-on-surface-variant mb-6 max-w-xs">
-                We couldn't find any professionals for this service at your location.
+              <p className="text-metadata text-on-surface-variant">
+                Availability is supplied by the salon booking service at checkout.
               </p>
-              <button
-                onClick={() => {
-                  setViewState('normal');
-                  setSelectedProfessionalId('any');
-                }}
-                className="px-6 py-2.5 bg-primary text-on-primary rounded-full font-button-text text-button-text font-bold shadow-sm hover:bg-nexora-pink transition-colors"
-              >
-                Choose Any Available
-              </button>
-            </div>
-          )}
-
-          {/* Error State */}
-          {viewState === 'error' && (
-            <div
-              id="error-state"
-              className="mx-page-margin flex flex-col items-center justify-center py-12 px-4 text-center bg-surface rounded-2xl border border-error/20"
-            >
-              <span className="material-symbols-outlined text-[48px] text-error mb-4">error</span>
-              <h3 className="font-card-title text-[16px] font-bold text-on-surface mb-2">Failed to load</h3>
-              <p className="text-metadata text-on-surface-variant mb-6">
-                Something went wrong while fetching professionals.
-              </p>
-              <button
-                onClick={() => setViewState('normal')}
-                className="px-6 py-2 border border-primary text-primary rounded-full font-button-text text-button-text flex items-center gap-2 hover:bg-primary/5 transition-colors"
-              >
-                <span className="material-symbols-outlined text-[18px]">refresh</span>
-                Retry
-              </button>
             </div>
           )}
         </div>
