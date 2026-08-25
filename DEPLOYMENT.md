@@ -80,6 +80,10 @@ Requires a real Supabase user. Create a throwaway one in
 **Authentication → Users** if needed.
 
 ```bash
+# Option A: put the values in .env, then run:
+npm run verify:live
+
+# Option B: pass them inline for a one-off run:
 VITE_SUPABASE_URL=https://qwaehqsmodekbgvnaavz.supabase.co \
 VITE_SUPABASE_ANON_KEY=<anon key> \
 NEXORA_TEST_EMAIL=<user email> \

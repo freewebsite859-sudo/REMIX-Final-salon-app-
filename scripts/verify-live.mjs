@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import 'dotenv/config';
+
 /**
  * Nexora LIVE end-to-end verification — NO STUBS.
  *
