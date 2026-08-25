@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActiveTab, Salon, SalonService, Stylist, Appointment, UserProfile, SavedServiceRef } from './types';
-import { DEMO_SALONS } from './data/demoCatalog';
+import { useCatalog } from './hooks/useCatalog';
 import { Header } from './components/Header';
 import { BottomNav } from './components/BottomNav';
 import { HomeTab } from './components/HomeTab';
@@ -19,7 +19,7 @@ import { ChooseProfessionalScreen } from './components/ChooseProfessionalScreen'
 import { BookingSummaryModal } from './components/BookingSummaryModal';
 import { AuthPage } from './components/auth/AuthPage';
 import { PasswordUpdatePage } from './components/auth/PasswordUpdatePage';
-import { isNexoraDemoMode, isSupabaseConfigured } from './lib/supabase';
+import { isSupabaseConfigured } from './lib/supabase';
 import { useAuth } from './providers/AuthProvider';
 import { useLocationSync } from './hooks/useLocationSync';
 import { clearUserLocation, syncUserLocation } from './lib/locationService';
@@ -207,6 +207,7 @@ export default function App() {
     isLoading: isAuthLoading,
     signOut: nexoraSignOut,
   } = useAuth();
+  const catalog = useCatalog();
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('home');
   // Auth state is derived exclusively from Supabase. A profile/preferences
@@ -215,7 +216,7 @@ export default function App() {
   const [user, setUser] = useState<UserProfile>(EMPTY_USER);
   const isAuthenticated = Boolean(session?.user);
   const [currentLocation, setCurrentLocation] = useState<string>('Mansarovar, Jaipur');
-  const [salons, setSalons] = useState<Salon[]>(isNexoraDemoMode ? DEMO_SALONS : []);
+  const salons = catalog.salons;
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [savedSalonIds, setSavedSalonIds] = useState<string[]>([]);
   const [savedServices, setSavedServices] = useState<SavedServiceRef[]>([]);
@@ -301,7 +302,6 @@ export default function App() {
       setAppointments([]);
       setSavedSalonIds([]);
       setSavedServices([]);
-      setSalons(isNexoraDemoMode ? DEMO_SALONS : []);
       setCurrentLocation('Mansarovar, Jaipur');
       return;
     }
@@ -335,8 +335,27 @@ export default function App() {
     );
     // Reviews edited in memory are not authoritative and must not bleed into a
     // different account after switching sessions.
-    setSalons(isNexoraDemoMode ? DEMO_SALONS : []);
   }, [userId, session?.user]);
+
+  // Rebind open views to the newest catalog snapshot. This lets a remote row
+  // replace its fallback counterpart without leaving a stale modal behind.
+  useEffect(() => {
+    const rebindSalon = (current: Salon | null): Salon | null => {
+      if (!current) return null;
+      return salons.find((salon) => salon.id === current.id) || null;
+    };
+    setSelectedSalonForDetail((current) => rebindSalon(current));
+    setSelectedSalonForBooking((current) => rebindSalon(current));
+    setBookingSummaryDraft((current) => {
+      if (!current) return null;
+      const nextSalon = rebindSalon(current.salon);
+      if (!nextSalon) return null;
+      const nextServices = current.services.filter((service) =>
+        nextSalon.services.some((catalogService) => catalogService.id === service.id)
+      );
+      return nextServices.length ? { ...current, salon: nextSalon, services: nextServices } : null;
+    });
+  }, [salons]);
 
   // ---------------------------------------------------------------------------
   // NEXORA LIVE LOCATION SYNC

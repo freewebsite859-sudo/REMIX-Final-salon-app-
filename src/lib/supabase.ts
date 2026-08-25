@@ -81,9 +81,9 @@ export const isSupabaseConfigured = Boolean(
 );
 
 /**
- * Static catalog data is available only when explicitly enabled for local
- * design/demo work. Production builds must read salons/services from the
- * canonical backend; silently substituting mock records is unsafe.
+ * Explicit QA switch for the hybrid catalog. In normal operation the same
+ * fixture is used only as a graceful fallback when the canonical catalog is
+ * empty/unavailable; valid remote rows always win and are never mixed with it.
  */
 export const isNexoraDemoMode = readEnv('VITE_NEXORA_DEMO_MODE') === 'true';
 

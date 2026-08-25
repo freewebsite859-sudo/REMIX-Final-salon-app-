@@ -46,9 +46,12 @@ Until this step is done the app remains a read-only shell: no authentication,
 booking, payment, or location sync is available. Authentication is never
 simulated and a local profile cannot unlock protected features.
 
-The static design catalog is disabled by default. It can be enabled only for
-local visual QA with `VITE_NEXORA_DEMO_MODE=true`; keep it unset or `false` in
-Preview and Production. A demo catalog is not a production data source.
+The customer app uses a hybrid catalog strategy. It renders the in-repo
+catalog immediately as a graceful fallback while Supabase is unavailable or
+empty, then atomically replaces it with valid Supabase salon rows. It never
+mixes fallback rows into a non-empty real catalog. Set `VITE_NEXORA_DEMO_MODE=true`
+only to force the fixture for visual QA; a demo catalog is never a production
+source of truth.
 
 ---
 
@@ -168,6 +171,7 @@ Location requires a **secure context** (HTTPS or `localhost`); browsers block
 npm run typecheck   # 0 errors
 npm run build       # 0 errors (with a bundle-size warning)
 npm run test:nexora # 22/22 auth + location integration checks
+npm run test:catalog # 7/7 hybrid catalog strategy checks
 npm run test:smoke  # renders cleanly
 npm run verify:live # requires real anon key + test user + applied RLS
 ```

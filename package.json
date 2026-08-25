@@ -10,6 +10,7 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "test:nexora": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/nexora.integration.test.tsx",
+    "test:catalog": "tsx test/catalog.strategy.test.mts",
     "test:smoke": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/smoke.render.mts",
     "typecheck": "tsc --noEmit",
     "verify:live": "node scripts/verify-live.mjs"

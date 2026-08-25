@@ -10,7 +10,7 @@
 
 This checkout contains one customer-web repository. The requested six-application ecosystem is not present: there are no five additional repositories, no owner/admin app, no workspace app, no canonical organization/membership/salon schema, no booking API, and no Razorpay order/signature/webhook implementation available to audit or connect against.
 
-The code repair pass removes false-success behavior: the browser no longer treats local storage as authentication, creates local confirmed bookings, displays a static payment QR, invents map routes/distances, or presents fabricated seeded account data as a real account. The application now fails closed where the canonical backend is missing.
+The code repair pass removes false-success behavior: the browser no longer treats local storage as authentication, creates local confirmed bookings, displays a static payment QR, invents map routes/distances, or presents fabricated seeded account data as a real account. Catalog data now uses a hybrid strategy: fallback catalog data is shown while the canonical Supabase catalog is empty/unavailable, and a valid non-empty remote catalog atomically replaces it without mixing rows.
 
 ## 1. Application inventory
 
@@ -64,7 +64,7 @@ The repository documents a Supabase project URL and a shared auth storage key, b
 | BUG-004 | Database/RLS | P0 | Only `user_locations` has a policy contract; tenant/domain tables and their RLS are absent. | Organization, salon, booking and cross-tenant isolation cannot be proven. | Blocked: requires canonical migrations and remote Supabase access. |
 | BUG-005 | Account bootstrap | P1 | Seeded `Sarah` profile, saved salons, and past appointments loaded for any browser. | Guests saw another person's data and fake history. | Fixed: blank guest profile and empty drafts; no seeded account state. |
 | BUG-006 | State/cache | P1 | Profile/appointments/saved data used unscoped localStorage keys. | User A data could appear for User B on the same origin. | Fixed: UI cache is scoped by authoritative Supabase user ID and cleared on sign-out. |
-| BUG-007 | Catalog/data | P1 | All salon/service data was a static in-repo catalog with no canonical catalog query. | Customers could see data that is not from the database. | Fixed defensively: catalog is disabled by default; static catalog is explicit `VITE_NEXORA_DEMO_MODE=true` only. Canonical integration remains blocked. |
+| BUG-007 | Catalog/data | P1 | All salon/service data was a static in-repo catalog with no canonical catalog query. | Customers could see data that is not from the database. | Fixed defensively: Supabase catalog fetch now wins atomically when valid/non-empty; the fixture is used only when the remote root is empty/unavailable. Canonical schema verification remains blocked. |
 | BUG-008 | Profile/org/workspace | P1 | No profile, organization, membership, salon, or idempotent workspace bootstrap exists. | Owner journey cannot be executed. | Blocked: requires the existing canonical RPC/API and migrations. |
 | BUG-009 | Schema/migrations | P1 | No migration chain, M28 sequence, or actual-schema snapshot is in this repository. | Expected vs actual schema cannot be compared or safely repaired. | Blocked: requires canonical migration source and dashboard/CLI access. |
 | BUG-010 | Location/map | P1 | Appointment fallback invented coordinates; map preview invented route geometry, traffic, travel time, and fallback distance. | Misleading location/distance and wrong map pins. | Fixed: no fabricated appointment coordinates; map component now shows validated catalog coordinates and links to a real map. |
@@ -97,12 +97,12 @@ P3: 0
 - **Password reset:** fixed callback URL and added a real Supabase recovery password update page.
 - **Identity/cache isolation:** removed seeded user/history; namespaced UI cache by Supabase user ID; reset state on user change; removed unsafe `localStorage.clear()` fallback.
 - **Booking/payment fail-closed behavior:** removed client-generated booking confirmation, fake QR/UPI payment, `FAIL` coupon simulation, and quick-reserve success. Added an explicit `onPayDeposit` server adapter contract for a future Razorpay integration.
-- **Catalog integrity:** renamed the static fixture to `src/data/demoCatalog.ts`, gated it behind `VITE_NEXORA_DEMO_MODE`, and removed synthetic category/service/professional append behavior.
+- **Catalog integrity:** added `src/lib/catalogService.ts` and `src/hooks/useCatalog.ts` to query Supabase `salons`, `services`, `categories`, and `professionals`; valid remote salon data replaces fallback rows atomically, while empty/error results retain the fallback catalog. Removed synthetic category/service/professional append behavior.
 - **Data integrity:** removed fake gallery media/metadata, fake review distribution, fake referral code/rewards, fake appointment fallback coordinates, and fabricated travel/map details.
 - **Date correctness:** added `src/lib/appointments.ts` and stopped presenting stale confirmed appointments as upcoming.
 - **Location safety:** validated latitude/longitude ranges in the client service and added idempotent DB check constraints to `supabase/policies/user_locations.sql`.
 - **AI API behavior:** removed runtime fabricated fallback responses, bounded JSON input, added a per-IP request limit, and made provider failures visible to the frontend.
-- **Documentation:** updated `DEPLOYMENT.md` and `.env.example` to state the actual external prerequisites and the explicit demo-only catalog switch.
+- **Documentation:** updated `DEPLOYMENT.md` and `.env.example` to state the actual external prerequisites, hybrid catalog behavior, table overrides, and optional demo-only force switch.
 
 ## 5. Database/auth/RLS findings
 
@@ -138,6 +138,7 @@ P3: 0
 | Service-role browser-key guard | PASS | `test/security.check.mts` rejected a service-role-shaped key |
 | Server health | PASS | `/api/health` returned HTTP 200 |
 | AI unavailable behavior | PASS | AI route returned HTTP 503 without a Gemini key; no fabricated response |
+| Hybrid catalog strategy | PASS | `npm run test:catalog` — 7/7 checks; remote rows replace fallback, empty/error keeps fallback, child failures never mix fake children |
 | Live Supabase verification | BLOCKED | `npm run verify:live` stopped because `VITE_SUPABASE_ANON_KEY` is missing |
 | Real owner/customer/payment E2E | BLOCKED | Canonical schema, five apps, test users, catalog/booking/payment API, and gateway are absent |
 | Browser clean-storage/direct-URL/multi-tenant E2E | BLOCKED | No real auth/backend and no browser automation runner/fixtures are available |
@@ -173,7 +174,7 @@ Only the requested status values are used below.
 3. **Set public Supabase configuration in every environment.** Set `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and the same `VITE_SUPABASE_STORAGE_KEY` in Development, Preview, and Production, then rebuild. Expected result: `npm run verify:live` reaches sign-in instead of stopping at the missing-key check.
 4. **Apply and verify location SQL.** In the canonical Supabase project, inspect whether `user_locations` already exists, reconcile its schema non-destructively, apply `supabase/policies/user_locations.sql`, and run the live script with a throwaway user. Expected result: own-row write/read/delete passes and foreign-user/anonymous writes are rejected.
 5. **Implement canonical bootstrap.** Connect the existing profile/org/membership/salon/workspace RPC or Edge Function; do not create parallel tables. It must be authenticated, authorized, idempotent, and return stable IDs. Expected result: new user → profile → organization → membership → salon → workspace works after refresh/direct URL.
-6. **Connect the catalog.** Replace the disabled demo fixture with the canonical salon/service/location API and map its actual response types. Expected result: customer pages show only database salons/services, valid coordinates, and server-provided prices/availability.
+6. **Verify the catalog contract.** Confirm the configured table names and column/relationship mapping against the canonical schema. The app now queries `salons`, `services`, `categories`, and `professionals`; when the root query is empty or unavailable it retains the fallback catalog, and when valid remote salons exist it shows only normalized remote salons/services/professionals. Expected result: remote additions replace the fallback on refresh without mixed tenants or fabricated rows.
 7. **Implement booking/availability.** Provide a server-side availability hold, expiry, duplicate protection, cancellation/reschedule policy, customer/salon ownership checks, and an idempotent booking mutation. Wire it to `BookingPaymentRequest`. Expected result: two concurrent clients cannot reserve the same slot and refresh never duplicates a booking.
 8. **Implement Razorpay server-side.** Configure backend-only Razorpay key ID/secret, order creation, amount validation from canonical service prices, checkout callback handling, signature verification, webhook reconciliation, failure/cancellation/refund handling, and unique payment constraints. Expected result: the booking is confirmed only after verified payment, never from localStorage or a client amount.
 9. **Configure deployment and tenants.** Set the actual hosting target, `nexora.site`, `www`, wildcard/custom domains, HTTPS, Supabase redirect URLs, payment webhook URL, and tenant hostname resolution with server-side authorization. Expected result: a manipulated hostname cannot resolve or read another tenant.
@@ -185,6 +186,6 @@ Only the requested status values are used below.
 - Auth/session: `src/App.tsx`, `src/providers/AuthProvider.tsx`, `src/components/auth/AuthPage.tsx`, `src/components/auth/PasswordResetModal.tsx`, `src/components/auth/PasswordUpdatePage.tsx`, `src/lib/authRoutes.ts` usage.
 - Data integrity/flows: `src/components/BookingModal.tsx`, `src/components/BookingSummaryModal.tsx`, `src/components/QuickNearestModal.tsx`, `src/components/ServiceCategoryScreen.tsx`, `src/components/ChooseProfessionalScreen.tsx`, `src/components/SalonDetailModal.tsx`, `src/components/SalonPhotoGallery.tsx`, `src/components/StaticMapPreview.tsx`, `src/components/AppointmentsTab.tsx`, `src/components/ProfileTab.tsx`, `src/components/HomeTab.tsx`, `src/components/ExploreTab.tsx`.
 - Backend/security: `server.ts`, `src/lib/locationService.ts`, `src/hooks/useLocationSync.ts`, `src/lib/supabase.ts`, `supabase/policies/user_locations.sql`, `src/types.ts`.
-- Data/config/docs: `src/data/demoCatalog.ts`, `src/lib/appointments.ts`, `.env.example`, `DEPLOYMENT.md`.
+- Catalog/tests/data/config/docs: `src/lib/catalogService.ts`, `src/hooks/useCatalog.ts`, `test/catalog.strategy.test.mts`, `package.json`, `src/data/demoCatalog.ts`, `src/lib/appointments.ts`, `.env.example`, `DEPLOYMENT.md`.
 
 No remote database, hosting, DNS, payment dashboard, or external Supabase setting was changed by this agent.
