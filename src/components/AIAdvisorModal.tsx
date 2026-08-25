@@ -237,8 +237,6 @@ export const AIAdvisorModal: React.FC<AIAdvisorModalProps> = ({
           stylingGoal,
           location: {
             area: currentLocation,
-            latitude: 26.8533,
-            longitude: 75.7681,
           },
         }),
       });
@@ -286,8 +284,6 @@ export const AIAdvisorModal: React.FC<AIAdvisorModalProps> = ({
           },
           location: {
             area: currentLocation,
-            latitude: 26.8533,
-            longitude: 75.7681,
           },
         }),
       });
@@ -314,21 +310,17 @@ export const AIAdvisorModal: React.FC<AIAdvisorModalProps> = ({
     );
 
     if (foundSalon && onBookService) {
+      // AI recommendations are advisory only. Never synthesize a service,
+      // price, or duration that is not present in the canonical salon record.
       const foundService = foundSalon.services.find(
         (srv) => srv.id === rec.serviceId || srv.name.toLowerCase().includes(rec.serviceName.toLowerCase())
-      ) || {
-        id: rec.serviceId,
-        name: rec.serviceName,
-        category: (rec.category as any) || 'hair',
-        price: rec.price,
-        discountPrice: rec.discountPrice,
-        duration: rec.duration,
-        description: rec.serviceDescription,
-      };
+      );
 
-      onClose();
-      onBookService(foundSalon, foundService);
-      return;
+      if (foundService) {
+        onClose();
+        onBookService(foundSalon, foundService);
+        return;
+      }
     }
 
     if (foundSalon && onSelectSalon) {

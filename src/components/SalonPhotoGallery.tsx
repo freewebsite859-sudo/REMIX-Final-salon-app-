@@ -23,124 +23,19 @@ export const SalonPhotoGallery: React.FC<SalonPhotoGalleryProps> = ({
   const [lightboxZoom, setLightboxZoom] = useState<number>(1);
   const thumbnailStripRef = useRef<HTMLDivElement>(null);
 
-  // Prepare photos list: Use salon.photoGallery if present, otherwise construct from gallery & image
+  // Display only media supplied by the canonical salon record. Inventing
+  // treatment photos, descriptions, or stylist credits makes a public listing
+  // misleading and can create an unsafe expectation for a customer.
   const allPhotos: GalleryPhoto[] = useMemo(() => {
-    if (salon.photoGallery && salon.photoGallery.length > 0) {
-      return salon.photoGallery;
-    }
-
-    // Default fallback photos tailored to the salon's categories
-    const fallbackList: GalleryPhoto[] = [];
-
-    // Main cover
-    fallbackList.push({
-      id: `${salon.id}-cov`,
-      url: salon.image,
-      title: `${salon.name} - Front View & Ambience`,
-      category: 'interior',
-      tag: 'Main Ambience',
-      description: 'Modern aesthetic entryway with welcoming concierge and sanitized styling stations.',
-    });
-
-    // Gallery array items
-    (salon.gallery || []).forEach((imgUrl, idx) => {
-      if (imgUrl === salon.image && idx === 0) return; // avoid exact duplicate
-      const isHair = salon.categories.some(c => /hair|cut|barber|style/i.test(c));
-      const isSkin = salon.categories.some(c => /skin|facial|glow/i.test(c));
-      const isNails = salon.categories.some(c => /nail|art/i.test(c));
-      const isSpa = salon.categories.some(c => /spa|massage|ayurveda/i.test(c));
-
-      const cat: GalleryCategory = idx % 2 === 0
-        ? 'interior'
-        : isHair ? 'hair' : isSkin ? 'skin' : isNails ? 'nails' : isSpa ? 'spa' : 'hair';
-
-      fallbackList.push({
-        id: `${salon.id}-gal-${idx}`,
-        url: imgUrl,
-        title: idx % 2 === 0 ? 'Interior Styling Station' : 'Finished Treatment Transformation',
-        category: cat,
-        tag: idx % 2 === 0 ? 'Interior Ambience' : 'Finished Look',
-        description: 'Premium equipment and professional grade care delivered by certified specialists.',
-        stylistName: salon.stylists?.[0]?.name,
-      });
-    });
-
-    // Add extra curated photos based on salon categories
-    if (salon.categories.some(c => /hair|barber/i.test(c))) {
-      fallbackList.push({
-        id: `${salon.id}-hair-1`,
-        url: 'https://images.unsplash.com/photo-1560066984-138dadb4c035?auto=format&fit=crop&w=1000&q=80',
-        title: 'Ergonomic Styling & Blowout Stations',
-        category: 'interior',
-        tag: 'Styling Floor',
-        description: 'Spacious stations equipped with Dyson professional styling tools and LED mirrors.',
-      });
-      fallbackList.push({
-        id: `${salon.id}-hair-2`,
-        url: 'https://images.unsplash.com/photo-1519699047748-de8e457a634e?auto=format&fit=crop&w=1000&q=80',
-        title: 'Honey Blonde Balayage & Gloss Finish',
-        category: 'hair',
-        tag: 'Finished Look',
-        treatmentName: 'Signature Balayage & Blow Dry',
-        description: 'Multi-tonal dimension created with ammonia-free conditioning pigments.',
-        stylistName: salon.stylists?.[0]?.name || 'Senior Colorist',
-      });
-    }
-
-    if (salon.categories.some(c => /skin|facial|beauty/i.test(c))) {
-      fallbackList.push({
-        id: `${salon.id}-skin-1`,
-        url: 'https://images.unsplash.com/photo-1629732047847-50219e9c5aef?auto=format&fit=crop&w=1000&q=80',
-        title: 'Private Clinical Aesthetic Suite',
-        category: 'interior',
-        tag: 'VIP Suite',
-        description: 'Sterilized private room dedicated for hydra-facials, collagen lifts, and skin therapies.',
-      });
-      fallbackList.push({
-        id: `${salon.id}-skin-2`,
-        url: 'https://images.unsplash.com/photo-1570172619644-dfd03ed5d881?auto=format&fit=crop&w=1000&q=80',
-        title: 'Hydra-Facial Deep Infusion & Glass Glow',
-        category: 'skin',
-        tag: 'Finished Look',
-        treatmentName: '7-Step Hydra Facial Deluxe',
-        description: 'Noticeably clearer pores, reduced pigmentation, and instantaneous luminous glow.',
-        stylistName: salon.stylists?.[0]?.name,
-      });
-    }
-
-    if (salon.categories.some(c => /spa|wellness|massage/i.test(c))) {
-      fallbackList.push({
-        id: `${salon.id}-spa-1`,
-        url: 'https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=1000&q=80',
-        title: 'Ayurvedic Aromatherapy Sanctuary',
-        category: 'interior',
-        tag: 'Spa Suite',
-        description: 'Calming ambient lighting, aromatic essential oil misting, and soothing herbal music.',
-      });
-    }
-
-    if (salon.categories.some(c => /nail/i.test(c))) {
-      fallbackList.push({
-        id: `${salon.id}-nail-1`,
-        url: 'https://images.unsplash.com/photo-1632345031435-8727f6897d53?auto=format&fit=crop&w=1000&q=80',
-        title: '500+ Shade Gel Art & Chrome Display',
-        category: 'interior',
-        tag: 'Studio Interior',
-        description: 'Curated premium gel polishes and sterile Russian manicure apparatus.',
-      });
-      fallbackList.push({
-        id: `${salon.id}-nail-2`,
-        url: 'https://images.unsplash.com/photo-1604654894610-df63bc536371?auto=format&fit=crop&w=1000&q=80',
-        title: 'Glazed Chrome Almond Gel Extensions',
-        category: 'nails',
-        tag: 'Finished Look',
-        treatmentName: 'Gel Extensions with Hand-Painted Art',
-        description: 'Chip-resistant glossy finish with bespoke chrome reflection.',
-        stylistName: salon.stylists?.[0]?.name,
-      });
-    }
-
-    return fallbackList;
+    if (salon.photoGallery?.length) return salon.photoGallery;
+    return (salon.gallery || [])
+      .filter((url): url is string => Boolean(url))
+      .map((url, index) => ({
+        id: `${salon.id}-gallery-${index}`,
+        url,
+        title: salon.name,
+        category: 'interior' as const,
+      }));
   }, [salon]);
 
   // Filter photos based on active category
@@ -262,7 +157,7 @@ export const SalonPhotoGallery: React.FC<SalonPhotoGalleryProps> = ({
             </span>
           </div>
           <p className="text-[11px] text-on-surface-variant mt-0.5">
-            Real snapshots of styling stations, private treatment suites, and verified client finishes
+            Media supplied by the salon; treatment details are shown only when verified in the catalog
           </p>
         </div>
 

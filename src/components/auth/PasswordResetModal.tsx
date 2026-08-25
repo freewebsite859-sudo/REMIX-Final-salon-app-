@@ -36,28 +36,33 @@ export const PasswordResetModal: React.FC<PasswordResetModalProps> = ({
       return;
     }
 
+    if (!isSupabaseConfigured || !supabase) {
+      setError(
+        'Live password recovery is unavailable. Configure Supabase before requesting a reset link.'
+      );
+      return;
+    }
+
     setIsLoading(true);
 
     try {
-      if (isSupabaseConfigured && supabase) {
-        const { error: resetError } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
-          redirectTo: window.location.origin,
-        });
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+        // The reset callback must land on the password-update route, not the
+        // app root where the recovery session would otherwise be ignored.
+        redirectTo: `${window.location.origin}/auth/reset`,
+      });
 
-        if (resetError) {
-          setError(resetError.message || 'Unable to send reset link. Please try again.');
-          setIsLoading(false);
-          return;
-        }
-      } else {
-        // Simulated network delay for smooth UI feedback
-        await new Promise((resolve) => setTimeout(resolve, 800));
+      if (resetError) {
+        setError(resetError.message || 'Unable to send reset link. Please try again.');
+        setIsLoading(false);
+        return;
       }
 
       setIsLoading(false);
       setIsSuccess(true);
-    } catch {
+    } catch (err) {
       setIsLoading(false);
+      console.error('[Nexora] Password reset request failed:', err);
       setError('An unexpected error occurred. Please try again.');
     }
   };

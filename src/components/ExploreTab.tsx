@@ -39,23 +39,9 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
   const [viewMode, setViewMode] = useState<'list' | 'map' | 'ai_grounded'>('list');
   const [selectedMapSalon, setSelectedMapSalon] = useState<Salon | null>(null);
 
-  // Recent Searches state (Stores top recent searches, displays up to 3)
-  const DEFAULT_RECENT_QUERIES = ['Hydra Facial', 'Hair Cut & Styling', 'Mansarovar'];
-  const [recentSearches, setRecentSearches] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('nexora_recent_searches');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const valid = parsed.filter((q): q is string => typeof q === 'string' && q.trim() !== '');
-          if (valid.length > 0) return valid.slice(0, 3);
-        }
-      }
-    } catch (e) {
-      console.error('Error reading recent searches from localStorage:', e);
-    }
-    return DEFAULT_RECENT_QUERIES;
-  });
+  // Recent searches are ephemeral UI state. Do not persist them in a shared
+  // origin where the next account could inherit another user's activity.
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
 
   const addRecentSearch = (query: string) => {
     const trimmed = query.trim();
@@ -63,11 +49,6 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
     setRecentSearches((prev) => {
       const filtered = prev.filter((item) => item.toLowerCase() !== trimmed.toLowerCase());
       const updated = [trimmed, ...filtered].slice(0, 3);
-      try {
-        localStorage.setItem('nexora_recent_searches', JSON.stringify(updated));
-      } catch (e) {
-        console.error('Error saving recent searches:', e);
-      }
       return updated;
     });
   };
@@ -80,17 +61,13 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
 
   const handleClearRecentSearches = () => {
     setRecentSearches([]);
-    try {
-      localStorage.removeItem('nexora_recent_searches');
-    } catch (e) {
-      console.error('Error clearing recent searches:', e);
-    }
   };
 
   // Grounded search state
   const [isSearchingGrounded, setIsSearchingGrounded] = useState(false);
   const [groundedSummary, setGroundedSummary] = useState<string | null>(null);
   const [groundingChunks, setGroundingChunks] = useState<GroundingChunk[]>([]);
+  const [groundedError, setGroundedError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
 
   const categories = [
@@ -132,6 +109,7 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
     const q = queryToUse !== undefined ? queryToUse : searchQuery;
     setIsSearchingGrounded(true);
     setHasSearched(true);
+    setGroundedError(null);
 
     try {
       const res = await fetch('/api/salons/grounded-search', {
@@ -140,22 +118,26 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
         body: JSON.stringify({
           query: q,
           areaName: currentLocation,
-          latitude: 26.8533,
-          longitude: 75.7681,
           category: selectedCategory !== 'all' ? selectedCategory : undefined,
         }),
       });
 
       const data = await res.json();
-      if (data.success) {
-        setGroundedSummary(data.text);
+      if (!res.ok || !data.success) {
+        setGroundedSummary(null);
+        setGroundingChunks([]);
+        setGroundedError(data.error || 'Verified search is temporarily unavailable.');
+      } else {
+        setGroundedSummary(data.text || null);
         setGroundingChunks(data.groundingChunks || []);
+        setGroundedError(null);
         if (data.groundingChunks?.length > 0 || data.text) {
           setViewMode('ai_grounded');
         }
       }
     } catch (err) {
-      console.error('Failed to run grounded search:', err);
+      console.error('[Nexora] Failed to run grounded search:', err);
+      setGroundedError('Network error while loading verified search results.');
     } finally {
       setIsSearchingGrounded(false);
     }
@@ -490,7 +472,11 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
               </div>
             ) : (
               <div>
-                {groundedSummary ? (
+                {groundedError ? (
+                  <p role="alert" className="text-[13px] leading-relaxed text-amber-900 bg-amber-50 p-3 rounded-xl border border-amber-300 mb-4">
+                    {groundedError}
+                  </p>
+                ) : groundedSummary ? (
                   <div className="text-[13px] leading-relaxed text-on-surface whitespace-pre-line mb-4 bg-white/70 p-3 rounded-xl border border-outline-variant/30">
                     {groundedSummary}
                   </div>
@@ -555,7 +541,7 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
         <div className="flex flex-col gap-3 mb-6 animate-in fade-in duration-200">
           {/* Interactive Visual Map Stage */}
           <div className="relative w-full h-[380px] bg-[#e8ece9] rounded-2xl overflow-hidden border border-outline-variant/50 shadow-inner relative">
-            {/* Map Background Grid Simulation */}
+            {/* Map background grid */}
             <div 
               className="absolute inset-0 opacity-40"
               style={{

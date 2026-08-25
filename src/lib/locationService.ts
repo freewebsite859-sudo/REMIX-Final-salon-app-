@@ -97,6 +97,16 @@ export async function syncUserLocation(
 ): Promise<LocationSyncResult> {
   if (!client) return { ok: false, disabled: true, error: 'Supabase not configured' };
   if (!userId) return { ok: false, error: 'Missing user id' };
+  if (
+    !Number.isFinite(coords.latitude) ||
+    !Number.isFinite(coords.longitude) ||
+    coords.latitude < -90 ||
+    coords.latitude > 90 ||
+    coords.longitude < -180 ||
+    coords.longitude > 180
+  ) {
+    return { ok: false, error: 'Invalid coordinates' };
+  }
 
   const payload = {
     user_id: userId,

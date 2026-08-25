@@ -1,4 +1,4 @@
-import express, { Request, Response } from "express";
+import express, { NextFunction, Request, Response } from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
@@ -9,7 +9,31 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
-app.use(express.json());
+app.use(express.json({ limit: '32kb' }));
+
+// AI routes spend a server-side provider quota. Keep an abusive client from
+// exhausting the Gemini key; a distributed production deployment should add
+// an edge/API-gateway limit as well.
+const aiRateWindowMs = 60_000;
+const aiRateLimit = 30;
+const aiRateBuckets = new Map<string, { startedAt: number; count: number }>();
+function limitAiRequests(req: Request, res: Response, next: NextFunction) {
+  const key = req.ip || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  const bucket = aiRateBuckets.get(key);
+  if (!bucket || now - bucket.startedAt >= aiRateWindowMs) {
+    aiRateBuckets.set(key, { startedAt: now, count: 1 });
+    next();
+    return;
+  }
+  bucket.count += 1;
+  if (bucket.count > aiRateLimit) {
+    res.status(429).json({ success: false, error: 'Too many AI requests. Try again shortly.' });
+    return;
+  }
+  next();
+}
+app.use('/api/salons', limitAiRequests);
 
 // Initialize Gemini Client
 const apiKey = process.env.GEMINI_API_KEY;
@@ -26,6 +50,17 @@ if (apiKey) {
   });
 }
 
+function aiUnavailable(res: Response, message = "AI service is not configured") {
+  return res.status(503).json({ success: false, error: message });
+}
+
+function aiFailed(res: Response) {
+  return res.status(502).json({
+    success: false,
+    error: "AI service is temporarily unavailable. No recommendation was generated.",
+  });
+}
+
 // Health check
 app.get("/api/health", (_req: Request, res: Response) => {
   res.json({
@@ -38,60 +73,41 @@ app.get("/api/health", (_req: Request, res: Response) => {
 // Google Maps Grounded Salon Discovery
 app.post("/api/salons/grounded-search", async (req: Request, res: Response) => {
   const { query, latitude, longitude, areaName, category } = req.body;
-  const searchArea = areaName || "Mansarovar, Jaipur";
-  const userLat = typeof latitude === "number" ? latitude : 26.8533;
-  const userLng = typeof longitude === "number" ? longitude : 75.7681;
-  const searchQuery = query || category || "top rated hair salons, spas, and beauty studios";
-
-  const fallbackData = {
-    success: true,
-    source: "curated_grounded_fallback",
-    text: `### Verified Top Salons in ${searchArea}\n\nHere are the highest-rated salons and spas matching "${searchQuery}":\n\n1. **Scissors & Shears Salon** — *4.9 ★ (320+ reviews)*\n   - **Specialty**: Precision Hair Cut, Layering, Balayage & Beard Styling\n   - **Price Range**: ₹399 - ₹1,499 | **Location**: Main Market, ${searchArea}\n\n2. **Luxe Beauty Lounge** — *4.8 ★ (240+ reviews)*\n   - **Specialty**: 7-Step Hydra Facial, Skin Rejuvenation & Bridal Makeup\n   - **Price Range**: ₹999 - ₹3,499 | **Location**: Apex Circle, ${searchArea}\n\n3. **Hair Craft Studio & Spa** — *4.9 ★ (180+ reviews)*\n   - **Specialty**: Keratin Therapy, Deep Hair Spa & Organic Hair Coloring\n   - **Price Range**: ₹699 - ₹2,999 | **Location**: Sector 7, ${searchArea}`,
-    groundingChunks: [
-      {
-        maps: {
-          title: `Scissors & Shears Salon — ${searchArea}`,
-          uri: `https://www.google.com/maps/search/?api=1&query=Scissors+and+Shears+Salon+${encodeURIComponent(searchArea)}`,
-        },
-      },
-      {
-        maps: {
-          title: `Luxe Beauty Lounge — ${searchArea}`,
-          uri: `https://www.google.com/maps/search/?api=1&query=Luxe+Beauty+Lounge+${encodeURIComponent(searchArea)}`,
-        },
-      },
-      {
-        maps: {
-          title: `Hair Craft Studio & Spa — ${searchArea}`,
-          uri: `https://www.google.com/maps/search/?api=1&query=Hair+Craft+Studio+${encodeURIComponent(searchArea)}`,
-        },
-      },
-    ],
-  };
+  const searchArea = typeof areaName === 'string' && areaName.trim() ? areaName.trim() : 'your area';
+  const userLat = typeof latitude === 'number' && Number.isFinite(latitude) ? latitude : null;
+  const userLng = typeof longitude === 'number' && Number.isFinite(longitude) ? longitude : null;
+  const searchQuery =
+    typeof query === 'string' && query.trim()
+      ? query.trim()
+      : typeof category === 'string' && category.trim()
+      ? category.trim()
+      : 'top rated hair salons, spas, and beauty studios';
 
   if (!ai) {
-    return res.json(fallbackData);
+    return aiUnavailable(res);
   }
 
   try {
-    const prompt = `You are Nexora SalonOS AI Grounding Assistant. The user is looking for salons or beauty services in/near ${searchArea} (coordinates: ${userLat}, ${userLng}).
+    const coordinateHint = userLat !== null && userLng !== null
+      ? ` (coordinates: ${userLat}, ${userLng})`
+      : '';
+    const prompt = `You are Nexora SalonOS AI Grounding Assistant. The user is looking for salons or beauty services in/near ${searchArea}${coordinateHint}.
 User query: "${searchQuery}".
-Provide a concise, helpful summary highlighting top rated salons, specific specialties (haircuts, styling, facials, bridal, nails, spa), typical pricing, opening status, and why customers love them. Include exact salon names and addresses when available.`;
+Provide a concise, helpful summary highlighting top rated salons, specific specialties (haircuts, styling, facials, bridal, nails, spa), typical pricing, opening status, and why customers love them. Include exact salon names and addresses when available. Do not invent a business, price, review, or distance.`;
+
+    const mapsConfig = userLat !== null && userLng !== null
+      ? {
+          tools: [{ googleMaps: {} }],
+          toolConfig: {
+            retrievalConfig: { latLng: { latitude: userLat, longitude: userLng } },
+          },
+        }
+      : { tools: [{ googleMaps: {} }] };
 
     const response = await ai.models.generateContent({
       model: "gemini-3.6-flash",
       contents: prompt,
-      config: {
-        tools: [{ googleMaps: {} }],
-        toolConfig: {
-          retrievalConfig: {
-            latLng: {
-              latitude: userLat,
-              longitude: userLng,
-            },
-          },
-        },
-      },
+      config: mapsConfig,
     });
 
     const groundingChunks =
@@ -100,66 +116,48 @@ Provide a concise, helpful summary highlighting top rated salons, specific speci
     return res.json({
       success: true,
       source: "gemini_google_maps_grounding",
-      text: response.text || fallbackData.text,
-      groundingChunks: groundingChunks.length > 0 ? groundingChunks : fallbackData.groundingChunks,
+      text: response.text || "",
+      groundingChunks,
     });
   } catch (err: any) {
-    console.warn("Grounded search error (using fallback):", err?.message || err);
-    return res.json(fallbackData);
+    console.warn("Grounded search error:", err?.message || err);
+    return aiFailed(res);
   }
 });
 
 // AI Beauty & Stylist Advisor (maps-grounded recommendation)
 app.post("/api/salons/ai-advisor", async (req: Request, res: Response) => {
   const { userPrompt, preferences, location } = req.body;
-  const userLoc = location?.area || "Mansarovar, Jaipur";
-  const userLat = location?.latitude || 26.8533;
-  const userLng = location?.longitude || 75.7681;
-
-  const fallbackAdvisorData = {
-    success: true,
-    source: "curated_advisor_fallback",
-    text: `### Expert Recommendation for "${userPrompt || 'Salon Services'}"\n\nBased on your location in **${userLoc}**, here are our top expert recommendations:\n\n✨ **Styling & Care Recommendation**:\nFor optimal results matching "${userPrompt}", we recommend a **Signature Layer Shaping & Deep Hydration Hair Spa** or a **7-Step Hydra Facial Deluxe** for instant glow.\n\n📍 **Top Verified Nearby Salons**:\n1. **Scissors & Shears Salon** (${userLoc})\n   - **Best for**: Hair Cut, Beard Styling & Hair Spa\n   - **Approx. Price**: ₹499 - ₹999\n   - **Rating**: 4.9 ★ (320+ reviews)\n\n2. **Luxe Beauty Lounge** (${userLoc})\n   - **Best for**: Hydra Facial, Skin Care & Bridal Makeup\n   - **Approx. Price**: ₹1,299 - ₹2,999\n   - **Rating**: 4.8 ★ (240+ reviews)`,
-    groundingChunks: [
-      {
-        maps: {
-          title: `Scissors & Shears Salon — ${userLoc}`,
-          uri: `https://www.google.com/maps/search/?api=1&query=Scissors+and+Shears+Salon+${encodeURIComponent(userLoc)}`,
-        },
-      },
-      {
-        maps: {
-          title: `Luxe Beauty Lounge — ${userLoc}`,
-          uri: `https://www.google.com/maps/search/?api=1&query=Luxe+Beauty+Lounge+${encodeURIComponent(userLoc)}`,
-        },
-      },
-    ],
-  };
+  const userLoc = typeof location?.area === 'string' && location.area.trim() ? location.area.trim() : 'your area';
+  const userLat = typeof location?.latitude === 'number' && Number.isFinite(location.latitude) ? location.latitude : null;
+  const userLng = typeof location?.longitude === 'number' && Number.isFinite(location.longitude) ? location.longitude : null;
 
   if (!ai) {
-    return res.json(fallbackAdvisorData);
+    return aiUnavailable(res);
   }
 
   try {
-    const prompt = `You are Nexora's Elite Salon & Beauty Consultant. A client in ${userLoc} is asking for personalized salon & treatment recommendations.
-User Query: "${userPrompt}".
-Client Preferences: ${JSON.stringify(preferences || {})}.
-Give an expert recommendation on which treatment/haircut fits best, and mention specific top-rated salons nearby in ${userLoc} with their key highlights, estimated price, and address.`;
+    const coordinateHint = userLat !== null && userLng !== null
+      ? ` (coordinates: ${userLat}, ${userLng})`
+      : '';
+    const prompt = `You are Nexora's Elite Salon & Beauty Consultant. A client in ${userLoc}${coordinateHint} is asking for personalized salon and treatment recommendations.
+User Query: "${typeof userPrompt === 'string' ? userPrompt.slice(0, 1000) : ''}".
+Client Preferences: ${JSON.stringify(preferences || {}).slice(0, 4000)}.
+Give an expert recommendation based only on verifiable information. Do not invent a business, price, review, or distance.`;
+
+    const mapsConfig = userLat !== null && userLng !== null
+      ? {
+          tools: [{ googleMaps: {} }],
+          toolConfig: {
+            retrievalConfig: { latLng: { latitude: userLat, longitude: userLng } },
+          },
+        }
+      : { tools: [{ googleMaps: {} }] };
 
     const response = await ai.models.generateContent({
       model: "gemini-3.6-flash",
       contents: prompt,
-      config: {
-        tools: [{ googleMaps: {} }],
-        toolConfig: {
-          retrievalConfig: {
-            latLng: {
-              latitude: userLat,
-              longitude: userLng,
-            },
-          },
-        },
-      },
+      config: mapsConfig,
     });
 
     const groundingChunks =
@@ -167,29 +165,30 @@ Give an expert recommendation on which treatment/haircut fits best, and mention 
 
     return res.json({
       success: true,
-      text: response.text || fallbackAdvisorData.text,
-      groundingChunks: groundingChunks.length > 0 ? groundingChunks : fallbackAdvisorData.groundingChunks,
+      text: response.text || '',
+      groundingChunks,
     });
   } catch (err: any) {
-    console.warn("AI Advisor error (using fallback):", err?.message || err);
-    return res.json(fallbackAdvisorData);
+    console.warn("AI Advisor error:", err?.message || err);
+    return aiFailed(res);
   }
 });
 
 // AI Style Quiz (Face Shape, Hair Type & Desired Length Analysis)
 app.post("/api/salons/ai-style-quiz", async (req: Request, res: Response) => {
   const { hairType, desiredLength, faceShape, stylingGoal, location } = req.body;
-  const userLoc = location?.area || "Mansarovar, Jaipur";
-  const userLat = location?.latitude || 26.8533;
-  const userLng = location?.longitude || 75.7681;
+  const userLoc = typeof location?.area === 'string' && location.area.trim() ? location.area.trim() : 'your area';
+  const userLat = typeof location?.latitude === 'number' && Number.isFinite(location.latitude) ? location.latitude : null;
+  const userLng = typeof location?.longitude === 'number' && Number.isFinite(location.longitude) ? location.longitude : null;
 
-  const hType = hairType || "Wavy";
-  const dLength = desiredLength || "Shoulder Length";
-  const fShape = faceShape || "Oval";
-  const sGoal = stylingGoal || "Volume & Movement";
+  const hType = typeof hairType === 'string' && hairType.trim() ? hairType.trim() : "Wavy";
+  const dLength = typeof desiredLength === 'string' && desiredLength.trim() ? desiredLength.trim() : "Shoulder Length";
+  const fShape = typeof faceShape === 'string' && faceShape.trim() ? faceShape.trim() : "Oval";
+  const sGoal = typeof stylingGoal === 'string' && stylingGoal.trim() ? stylingGoal.trim() : "Volume & Movement";
 
-  // Curated fallback generator based on combinations
-  const getCuratedFallback = () => {
+  // Deterministic style guidance used only to shape the response fields; it
+  // contains no salon, service, price, review, or distance data.
+  const getStyleGuidanceTemplate = () => {
     let faceShapeAnalysis = "";
     let hairTypeSuitability = "";
     let cuts: string[] = [];
@@ -237,79 +236,20 @@ app.post("/api/salons/ai-style-quiz", async (req: Request, res: Response) => {
     }
 
     return {
-      styleSummary: `Personalized AI Style Blueprint for ${fShape} face shape, ${hType} hair texture, aiming for ${dLength} with a focus on ${sGoal}.`,
+      styleSummary: `Style guidance for ${fShape} face shape, ${hType} hair texture, aiming for ${dLength} with a focus on ${sGoal}.`,
       faceShapeAnalysis,
       hairTypeSuitability,
       recommendedCutsAndStyles: cuts,
-      recommendedServices: [
-        {
-          salonId: "salon-1",
-          salonName: "Scissors & Shears Salon",
-          salonImage: "https://images.unsplash.com/photo-1560066984-138dadb4c035?auto=format&fit=crop&w=800&q=80",
-          salonAddress: "Plot 42, Madhyam Marg, Mansarovar, Jaipur",
-          serviceId: "srv-101",
-          serviceName: "Signature Hair Cut & Wash",
-          category: "hair",
-          price: 499,
-          discountPrice: 399,
-          duration: 45,
-          matchScore: 98,
-          matchReason: `Custom tailored layer graduation and weight balance designed for ${fShape} face structure and ${hType} hair.`,
-          serviceDescription: "Consultation, deep shampoo wash, precision hair sculpting, and bouncy blowout finish.",
-        },
-        {
-          salonId: "salon-2",
-          salonName: "Luxe Beauty Lounge",
-          salonImage: "https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=800&q=80",
-          salonAddress: "Apex Circle, Malviya Nagar, Jaipur",
-          serviceId: "srv-202",
-          serviceName: "Deep Conditioning Argan Hair Spa",
-          category: "hair",
-          price: 1199,
-          discountPrice: 899,
-          duration: 50,
-          matchScore: 95,
-          matchReason: `Infuses deep moisture and thermal shine to support your ${sGoal} goal on ${dLength} hair.`,
-          serviceDescription: "Intense moisture infusion with organic argan oil steam therapy, scalp massage, and smooth blowout.",
-        },
-        {
-          salonId: "salon-5",
-          salonName: "Hair Craft Studio & Spa",
-          salonImage: "https://images.unsplash.com/photo-1562322140-8baeececf3df?auto=format&fit=crop&w=800&q=80",
-          salonAddress: "Sector 7, Shipra Path, Mansarovar, Jaipur",
-          serviceId: "srv-502",
-          serviceName: "Brazilian Keratin Smoothing",
-          category: "hair",
-          price: 2499,
-          discountPrice: 1999,
-          duration: 120,
-          matchScore: 92,
-          matchReason: `Long-lasting anti-frizz formula providing effortless daily styling for ${hType} texture.`,
-          serviceDescription: "Formaldehyde-free keratin treatment eliminating 95% frizz with mirror-like shine lasting up to 4 months.",
-        },
-      ],
+      recommendedServices: [],
       homeCareTips: homeTips,
-      groundingSources: [
-        {
-          maps: {
-            title: `Scissors & Shears Salon — ${userLoc}`,
-            uri: `https://www.google.com/maps/search/?api=1&query=Scissors+and+Shears+Salon+${encodeURIComponent(userLoc)}`,
-          },
-        },
-        {
-          maps: {
-            title: `Hair Craft Studio & Spa — ${userLoc}`,
-            uri: `https://www.google.com/maps/search/?api=1&query=Hair+Craft+Studio+${encodeURIComponent(userLoc)}`,
-          },
-        },
-      ],
+      groundingSources: [],
     };
   };
 
-  const fallbackData = getCuratedFallback();
+  const styleGuidanceTemplate = getStyleGuidanceTemplate();
 
   if (!ai) {
-    return res.json({ success: true, result: fallbackData });
+    return aiUnavailable(res);
   }
 
   try {
@@ -318,31 +258,31 @@ app.post("/api/salons/ai-style-quiz", async (req: Request, res: Response) => {
 - Hair Type/Texture: ${hType}
 - Desired Length: ${dLength}
 - Styling Goal: ${sGoal}
-- Client Location: ${userLoc} (Coords: ${userLat}, ${userLng})
+- Client Location: ${userLoc}${userLat !== null && userLng !== null ? ` (coordinates: ${userLat}, ${userLng})` : ''}
 
 Provide:
 1. Face shape optical analysis (how this cut balances jawline, cheekbones, and forehead).
 2. Hair type and texture suitability (layering technique, density management).
-3. 3 specific recommended haircut/styling names that flatter this combination.
+3. 3 specific haircut/styling names that flatter this combination.
 4. 3 professional home care / maintenance recommendations.
 5. Overall summary.
+Do not invent salon names, services, prices, reviews, or distances.
 
-Format your response as structured advice, and ground nearby salon suggestions in ${userLoc}.`;
+Format your response as structured advice.`;
+
+    const mapsConfig = userLat !== null && userLng !== null
+      ? {
+          tools: [{ googleMaps: {} }],
+          toolConfig: {
+            retrievalConfig: { latLng: { latitude: userLat, longitude: userLng } },
+          },
+        }
+      : { tools: [{ googleMaps: {} }] };
 
     const response = await ai.models.generateContent({
       model: "gemini-3.7-flash",
       contents: prompt,
-      config: {
-        tools: [{ googleMaps: {} }],
-        toolConfig: {
-          retrievalConfig: {
-            latLng: {
-              latitude: userLat,
-              longitude: userLng,
-            },
-          },
-        },
-      },
+      config: mapsConfig,
     });
 
     const groundingChunks =
@@ -350,12 +290,18 @@ Format your response as structured advice, and ground nearby salon suggestions i
 
     const generatedText = response.text || "";
 
-    // Parse or augment fallback with generated text
+    // The AI may explain style considerations, but it must not invent a
+    // salon, service, price, or duration. Those recommendations come only
+    // from the canonical catalog (which this endpoint does not query).
     const result = {
-      ...fallbackData,
-      styleSummary: generatedText ? generatedText.slice(0, 300).replace(/^[#*\s]+/, "") : fallbackData.styleSummary,
+      styleSummary: generatedText ? generatedText.slice(0, 300).replace(/^[#*\s]+/, "") : "Style guidance generated.",
+      faceShapeAnalysis: styleGuidanceTemplate.faceShapeAnalysis,
+      hairTypeSuitability: styleGuidanceTemplate.hairTypeSuitability,
+      recommendedCutsAndStyles: styleGuidanceTemplate.recommendedCutsAndStyles,
+      recommendedServices: [],
+      homeCareTips: styleGuidanceTemplate.homeCareTips,
       aiDetailedAdvice: generatedText,
-      groundingSources: groundingChunks.length > 0 ? groundingChunks : fallbackData.groundingSources,
+      groundingSources: groundingChunks,
     };
 
     return res.json({
@@ -363,8 +309,8 @@ Format your response as structured advice, and ground nearby salon suggestions i
       result,
     });
   } catch (err: any) {
-    console.warn("AI Style Quiz error (using curated fallback):", err?.message || err);
-    return res.json({ success: true, result: fallbackData });
+    console.warn("AI Style Quiz error:", err?.message || err);
+    return aiFailed(res);
   }
 });
 
@@ -374,287 +320,8 @@ app.post("/api/salons/sentiment-summary", async (req: Request, res: Response) =>
   const targetSalonName = salonName || "Nexora Salon";
   const userLoc = location?.area || "Mansarovar, Jaipur";
 
-  // Curated Fallback Sentiment Generator per salon
-  const getCuratedSentimentFallback = (id: string, name: string) => {
-    switch (id) {
-      case "salon-1":
-        return {
-          salonId: id,
-          salonName: name,
-          overallSentiment: "Overwhelmingly Positive",
-          sentimentScore: 97,
-          positivePercentage: 94,
-          neutralPercentage: 4,
-          negativePercentage: 2,
-          executiveSummary:
-            "Clients consistently celebrate Scissors & Shears for exceptional fade haircuts, texture layering, and rejuvenating hair spas. Aarav Sharma and Priya Verma are repeatedly cited for master-level artistry and meticulous attention to hygiene.",
-          topPositiveThemes: [
-            {
-              theme: "Master Fade & Texture Haircuts",
-              percentage: 92,
-              mentionsCount: 28,
-              sampleQuote: "Aarav is simply the best in Jaipur for modern fade haircuts and texture layers.",
-              tag: "Artistry & Skill",
-            },
-            {
-              theme: "Rejuvenating L’Oréal Hair Spa",
-              percentage: 86,
-              mentionsCount: 22,
-              sampleQuote: "The Hair Spa made my locks extremely soft and manageable with soothing music.",
-              tag: "Treatment Quality",
-            },
-            {
-              theme: "Impeccable Hygiene & Sanitization",
-              percentage: 95,
-              mentionsCount: 31,
-              sampleQuote: "Impeccably clean tool trays and sanitized styling chairs every single visit.",
-              tag: "Cleanliness",
-            },
-            {
-              theme: "Premium Espresso Bar Hospitality",
-              percentage: 78,
-              mentionsCount: 19,
-              sampleQuote: "Loved the complimentary espresso and plush waiting lounge ambiance.",
-              tag: "Hospitality",
-            },
-          ],
-          topNegativeThemes: [
-            {
-              theme: "Peak Weekend Afternoon Wait Times",
-              percentage: 14,
-              mentionsCount: 4,
-              sampleQuote: "Minor 10-minute wait on Saturday afternoon despite having an appointment.",
-              recommendation: "Book weekday morning slots (10 AM - 1 PM) for instant zero-wait seating.",
-              tag: "Peak Rush",
-            },
-            {
-              theme: "High Demand for Senior Stylist Aarav",
-              percentage: 11,
-              mentionsCount: 3,
-              sampleQuote: "Aarav’s slots fill up 2-3 days in advance.",
-              recommendation: "Reserve your preferred stylist at least 48 hours ahead.",
-              tag: "Availability",
-            },
-          ],
-          standoutStylists: ["Aarav Sharma (Art Director)", "Priya Verma (Colorist)"],
-          bestForServices: ["Signature Hair Cut & Wash", "Brazilian Keratin Smoothing", "L’Oréal Deep Hair Spa"],
-          vibeBadge: "Trendsetter Craftsmanship & Modern Vibe",
-          analyzedReviewCount: Math.max(reviews.length, 38),
-        };
-
-      case "salon-2":
-        return {
-          salonId: id,
-          salonName: name,
-          overallSentiment: "Overwhelmingly Positive",
-          sentimentScore: 96,
-          positivePercentage: 93,
-          neutralPercentage: 5,
-          negativePercentage: 2,
-          executiveSummary:
-            "Luxe Beauty Lounge is recognized as Jaipur’s premier aesthetic clinic for medical-grade Hydra Facials and luminous bridal glow. Dr. Ananya Sen’s deep skin consultations and private clinical suites receive glowing acclaim.",
-          topPositiveThemes: [
-            {
-              theme: "7-Step Hydra Facial Glass Skin Results",
-              percentage: 96,
-              mentionsCount: 34,
-              sampleQuote: "The Hydra Facial took years off my tired skin! Pores thoroughly cleaned with zero redness.",
-              tag: "Clinical Results",
-            },
-            {
-              theme: "Private VIP Aesthetic Suites",
-              percentage: 90,
-              mentionsCount: 26,
-              sampleQuote: "Very luxurious ambiance with private suites and calming herbal tea.",
-              tag: "Privacy & Comfort",
-            },
-            {
-              theme: "Expert Dermatological Consultation",
-              percentage: 92,
-              mentionsCount: 29,
-              sampleQuote: "Dr. Ananya accurately diagnosed my moisture barrier before customizing the serums.",
-              tag: "Dermatologist Care",
-            },
-          ],
-          topNegativeThemes: [
-            {
-              theme: "Premium Luxury Price Point",
-              percentage: 12,
-              mentionsCount: 4,
-              sampleQuote: "Higher pricing than local salons, though clinical grade machines justify it.",
-              recommendation: "Take advantage of the Nexora 15% weekday combo discounts.",
-              tag: "Pricing",
-            },
-            {
-              theme: "Appointment Rescheduling Window",
-              percentage: 6,
-              mentionsCount: 2,
-              sampleQuote: "Strict 24-hour rescheduling policy for private aesthetic suites.",
-              recommendation: "Confirm your appointment window promptly upon booking.",
-              tag: "Policy",
-            },
-          ],
-          standoutStylists: ["Dr. Ananya Sen (Aesthetician)", "Rohan Joshi (Bridal Stylist)"],
-          bestForServices: ["7-Step Hydra Facial Deluxe", "O3+ Bridal Radiant Facial", "Designer Hair Cut"],
-          vibeBadge: "Clinical Aesthetic Luxury & Rejuvenation",
-          analyzedReviewCount: Math.max(reviews.length, 42),
-        };
-
-      case "salon-3":
-        return {
-          salonId: id,
-          salonName: name,
-          overallSentiment: "Very Positive",
-          sentimentScore: 94,
-          positivePercentage: 91,
-          neutralPercentage: 6,
-          negativePercentage: 3,
-          executiveSummary:
-            "Premium Hair Studio is the top destination for gentlemen’s fades, beard sculpting, and charcoal detan treatments. Vikram Singh is highly praised for laser-sharp lines and vintage barber hospitality.",
-          topPositiveThemes: [
-            {
-              theme: "Razor-Sharp Executive Skin Fades",
-              percentage: 94,
-              mentionsCount: 30,
-              sampleQuote: "Vikram’s precision skin fade and razor line-up are unmatched in Vaishali Nagar.",
-              tag: "Barber Precision",
-            },
-            {
-              theme: "Revitalizing Charcoal Detan & Hot Towel",
-              percentage: 88,
-              mentionsCount: 24,
-              sampleQuote: "Charcoal Detan left my face feeling energized after a long travel week.",
-              tag: "Grooming Care",
-            },
-            {
-              theme: "Gentlemen’s Lounge with PlayStation & Coffee",
-              percentage: 85,
-              mentionsCount: 20,
-              sampleQuote: "Great retro vibes, espresso bar, and relaxing atmosphere.",
-              tag: "Ambience",
-            },
-          ],
-          topNegativeThemes: [
-            {
-              theme: "Nursery Circle Weekend Parking Congestion",
-              percentage: 16,
-              mentionsCount: 5,
-              sampleQuote: "Street parking near Nursery Circle gets crowded on Sunday evenings.",
-              recommendation: "Use the valet parking service at the front entrance or arrive 10 min early.",
-              tag: "Parking & Access",
-            },
-          ],
-          standoutStylists: ["Vikram Singh (Master Barber)"],
-          bestForServices: ["Executive Fade & Beard Trim", "Charcoal Deep Detan & Cleanse"],
-          vibeBadge: "Classic Gentlemen’s Grooming & Barber Craft",
-          analyzedReviewCount: Math.max(reviews.length, 29),
-        };
-
-      case "salon-4":
-        return {
-          salonId: id,
-          salonName: name,
-          overallSentiment: "Overwhelmingly Positive",
-          sentimentScore: 98,
-          positivePercentage: 95,
-          neutralPercentage: 4,
-          negativePercentage: 1,
-          executiveSummary:
-            "Glow & Grace is celebrated as a serene sanctuary for holistic wellness massages, hot stone rituals, and rosemary scalp treatments. Clients highlight Deepa Nair’s therapeutic pressure and the tranquil eucalyptus aroma.",
-          topPositiveThemes: [
-            {
-              theme: "Deep Muscle Knot Tension Release",
-              percentage: 97,
-              mentionsCount: 33,
-              sampleQuote: "Deepa’s intuitive massage melted away months of desk-job neck stiffness.",
-              tag: "Therapeutic Touch",
-            },
-            {
-              theme: "Aromatic Candlelit Ambience & Steam",
-              percentage: 96,
-              mentionsCount: 31,
-              sampleQuote: "Eucalyptus steam room and warm cedarwood oils provide instant peace.",
-              tag: "Spa Ambience",
-            },
-            {
-              theme: "Organic Botanical Ingredients",
-              percentage: 89,
-              mentionsCount: 22,
-              sampleQuote: "High-grade pure essential oils with no artificial scents or sticky residue.",
-              tag: "Product Purity",
-            },
-          ],
-          topNegativeThemes: [
-            {
-              theme: "Advance Booking Requirement for Weekends",
-              percentage: 15,
-              mentionsCount: 4,
-              sampleQuote: "Highly in-demand spa rooms require booking 2-3 days in advance for Saturdays.",
-              recommendation: "Lock in your weekend ritual by Wednesday or choose a calm weekday evening.",
-              tag: "Slot Availability",
-            },
-          ],
-          standoutStylists: ["Deepa Nair (Holistic Masseur)"],
-          bestForServices: ["Full Body Aromatherapy Bliss", "Botanical Hair & Scalp Detox"],
-          vibeBadge: "Tranquil Botanical Wellness & Ayurvedic Zen",
-          analyzedReviewCount: Math.max(reviews.length, 36),
-        };
-
-      default:
-        return {
-          salonId: id,
-          salonName: name,
-          overallSentiment: "Very Positive",
-          sentimentScore: 92,
-          positivePercentage: 88,
-          neutralPercentage: 8,
-          negativePercentage: 4,
-          executiveSummary: `${name} earns consistently high marks for attentive staff, skilled service delivery, and warm hospitality. Customers praise the inviting atmosphere and hygienic tools.`,
-          topPositiveThemes: [
-            {
-              theme: "Attentive & Skilled Stylists",
-              percentage: 90,
-              mentionsCount: 18,
-              sampleQuote: "The staff listened carefully to my styling preferences and delivered exactly what I wanted.",
-              tag: "Customer Care",
-            },
-            {
-              theme: "Clean & Welcoming Environment",
-              percentage: 88,
-              mentionsCount: 15,
-              sampleQuote: "Sanitized instruments and clean styling stations made for a very comfortable visit.",
-              tag: "Hygiene",
-            },
-            {
-              theme: "Fair Pricing & Transparent Combos",
-              percentage: 82,
-              mentionsCount: 12,
-              sampleQuote: "Great value packages with no hidden upsells during treatment.",
-              tag: "Value",
-            },
-          ],
-          topNegativeThemes: [
-            {
-              theme: "Occasional Peak Hour Waiting",
-              percentage: 10,
-              mentionsCount: 3,
-              sampleQuote: "Slight wait during peak evening hours.",
-              recommendation: "Opt for afternoon or morning appointment slots for instant seating.",
-              tag: "Timing",
-            },
-          ],
-          standoutStylists: ["Lead Stylist", "Senior Therapist"],
-          bestForServices: ["Hair Styling & Cut", "Facial Care", "Grooming Packages"],
-          vibeBadge: "Polished Craftsmanship & Attentive Service",
-          analyzedReviewCount: Math.max(reviews.length, 25),
-        };
-    }
-  };
-
-  const fallbackResult = getCuratedSentimentFallback(salonId, targetSalonName);
-
   if (!ai) {
-    return res.json({ success: true, sentiment: fallbackResult });
+    return aiUnavailable(res);
   }
 
   try {
@@ -669,7 +336,7 @@ app.post("/api/salons/sentiment-summary", async (req: Request, res: Response) =>
 Analyze the customer feedback for salon: "${targetSalonName}" located in ${userLoc}.
 
 Customer Reviews to analyze:
-${reviewsContext || "Clients praise the precise haircuts, friendly hospitality, and pristine clean salons, with occasional notes about peak weekend rush."}
+${reviewsContext || "No review data was supplied. Return an analysis that clearly indicates there is insufficient evidence."}
 
 Provide a comprehensive, structured Sentiment Summary in valid JSON format matching this exact schema:
 {
@@ -724,21 +391,35 @@ Return ONLY valid JSON.`;
       }
     }
 
-    if (parsedData && parsedData.executiveSummary) {
-      const mergedSentiment = {
+    if (parsedData && typeof parsedData.executiveSummary === 'string') {
+      const allowedSentiments = ['Overwhelmingly Positive', 'Very Positive', 'Mostly Positive', 'Mixed'];
+      const numberOrZero = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
+      const arrayOrEmpty = (value: unknown) => (Array.isArray(value) ? value : []);
+      const sentiment = {
         salonId,
         salonName: targetSalonName,
-        ...fallbackResult,
-        ...parsedData,
-        analyzedReviewCount: Math.max(reviews.length, fallbackResult.analyzedReviewCount || 20),
+        overallSentiment: allowedSentiments.includes(parsedData.overallSentiment)
+          ? parsedData.overallSentiment
+          : 'Mixed',
+        sentimentScore: Math.max(0, Math.min(100, numberOrZero(parsedData.sentimentScore))),
+        positivePercentage: Math.max(0, Math.min(100, numberOrZero(parsedData.positivePercentage))),
+        neutralPercentage: Math.max(0, Math.min(100, numberOrZero(parsedData.neutralPercentage))),
+        negativePercentage: Math.max(0, Math.min(100, numberOrZero(parsedData.negativePercentage))),
+        executiveSummary: parsedData.executiveSummary,
+        topPositiveThemes: arrayOrEmpty(parsedData.topPositiveThemes),
+        topNegativeThemes: arrayOrEmpty(parsedData.topNegativeThemes),
+        standoutStylists: arrayOrEmpty(parsedData.standoutStylists),
+        bestForServices: arrayOrEmpty(parsedData.bestForServices),
+        vibeBadge: typeof parsedData.vibeBadge === 'string' ? parsedData.vibeBadge : '',
+        analyzedReviewCount: reviews.length,
       };
-      return res.json({ success: true, sentiment: mergedSentiment });
+      return res.json({ success: true, sentiment });
     }
 
-    return res.json({ success: true, sentiment: fallbackResult });
+    return aiFailed(res);
   } catch (err: any) {
-    console.warn("AI Sentiment Summary error (using fallback):", err?.message || err);
-    return res.json({ success: true, sentiment: fallbackResult });
+    console.warn("AI Sentiment Summary error:", err?.message || err);
+    return aiFailed(res);
   }
 });
 

@@ -81,6 +81,13 @@ export const isSupabaseConfigured = Boolean(
 );
 
 /**
+ * Static catalog data is available only when explicitly enabled for local
+ * design/demo work. Production builds must read salons/services from the
+ * canonical backend; silently substituting mock records is unsafe.
+ */
+export const isNexoraDemoMode = readEnv('VITE_NEXORA_DEMO_MODE') === 'true';
+
+/**
  * Singleton guard: Vite HMR (and React StrictMode double-invocation) can
  * re-evaluate this module. Reusing the instance stored on `globalThis`
  * guarantees exactly one GoTrue client — multiple clients on one storage key

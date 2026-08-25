@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Salon, SalonService, Stylist, UserProfile, ActiveTab } from '../types';
 import { BottomNav } from './BottomNav';
 
@@ -23,128 +23,53 @@ interface ServiceCategoryScreenProps {
 interface ServiceOption {
   id: string;
   name: string;
-  category: 'Hair' | 'Grooming' | 'Skin' | 'Nails' | 'Makeup';
+  category: 'Hair' | 'Grooming' | 'Skin' | 'Nails' | 'Makeup' | 'Spa';
   description: string;
   duration: number; // minutes
   price: number;
+  discountPrice?: number;
+  popular?: boolean;
   selected?: boolean;
 }
 
-const DEFAULT_SERVICES: ServiceOption[] = [
-  {
-    id: 'srv-1',
-    name: 'Classic Haircut',
-    category: 'Hair',
-    description: 'Precision cut with styling',
-    duration: 30,
-    price: 499,
-  },
-  {
-    id: 'srv-2',
-    name: 'Beard Trim & Shape',
-    category: 'Grooming',
-    description: 'Professional grooming',
-    duration: 20,
-    price: 299,
-  },
-  {
-    id: 'srv-3',
-    name: 'Hair Spa & Wash',
-    category: 'Hair',
-    description: 'Deep conditioning treatment',
-    duration: 45,
-    price: 899,
-  },
-  {
-    id: 'srv-4',
-    name: 'Hydra Glow Facial',
-    category: 'Skin',
-    description: 'Deep pore cleansing & hydration',
-    duration: 60,
-    price: 1499,
-  },
-  {
-    id: 'srv-5',
-    name: 'Gel Nail Polish & Art',
-    category: 'Nails',
-    description: 'Long-lasting high gloss finish',
-    duration: 45,
-    price: 799,
-  },
-  {
-    id: 'srv-6',
-    name: 'Party Glam Makeup',
-    category: 'Makeup',
-    description: 'HD soft glam styling with lashes',
-    duration: 75,
-    price: 2499,
-  },
-];
+interface CategoryStylistOption extends Stylist {
+  isAny?: boolean;
+  statusBadge?: string;
+  statusColor?: string;
+  isTopRated?: boolean;
+  isExperienced?: boolean;
+}
 
-const DEFAULT_STYLISTS = [
-  {
-    id: 'any',
-    name: 'Any Professional',
-    role: 'Fastest',
-    avatar: '',
-    rating: 4.9,
-    experience: 'All verified staff',
-    specialty: ['All Services'],
-    isAny: true,
-  },
-  {
-    id: 'st-aarav',
-    name: 'Aarav',
-    role: 'Hair Specialist',
-    avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCWeowbeNfV1UzpjOlw0hbWFvQvHkAQ_9WajXaao7gqR6SRWeud6cHffdtxQ6TDI_zPbQGL9WcbNWYgrRP62T-gn1t8Wk-3stLkgQTlAHfHA1-hwWIfpMyvHY4y9w1rcfUjjhYgNaQIdvsydxbkVrbtIp0G9N4PYkdJcswMRHAJfIVC5k1YqCKuLHcQalAzTcAG3ZgOWi7QNpZCkYNBoccqytjPvu4p9sO-DVH3vTyJsOdGoZ_VA-ZbXg',
-    rating: 4.8,
-    experience: '6+ yrs',
-    specialty: ['Hair Styling', 'Fades', 'Beard', 'Hair Specialist'],
-    statusBadge: 'Available Today',
-    statusColor: 'text-success-emerald',
-    isTopRated: true,
-    isExperienced: true,
-  },
-  {
-    id: 'st-meera',
-    name: 'Meera',
-    role: 'Skin Expert',
-    avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuDqIsFkM1KD9lDak3IhhYkjvS9mtQquJze_j008LYjDDZx1Hj4C-x4L4ltKrEhvexFkUtlDHhr4hQMvdjaY6bZ76VvnTlz8PkvERv4E3t_B2gEQXsuC_b6TSJdsKojqjm8H-sKBx-eWmU8Ka049Mj2lNXnwFZNhiHix2h1eFHke_4OPPQdKNaSUe0GVLATH1sUltE5KOfX_dGZTcdXrblZdNIGybq6zwPTp8dmRu-oTxd2z3Xuid5urAw',
-    rating: 4.9,
-    experience: '8+ yrs',
-    specialty: ['Facials', 'Bridal', 'Skin Care'],
-    statusBadge: 'Next: 5:30 PM',
-    statusColor: 'text-nexora-pink',
-    isTopRated: true,
-    isExperienced: true,
-  },
-  {
-    id: 'st-rohit',
-    name: 'Rohit Verma',
-    role: 'Master Barber',
-    avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=300&q=80',
-    rating: 4.7,
-    experience: '5+ yrs',
-    specialty: ['Scissors Cut', 'Hot Towel Shave', 'Hair Specialist'],
-    statusBadge: 'Available Today',
-    statusColor: 'text-success-emerald',
-    isTopRated: false,
-    isExperienced: false,
-  },
-  {
-    id: 'st-pooja',
-    name: 'Pooja Sen',
-    role: 'Color & Spa Director',
-    avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=300&q=80',
-    rating: 4.9,
-    experience: '9+ yrs',
-    specialty: ['Balayage', 'Keratin', 'Hair Spa', 'Hair Specialist'],
-    statusBadge: 'Next: 6:15 PM',
-    statusColor: 'text-nexora-pink',
-    isTopRated: true,
-    isExperienced: true,
-  },
-];
+function displayServiceCategory(category: SalonService['category']): ServiceOption['category'] {
+  if (category === 'grooming') return 'Grooming';
+  if (category === 'skin') return 'Skin';
+  if (category === 'nails') return 'Nails';
+  if (category === 'spa') return 'Spa';
+  if (category === 'bridal') return 'Makeup';
+  return 'Hair';
+}
+
+function canonicalServiceCategory(category: ServiceOption['category']): SalonService['category'] {
+  if (category === 'Grooming') return 'grooming';
+  if (category === 'Skin') return 'skin';
+  if (category === 'Nails') return 'nails';
+  if (category === 'Spa') return 'spa';
+  if (category === 'Makeup') return 'bridal';
+  return 'hair';
+}
+
+function toSalonService(service: ServiceOption): SalonService {
+  return {
+    id: service.id,
+    name: service.name,
+    category: canonicalServiceCategory(service.category),
+    duration: service.duration,
+    price: service.price,
+    discountPrice: service.discountPrice,
+    description: service.description,
+    popular: service.popular,
+  };
+}
 
 export const ServiceCategoryScreen: React.FC<ServiceCategoryScreenProps> = ({
   user,
@@ -165,8 +90,61 @@ export const ServiceCategoryScreen: React.FC<ServiceCategoryScreenProps> = ({
 }) => {
   // Service Category Tabs
   const [activeServiceCategory, setActiveServiceCategory] = useState<string>('Hair');
-  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>(['srv-1']);
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const [selectedStylistId, setSelectedStylistId] = useState<string>('any');
+
+  // The category screen is an aggregate view, but every selectable service and
+  // stylist must still originate from a real salon record supplied by the
+  // catalog layer. It must not append a second hardcoded catalog.
+  const serviceCatalog = useMemo<ServiceOption[]>(() => {
+    const servicesById = new Map<string, ServiceOption>();
+    for (const salon of salons) {
+      for (const service of salon.services) {
+        if (!servicesById.has(service.id)) {
+          servicesById.set(service.id, {
+            ...service,
+            category: displayServiceCategory(service.category),
+          });
+        }
+      }
+    }
+    return Array.from(servicesById.values());
+  }, [salons]);
+
+  const categoryStylists = useMemo<CategoryStylistOption[]>(() => {
+    const stylistsById = new Map<string, CategoryStylistOption>();
+    for (const salon of salons) {
+      for (const stylist of salon.stylists) {
+        if (!stylistsById.has(stylist.id)) {
+          stylistsById.set(stylist.id, { ...stylist });
+        }
+      }
+    }
+    return [
+      {
+        id: 'any',
+        name: 'Any Professional',
+        role: 'Earliest verified availability',
+        avatar: '',
+        rating: 0,
+        experience: '',
+        specialty: [],
+        isAny: true,
+      },
+      ...Array.from(stylistsById.values()),
+    ];
+  }, [salons]);
+
+  useEffect(() => {
+    setSelectedServiceIds((previous) => {
+      const valid = previous.filter((id) => serviceCatalog.some((service) => service.id === id));
+      if (valid.length > 0) return valid;
+      const firstForCategory = serviceCatalog.find(
+        (service) => service.category === activeServiceCategory
+      );
+      return firstForCategory ? [firstForCategory.id] : serviceCatalog[0] ? [serviceCatalog[0].id] : [];
+    });
+  }, [activeServiceCategory, serviceCatalog]);
 
   // Search & Filter state
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -196,12 +174,12 @@ export const ServiceCategoryScreen: React.FC<ServiceCategoryScreenProps> = ({
   };
 
   // Selected services calculation
-  const selectedServices = DEFAULT_SERVICES.filter((s) => selectedServiceIds.includes(s.id));
+  const selectedServices = serviceCatalog.filter((s) => selectedServiceIds.includes(s.id));
   const totalDuration = selectedServices.reduce((acc, s) => acc + s.duration, 0);
-  const totalPrice = selectedServices.reduce((acc, s) => acc + s.price, 0);
+  const totalPrice = selectedServices.reduce((acc, s) => acc + (s.discountPrice || s.price), 0);
 
   // Filter stylists
-  const filteredStylists = DEFAULT_STYLISTS.filter((st) => {
+  const filteredStylists = categoryStylists.filter((st) => {
     if (st.isAny) return true;
     if (stylistSearch.trim()) {
       const q = stylistSearch.toLowerCase();
@@ -210,10 +188,12 @@ export const ServiceCategoryScreen: React.FC<ServiceCategoryScreenProps> = ({
       const matchSpec = st.specialty.some((sp) => sp.toLowerCase().includes(q));
       if (!matchName && !matchRole && !matchSpec) return false;
     }
-    if (stylistFilterBadge === 'Available Today' && st.statusBadge !== 'Available Today') return false;
-    if (stylistFilterBadge === 'Top Rated' && !st.isTopRated) return false;
-    if (stylistFilterBadge === 'Most Experienced' && !st.isExperienced) return false;
-    if (stylistFilterBadge === 'Hair Specialist' && !st.specialty.includes('Hair Specialist') && !st.role.includes('Hair')) return false;
+    // Availability, rating, and experience are backend facts. If the catalog
+    // does not supply them, do not fabricate a value or hide every stylist.
+    if (stylistFilterBadge === 'Available Today' && st.statusBadge && st.statusBadge !== 'Available Today') return false;
+    if (stylistFilterBadge === 'Top Rated' && st.isTopRated === false) return false;
+    if (stylistFilterBadge === 'Most Experienced' && st.isExperienced === false) return false;
+    if (stylistFilterBadge === 'Hair Specialist' && !st.specialty.some((specialty) => specialty.toLowerCase().includes('hair')) && !st.role.toLowerCase().includes('hair')) return false;
     return true;
   }).sort((a, b) => {
     if (a.isAny) return -1;
@@ -253,29 +233,21 @@ export const ServiceCategoryScreen: React.FC<ServiceCategoryScreenProps> = ({
       return 0; // recommended
     });
 
-  const featuredSalon = salons[0] || null;
-
   const handleContinueBooking = () => {
-    const targetSalon = featuredSalon || salons[0];
+    const targetSalon = salons.find((candidate) =>
+      selectedServices.length > 0 &&
+      selectedServices.every((selected) => candidate.services.some((service) => service.id === selected.id))
+    );
+    if (!targetSalon) {
+      window.alert('Please select services offered by the same salon before continuing.');
+      return;
+    }
+
     const primaryService = selectedServices[0]
-      ? {
-          id: selectedServices[0].id,
-          name: selectedServices[0].name,
-          category: selectedServices[0].category.toLowerCase() as any,
-          duration: selectedServices[0].duration,
-          price: selectedServices[0].price,
-          description: selectedServices[0].description,
-        }
+      ? toSalonService(selectedServices[0])
       : undefined;
 
-    const allFormattedServices: SalonService[] = selectedServices.map((s) => ({
-      id: s.id,
-      name: s.name,
-      category: s.category.toLowerCase() as any,
-      duration: s.duration,
-      price: s.price,
-      description: s.description,
-    }));
+    const allFormattedServices: SalonService[] = selectedServices.map(toSalonService);
 
     if (onChooseProfessional) {
       onChooseProfessional(targetSalon, primaryService, allFormattedServices);
@@ -284,7 +256,7 @@ export const ServiceCategoryScreen: React.FC<ServiceCategoryScreenProps> = ({
 
     const chosenStylist =
       selectedStylistId !== 'any'
-        ? DEFAULT_STYLISTS.find((st) => st.id === selectedStylistId)
+        ? categoryStylists.find((st) => st.id === selectedStylistId)
         : undefined;
 
     const stylistObj = chosenStylist && !chosenStylist.isAny
@@ -303,19 +275,27 @@ export const ServiceCategoryScreen: React.FC<ServiceCategoryScreenProps> = ({
   };
 
   const handleBookSingleSalon = (salon: Salon) => {
-    const primaryService = selectedServices[0]
-      ? {
-          id: selectedServices[0].id,
-          name: selectedServices[0].name,
-          category: selectedServices[0].category.toLowerCase() as any,
-          duration: selectedServices[0].duration,
-          price: selectedServices[0].price,
-          description: selectedServices[0].description,
-        }
+    const selectedForSalon = selectedServices.find((item) =>
+      salon.services.some((salonService) => salonService.id === item.id)
+    );
+    const serviceForSalon = selectedForSalon
+      ? toSalonService(selectedForSalon)
       : salon.services[0];
 
-    onBookService(salon, primaryService);
+    onBookService(salon, serviceForSalon);
   };
+
+  if (salons.length === 0) {
+    return (
+      <main className="min-h-screen bg-surface-off-white px-page-margin py-20 text-center text-on-surface">
+        <button onClick={onBack} className="text-primary font-semibold">Back</button>
+        <h1 className="mt-8 text-2xl font-bold">Salon catalog unavailable</h1>
+        <p className="mt-2 text-sm text-on-surface-variant">
+          No category results were returned by the canonical catalog service.
+        </p>
+      </main>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-surface-off-white font-body-md text-on-surface flex flex-col selection:bg-nexora-pink/20 selection:text-nexora-pink">
@@ -376,7 +356,7 @@ export const ServiceCategoryScreen: React.FC<ServiceCategoryScreenProps> = ({
           {/* Header Title Section */}
           <section className="px-page-margin pt-6 pb-4">
             <h1 className="font-page-heading text-[24px] sm:text-[28px] font-bold text-on-surface mb-1 leading-tight">
-              42 places near you
+              {filteredSalons.length} {filteredSalons.length === 1 ? 'place' : 'places'} near you
             </h1>
             <p className="font-body-md text-body-md text-on-surface-variant">
               Find nearby salons and barbers offering {categoryTitle}
@@ -394,7 +374,7 @@ export const ServiceCategoryScreen: React.FC<ServiceCategoryScreenProps> = ({
 
             {/* Horizontal Service Category Scroll */}
             <div className="-mx-page-margin overflow-x-auto no-scrollbar flex gap-2 px-page-margin mb-6 snap-x">
-              {['Hair', 'Grooming', 'Skin', 'Nails', 'Makeup'].map((cat) => {
+              {['Hair', 'Grooming', 'Skin', 'Nails', 'Makeup', 'Spa'].map((cat) => {
                 const isActive = activeServiceCategory === cat;
                 return (
                   <button
@@ -436,7 +416,7 @@ export const ServiceCategoryScreen: React.FC<ServiceCategoryScreenProps> = ({
 
             {/* Service Cards List */}
             <div className="flex flex-col gap-3">
-              {DEFAULT_SERVICES.filter(
+              {serviceCatalog.filter(
                 (s) => s.category === activeServiceCategory || activeServiceCategory === 'All'
               ).map((service) => {
                 const isSelected = selectedServiceIds.includes(service.id);

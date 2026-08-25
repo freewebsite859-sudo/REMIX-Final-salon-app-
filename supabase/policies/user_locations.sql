@@ -25,6 +25,28 @@ create table if not exists public.user_locations (
 
 alter table public.user_locations enable row level security;
 
+-- Validate untrusted browser input at the database boundary as well as in the
+-- client. These guards are idempotent and do not rewrite existing rows.
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.user_locations'::regclass
+      and conname = 'user_locations_latitude_range'
+  ) then
+    alter table public.user_locations
+      add constraint user_locations_latitude_range check (latitude between -90 and 90);
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.user_locations'::regclass
+      and conname = 'user_locations_longitude_range'
+  ) then
+    alter table public.user_locations
+      add constraint user_locations_longitude_range check (longitude between -180 and 180);
+  end if;
+end $$;
+
 -- Read own location
 drop policy if exists "users read own location" on public.user_locations;
 create policy "users read own location"

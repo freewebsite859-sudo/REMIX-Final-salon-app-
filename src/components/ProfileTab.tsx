@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { UserProfile, ReferredFriend } from '../types';
+import { UserProfile } from '../types';
 
 interface ProfileTabProps {
   user: UserProfile;
   onUpdateUser: (updated: UserProfile) => void;
   onOpenAIAdvisor: () => void;
   onLogout?: () => void;
-  onDeleteAccount?: () => void;
+  onDeleteAccount?: () => Promise<boolean>;
 }
 
 // 3 Default Original Avatars for Men
@@ -145,7 +145,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
 }) => {
   // Personal Details state
   const [fullName, setFullName] = useState(user.name || '');
-  const [dob, setDob] = useState(user.dateOfBirth || '1998-05-14');
+  const [dob, setDob] = useState(user.dateOfBirth || '');
   const [phone, setPhone] = useState(user.phone || '');
   const [genderRole, setGenderRole] = useState<'men' | 'women'>(user.gender || 'women');
 
@@ -167,13 +167,13 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
   // Refer a Friend state
   const [inviteFriendInput, setInviteFriendInput] = useState('');
   const [inviteStatusMsg, setInviteStatusMsg] = useState<string | null>(null);
-  const [isSendingInvite, setIsSendingInvite] = useState(false);
   const [referralFilter, setReferralFilter] = useState<'all' | 'completed' | 'pending'>('all');
 
   // Modals state
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteInputText, setDeleteInputText] = useState('');
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // File Upload Ref
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -181,7 +181,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
   // Sync state if user prop changes externally
   useEffect(() => {
     setFullName(user.name || '');
-    setDob(user.dateOfBirth || '1998-05-14');
+    setDob(user.dateOfBirth || '');
     setPhone(user.phone || '');
     if (user.gender) setGenderRole(user.gender);
   }, [user]);
@@ -351,10 +351,14 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
   };
 
   // 8. Referral Code Copy & Sharing
-  const referralCode = user.referralCode || 'NEXORA2026';
-  const referralLink = `https://nexora.app/invite?code=${referralCode}`;
+  const referralCode = user.referralCode || '';
+  const referralLink = referralCode ? `https://nexora.app/invite?code=${encodeURIComponent(referralCode)}` : '';
 
   const handleCopyReferralCode = async () => {
+    if (!referralCode) {
+      setCopyFeedback('Referral service is not configured. No code is available.');
+      return;
+    }
     try {
       if (navigator.clipboard) {
         await navigator.clipboard.writeText(referralCode);
@@ -368,6 +372,10 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
   };
 
   const handleWhatsAppShare = () => {
+    if (!referralCode) {
+      setCopyFeedback('Referral service is not configured. No invitation was sent.');
+      return;
+    }
     const text = encodeURIComponent(
       `Hey! Use my invite code ${referralCode} to get ₹150 OFF your first luxury haircut or spa booking on Nexora: ${referralLink}`
     );
@@ -376,6 +384,10 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
   };
 
   const handleShareReferralLink = async () => {
+    if (!referralCode) {
+      setCopyFeedback('Referral service is not configured. No invitation was shared.');
+      return;
+    }
     if (navigator.share) {
       try {
         await navigator.share({
@@ -407,28 +419,9 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
   const handleSendFriendInvite = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!inviteFriendInput.trim()) return;
-
-    setIsSendingInvite(true);
-    setTimeout(() => {
-      setIsSendingInvite(false);
-      const newFriend: ReferredFriend = {
-        id: `ref-${Date.now()}`,
-        name: inviteFriendInput.trim(),
-        date: 'Just now',
-        reward: '₹150 Credit (Pending)',
-        status: 'pending',
-      };
-
-      const updatedFriends = [newFriend, ...(user.referredFriends || [])];
-      onUpdateUser({
-        ...user,
-        referredFriends: updatedFriends,
-      });
-
-      setInviteFriendInput('');
-      setInviteStatusMsg(`Invitation sent to ${newFriend.name}! They will receive ₹150 OFF on signup.`);
-      setTimeout(() => setInviteStatusMsg(null), 4000);
-    }, 500);
+    // Referral creation/rewards are server-owned. Never create a local friend,
+    // credit, or reward status that the canonical backend cannot reconcile.
+    setInviteStatusMsg('Invitations are unavailable until the secure referral service is configured. No invitation was sent.');
   };
 
   // 10. Granular Notification Toggles (with Auto-Save)
@@ -479,26 +472,39 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
 
   // 12. Clear Cache Action
   const handleClearCache = () => {
+    // Do not clear localStorage wholesale: Supabase owns its auth storage and
+    // deleting it here would sign the user out or corrupt token recovery.
     setCacheClearProgress(true);
     setTimeout(() => {
       setCacheClearProgress(false);
-      setCacheClearedMsg('App cache cleared successfully! 14.8 MB storage freed for optimal speed.');
+      setCacheClearedMsg('Only browser-managed image/cache data can be cleared from your browser settings. Your session was not touched.');
       setTimeout(() => setCacheClearedMsg(null), 3500);
-    }, 700);
+    }, 250);
   };
 
   // 13. Delete Account
-  const handleConfirmDeleteAccount = () => {
+  const handleConfirmDeleteAccount = async () => {
     if (deleteInputText.trim().toUpperCase() !== 'DELETE') {
       alert('Please type "DELETE" to confirm permanent account deletion.');
       return;
     }
-    setShowDeleteConfirm(false);
-    if (onDeleteAccount) {
-      onDeleteAccount();
-    } else {
-      localStorage.clear();
-      window.location.reload();
+    setDeleteError(null);
+    if (!onDeleteAccount) {
+      setDeleteError('Account deletion is unavailable because no secure server-side deletion service is configured. No data was deleted.');
+      return;
+    }
+
+    try {
+      const deleted = await onDeleteAccount();
+      if (deleted) {
+        setShowDeleteConfirm(false);
+        setDeleteInputText('');
+      } else {
+        setDeleteError('Account deletion is unavailable because the secure server-side deletion service is not configured. No data was deleted.');
+      }
+    } catch (err) {
+      console.error('[Nexora] Account deletion failed:', err);
+      setDeleteError('Account deletion failed. No data was deleted.');
     }
   };
 
@@ -510,15 +516,9 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
     !WOMEN_AVATARS.some((a) => a.url === user.avatar);
 
   // Referred friends list filtering
-  const allReferredFriends =
-    user.referredFriends && user.referredFriends.length > 0
-      ? user.referredFriends
-      : [
-          { id: '1', name: 'Rohan Verma', date: '12 Aug 2026', reward: '₹150 Credit', status: 'completed' },
-          { id: '2', name: 'Ananya Mehra', date: '08 Aug 2026', reward: '₹150 Credit', status: 'completed' },
-          { id: '3', name: 'Kavya Singhal', date: '01 Aug 2026', reward: '₹150 Credit', status: 'completed' },
-          { id: '4', name: 'Vikram Rajput', date: '28 Jul 2026', reward: '₹150 Credit', status: 'completed' },
-        ];
+  // Rewards/referrals are backend-owned. An empty response means empty state,
+  // not a fabricated list of friends or credits.
+  const allReferredFriends = user.referredFriends || [];
 
   const filteredFriends = allReferredFriends.filter((f) => {
     if (referralFilter === 'completed') return f.status === 'completed';
@@ -1039,7 +1039,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
             </div>
             <div className="flex items-center gap-2 mt-1 justify-center sm:justify-start">
               <span className="font-mono text-[22px] sm:text-[24px] font-black text-primary tracking-widest bg-white/90 px-3.5 py-1 rounded-xl border border-primary/20 shadow-xs">
-                {referralCode}
+                {referralCode || 'Unavailable'}
               </span>
             </div>
           </div>
@@ -1224,20 +1224,13 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
 
             <button
               type="submit"
-              disabled={!inviteFriendInput.trim() || isSendingInvite}
+              disabled={!inviteFriendInput.trim()}
               className="h-11 px-5 bg-primary text-white font-bold rounded-xl text-[13px] hover:bg-[#b00055] transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs disabled:opacity-40 shrink-0"
             >
-              {isSendingInvite ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                  <span>Sending...</span>
-                </>
-              ) : (
-                <>
-                  <span className="material-symbols-outlined text-[18px]">send</span>
-                  <span>Send Invite</span>
-                </>
-              )}
+              <>
+                <span className="material-symbols-outlined text-[18px]">send</span>
+                <span>Send Invite</span>
+              </>
             </button>
           </form>
 
@@ -1248,7 +1241,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
                 1
               </span>
               <span className="text-on-surface leading-tight">
-                Send code <strong>{referralCode}</strong> to friends
+                {referralCode ? <>Send code <strong>{referralCode}</strong> to friends</> : 'Referral code will appear when the referral service is configured'}
               </span>
             </div>
 
@@ -1630,7 +1623,10 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
             <button
               type="button"
               id="account-delete-btn"
-              onClick={() => setShowDeleteConfirm(true)}
+              onClick={() => {
+                setDeleteError(null);
+                setShowDeleteConfirm(true);
+              }}
               className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-700 hover:bg-rose-500/20 text-[12px] font-bold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs"
             >
               <span className="material-symbols-outlined text-[18px]">delete_forever</span>
@@ -1700,6 +1696,12 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
               Permanently deletes all saved salon favorites, booking history, reward points (₹{user.loyaltyPoints}),
               and personalized AI hair profiles.
             </p>
+
+            {deleteError && (
+              <p role="alert" className="text-[12px] leading-relaxed text-rose-700 bg-rose-50 border border-rose-200 rounded-xl p-3">
+                {deleteError}
+              </p>
+            )}
 
             <div>
               <label className="text-[11px] font-bold text-on-surface block mb-1">

@@ -209,6 +209,14 @@ export function useLocationSync(options: UseLocationSyncOptions = {}): UseLocati
     const previous = previousUserIdRef.current;
     previousUserIdRef.current = current;
 
+    if (previous !== current) {
+      // Backend-unavailable is a per-session condition. Do not let a failed
+      // table/RLS check for user A permanently disable syncing for user B.
+      backendDisabledRef.current = false;
+      setBackendUnavailable(false);
+      setPermissionDenied(false);
+    }
+
     if (previous && previous !== current) {
       lastSentRef.current = null;
       latestCoordsRef.current = null;
