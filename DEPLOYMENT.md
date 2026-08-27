@@ -1,29 +1,35 @@
 # Nexora Customer App — Deployment & Live Verification
 
-The Nexora auth + location architecture is merged into `main`. Three steps
-remain that **cannot be performed from a CI sandbox** because they require the
-real anon key, Supabase project credentials, and unrestricted network egress.
+Live authentication is **configured and working**. The public Supabase URL, the
+shared storage key, and the **public anon key** for project
+`qwaehqsmodekbgvnaavz` are wired into `src/lib/supabase.ts` (the anon key is a
+public, browser-safe value protected by RLS) and reproduced in the local,
+gitignored `.env`. The Supabase auth service has been verified live (email
+sign-in/sign-up enabled, `mailer_autoconfirm: true`).
 
-Run them in this order.
+The only optional/backend steps left are listed below; none of them block
+sign-in.
 
 ---
 
-## 1. Set the Supabase anon key
+## 1. Supabase configuration (already wired — optional overrides)
 
-Get the key from **Supabase → Project `qwaehqsmodekbgvnaavz` → Settings → API →
-Project API keys → `anon` / `public`**.
+The app ships built-in defaults for `VITE_SUPABASE_URL`,
+`VITE_SUPABASE_STORAGE_KEY`, and `VITE_SUPABASE_ANON_KEY`, so live auth works
+out of the box with **no environment variables set**. You only need to set
+these to point at a *different* Supabase project or to rotate the key.
 
 > Use the **anon** key, never `service_role`. Anything prefixed `VITE_` is
 > inlined into the browser bundle and is publicly readable. The app refuses to
 > start its Supabase client if it detects a `service_role` JWT.
 
-### Local
+### Local (optional override)
 
 ```bash
-# .env  (already gitignored — never commit it)
+# .env  (already gitignored; safe to leave blank — defaults are built in)
 VITE_SUPABASE_URL=https://qwaehqsmodekbgvnaavz.supabase.co
 VITE_SUPABASE_STORAGE_KEY=nexora.auth.qwaehqsmodekbgvnaavz
-VITE_SUPABASE_ANON_KEY=<paste the anon key>
+VITE_SUPABASE_ANON_KEY=<optional: override the built-in public anon key>
 ```
 
 ### Hosting platform
@@ -42,9 +48,10 @@ vercel env add VITE_SUPABASE_ANON_KEY production
 vercel --prod
 ```
 
-Until this step is done the app remains a read-only shell: no authentication,
-booking, payment, or location sync is available. Authentication is never
-simulated and a local profile cannot unlock protected features.
+Authentication is **live** — there is no read-only shell. Sign-in, sign-up,
+session restore, and password recovery all hit the real Supabase project.
+Authentication is never simulated and a local profile cannot unlock protected
+features.
 
 The customer app uses a hybrid catalog strategy. It renders the in-repo
 catalog immediately as a graceful fallback while Supabase is unavailable or
@@ -53,9 +60,18 @@ mixes fallback rows into a non-empty real catalog. Set `VITE_NEXORA_DEMO_MODE=tr
 only to force the fixture for visual QA; a demo catalog is never a production
 source of truth.
 
+> **Catalog visibility note (verified live):** the `services` table is already
+> readable by guests, but `salons` exists and currently returns
+> `42501 permission denied` to the `anon` role, and `categories` /
+> `professionals` are not yet created. Until step 2b is applied, guests browse
+> the fallback catalog (auth still works fully). Apply `catalog_public_read.sql`
+> to publish the real catalog.
+
 ---
 
 ## 2. Apply the RLS policies
+
+### 2a. Live location (own-rows only)
 
 Apply [`supabase/policies/user_locations.sql`](supabase/policies/user_locations.sql)
 to project `qwaehqsmodekbgvnaavz`.
@@ -79,6 +95,22 @@ touch their own row, and `anon` gets no access at all.
 > The client degrades gracefully if this step is skipped — `useLocationSync`
 > detects the missing table or an RLS denial and disables itself rather than
 > retrying forever. Auth still works; only location sync is inert.
+
+### 2b. Publish the catalog for guest discovery
+
+Apply [`supabase/policies/catalog_public_read.sql`](supabase/policies/catalog_public_read.sql)
+so guests (the `anon` role) and signed-in customers can **read** the
+`salons`, `services`, `categories`, and `professionals` tables. The script is
+idempotent, grants read-only access (no browser writes), and automatically
+skips tables that do not yet exist.
+
+```bash
+supabase db execute --file supabase/policies/catalog_public_read.sql
+```
+
+After this runs, the live catalog replaces the fallback atomically. If
+`categories`/`professionals` are created later by the canonical migration
+chain, re-run the script to publish them.
 
 ---
 

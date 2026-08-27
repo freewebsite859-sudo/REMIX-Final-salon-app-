@@ -41,8 +41,25 @@ export const NEXORA_SUPABASE_URL =
 export const NEXORA_AUTH_STORAGE_KEY =
   readEnv('VITE_SUPABASE_STORAGE_KEY')?.trim() || 'nexora.auth.qwaehqsmodekbgvnaavz';
 
-/** Public anon key — supplied at build/run time, never committed to git. */
-const supabaseAnonKey = readEnv('VITE_SUPABASE_ANON_KEY')?.trim() || '';
+/**
+ * Public anon (publishable) key for the Nexora project.
+ *
+ * This value is PUBLIC BY DESIGN — it is inlined into every browser bundle and
+ * is safe to ship because Supabase Row-Level Security governs all data access
+ * (an anonymous visitor can read only what RLS publishes; a signed-in user can
+ * touch only their own rows). It is provided as a built-in default for the same
+ * reason the project URL is: it keeps live authentication working even when a
+ * hosting environment has not set `VITE_SUPABASE_ANON_KEY` yet (a missing env
+ * var previously made the whole client null and produced the "Live
+ * authentication is unavailable" failure). The env var still overrides this
+ * default when supplied. NEVER replace it with a service_role key — the guard
+ * below rejects privileged keys.
+ */
+const NEXORA_PUBLIC_ANON_KEY =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF3YWVocXNtb2Rla2Jndm5hYXZ6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUxNjQ5MjksImV4cCI6MjEwMDc0MDkyOX0.K92b2vkEb77dyu8fYYZpMTIbTyP98Vo80TaMo_Hmq_E';
+
+/** Env override wins; otherwise the built-in public anon key is used. */
+const supabaseAnonKey = readEnv('VITE_SUPABASE_ANON_KEY')?.trim() || NEXORA_PUBLIC_ANON_KEY;
 
 /**
  * Decode the `role` claim of a Supabase JWT without pulling in a JWT library.
