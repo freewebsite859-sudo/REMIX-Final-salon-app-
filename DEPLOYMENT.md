@@ -16,14 +16,20 @@ Project API keys → `anon` / `public`**.
 > Use the **anon** key, never `service_role`. Anything prefixed `VITE_` is
 > inlined into the browser bundle and is publicly readable. The app refuses to
 > start its Supabase client if it detects a `service_role` JWT.
+>
+> The anon key is **public by design** and is already committed in
+> [`.env.example`](.env.example), so any build that reads the repo gets live
+> auth for free. It is a publishable key protected by RLS — it is not a secret.
+> You only need to override `VITE_SUPABASE_*` if you point the app at a
+> different Supabase project.
 
 ### Local
 
 ```bash
-# .env  (already gitignored — never commit it)
+# .env  (gitignored — copy the real values from .env.example)
 VITE_SUPABASE_URL=https://qwaehqsmodekbgvnaavz.supabase.co
 VITE_SUPABASE_STORAGE_KEY=nexora.auth.qwaehqsmodekbgvnaavz
-VITE_SUPABASE_ANON_KEY=<paste the anon key>
+VITE_SUPABASE_ANON_KEY=<anon key — already filled in .env.example>
 ```
 
 ### Hosting platform

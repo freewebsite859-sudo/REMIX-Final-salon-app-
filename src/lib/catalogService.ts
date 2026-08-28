@@ -22,8 +22,12 @@ const TABLES = {
 } as const;
 
 function env(name: string): string | undefined {
-  const viteEnv = (import.meta as unknown as { env?: Record<string, string | undefined> })?.env || {};
-  const viteValue = viteEnv[name];
+  // Literal `import.meta.env` access so Vite inlines the VITE_* values at
+  // build time (see src/lib/supabase.ts readEnv for details).
+  const viteEnv = import.meta.env as unknown as
+    | Record<string, string | undefined>
+    | undefined;
+  const viteValue = viteEnv?.[name];
   if (viteValue) return viteValue;
   return (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.[name];
 }

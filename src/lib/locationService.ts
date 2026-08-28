@@ -11,9 +11,12 @@ import { supabase } from './supabase';
 
 /** Table in the Nexora project holding live customer coordinates. */
 function readEnv(name: string): string | undefined {
-  const viteEnv =
-    (import.meta as unknown as { env?: Record<string, string | undefined> })?.env || {};
-  const fromVite = viteEnv[name];
+  // Literal `import.meta.env` access so Vite inlines the VITE_* values at
+  // build time (see src/lib/supabase.ts readEnv for details).
+  const viteEnv = import.meta.env as unknown as
+    | Record<string, string | undefined>
+    | undefined;
+  const fromVite = viteEnv?.[name];
   if (fromVite) return fromVite;
   const nodeEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } })
     .process?.env;

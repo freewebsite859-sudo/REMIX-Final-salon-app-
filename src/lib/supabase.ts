@@ -19,9 +19,16 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
  * Both sources are restricted to public `VITE_*` values.
  */
 function readEnv(name: string): string | undefined {
-  const viteEnv =
-    (import.meta as unknown as { env?: Record<string, string | undefined> })?.env || {};
-  const fromVite = viteEnv[name];
+  // IMPORTANT: access `import.meta.env` as a literal. Vite statically replaces
+  // this token with the inlined VITE_* object at build time. Indirect access
+  // (e.g. `(import.meta as ...)?.env`) silently defeats that replacement,
+  // leaving the browser bundle without configuration and disabling live auth.
+  // Outside Vite (Node / tsx test harnesses) `import.meta.env` is undefined,
+  // so the `process.env` fallback below covers those contexts.
+  const viteEnv = import.meta.env as unknown as
+    | Record<string, string | undefined>
+    | undefined;
+  const fromVite = viteEnv?.[name];
   if (fromVite) return fromVite;
 
   const nodeEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } })
