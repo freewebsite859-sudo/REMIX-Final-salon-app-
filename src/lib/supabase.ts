@@ -48,8 +48,23 @@ export const NEXORA_SUPABASE_URL =
 export const NEXORA_AUTH_STORAGE_KEY =
   readEnv('VITE_SUPABASE_STORAGE_KEY')?.trim() || 'nexora.auth.qwaehqsmodekbgvnaavz';
 
-/** Public anon key — supplied at build/run time, never committed to git. */
-const supabaseAnonKey = readEnv('VITE_SUPABASE_ANON_KEY')?.trim() || '';
+/**
+ * Public anon (publishable) key for the Nexora project `qwaehqsmodekbgvnaavz`.
+ * Like the project URL above, this is browser-safe BY DESIGN: the anon key is
+ * sent with every request and is protected by RLS, so shipping it in the
+ * bundle is standard Supabase practice (the same key is committed in the
+ * sibling `custmer-Fresh-app-` repo).
+ *
+ * Keeping it as a hardcoded fallback — instead of requiring an untracked
+ * `.env` that CI/sandbox rebuilds may not have — guarantees live auth is
+ * configured in EVERY build. Override it via `VITE_SUPABASE_ANON_KEY` only
+ * when pointing the app at a different Supabase project.
+ */
+const NEXORA_PUBLIC_ANON_KEY =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF3YWVocXNtb2Rla2Jndm5hYXZ6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUxNjQ5MjksImV4cCI6MjEwMDc0MDkyOX0.K92b2vkEb77dyu8fYYZpMTIbTyP98Vo80TaMo_Hmq_E';
+
+/** Public anon key — env override wins; otherwise the Nexora public key. */
+const supabaseAnonKey = readEnv('VITE_SUPABASE_ANON_KEY')?.trim() || NEXORA_PUBLIC_ANON_KEY;
 
 /**
  * Decode the `role` claim of a Supabase JWT without pulling in a JWT library.
