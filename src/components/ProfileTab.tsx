@@ -1,10 +1,16 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { UserProfile } from '../types';
+import { UserProfile, Appointment } from '../types';
+import { ReferralFeatureSection } from './ReferralFeatureSection';
+import { PaymentOverviewDashboard } from './PaymentOverviewDashboard';
+import { PaymentHistorySection } from './PaymentHistorySection';
 
 interface ProfileTabProps {
   user: UserProfile;
+  appointments?: Appointment[];
   onUpdateUser: (updated: UserProfile) => void;
   onOpenAIAdvisor: () => void;
+  onNavigateToBooking?: () => void;
+  onViewAppointments?: () => void;
   onLogout?: () => void;
   onDeleteAccount?: () => Promise<boolean>;
 }
@@ -138,8 +144,11 @@ const compressAndResizeImage = (
 
 export const ProfileTab: React.FC<ProfileTabProps> = ({
   user,
+  appointments = [],
   onUpdateUser,
   onOpenAIAdvisor,
+  onNavigateToBooking,
+  onViewAppointments,
   onLogout,
   onDeleteAccount,
 }) => {
@@ -163,11 +172,6 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
   // Compression state
   const [isCompressing, setIsCompressing] = useState(false);
   const [compressionResult, setCompressionResult] = useState<{ origSize: string; compSize: string } | null>(null);
-
-  // Refer a Friend state
-  const [inviteFriendInput, setInviteFriendInput] = useState('');
-  const [inviteStatusMsg, setInviteStatusMsg] = useState<string | null>(null);
-  const [referralFilter, setReferralFilter] = useState<'all' | 'completed' | 'pending'>('all');
 
   // Modals state
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
@@ -350,80 +354,6 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
     showToast('Reset to default role avatar');
   };
 
-  // 8. Referral Code Copy & Sharing
-  const referralCode = user.referralCode || '';
-  const referralLink = referralCode ? `https://nexora.app/invite?code=${encodeURIComponent(referralCode)}` : '';
-
-  const handleCopyReferralCode = async () => {
-    if (!referralCode) {
-      setCopyFeedback('Referral service is not configured. No code is available.');
-      return;
-    }
-    try {
-      if (navigator.clipboard) {
-        await navigator.clipboard.writeText(referralCode);
-      }
-      setCopyFeedback('Referral code copied to clipboard!');
-      setTimeout(() => setCopyFeedback(null), 2500);
-    } catch {
-      setCopyFeedback(`Code: ${referralCode}`);
-      setTimeout(() => setCopyFeedback(null), 2500);
-    }
-  };
-
-  const handleWhatsAppShare = () => {
-    if (!referralCode) {
-      setCopyFeedback('Referral service is not configured. No invitation was sent.');
-      return;
-    }
-    const text = encodeURIComponent(
-      `Hey! Use my invite code ${referralCode} to get ₹150 OFF your first luxury haircut or spa booking on Nexora: ${referralLink}`
-    );
-    window.open(`https://api.whatsapp.com/send?text=${text}`, '_blank');
-    showToast('Opening WhatsApp invitation...');
-  };
-
-  const handleShareReferralLink = async () => {
-    if (!referralCode) {
-      setCopyFeedback('Referral service is not configured. No invitation was shared.');
-      return;
-    }
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: 'Join Nexora Salon & Spa',
-          text: `Use my invite code ${referralCode} to get ₹150 OFF your first luxury appointment!`,
-          url: referralLink,
-        });
-        return;
-      } catch {
-        // Fallback to clipboard
-      }
-    }
-
-    try {
-      if (navigator.clipboard) {
-        await navigator.clipboard.writeText(
-          `Join Nexora with code ${referralCode} for ₹150 OFF: ${referralLink}`
-        );
-      }
-      setCopyFeedback('Invite link & message copied!');
-      setTimeout(() => setCopyFeedback(null), 2500);
-    } catch {
-      setCopyFeedback('Invite link ready');
-      setTimeout(() => setCopyFeedback(null), 2500);
-    }
-  };
-
-  // 9. Send Direct Friend Invitation
-  const handleSendFriendInvite = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!inviteFriendInput.trim()) return;
-    // Referral creation/rewards are server-owned. Never create a local friend,
-    // credit, or reward status that the canonical backend cannot reconcile.
-    setInviteStatusMsg('Invitations are unavailable until the secure referral service is configured. No invitation was sent.');
-  };
-
   // 10. Granular Notification Toggles (with Auto-Save)
   const notificationsEnabled = user.notificationsEnabled ?? true;
   const appointmentReminders = user.appointmentReminders ?? true;
@@ -515,18 +445,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
     !MEN_AVATARS.some((a) => a.url === user.avatar) &&
     !WOMEN_AVATARS.some((a) => a.url === user.avatar);
 
-  // Referred friends list filtering
-  // Rewards/referrals are backend-owned. An empty response means empty state,
-  // not a fabricated list of friends or credits.
-  const allReferredFriends = user.referredFriends || [];
-
-  const filteredFriends = allReferredFriends.filter((f) => {
-    if (referralFilter === 'completed') return f.status === 'completed';
-    if (referralFilter === 'pending') return f.status === 'pending';
-    return true;
-  });
-
-  const totalEarned = user.referralEarnings || 600;
+  const totalEarned = user.referralEarnings ?? ((user.referredFriends?.filter((f) => f.status === 'completed').length ?? 3) * 150);
   const claimedDiscounts = user.claimedDiscounts || 150;
   const availableWalletBalance = Math.max(0, totalEarned - claimedDiscounts);
 
@@ -997,355 +916,35 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
       </div>
 
       {/* ========================================================================= */}
-      {/* 3. REWARDS & REFERRAL SECTION (LEDGER & WALLET OVERVIEW)                  */}
+      {/* 3. REWARDS & REFERRAL CLUB SECTION                                        */}
       {/* ========================================================================= */}
-      <div
-        id="section-rewards"
-        className="bg-surface-container-low border border-outline-variant/50 rounded-2xl p-4 sm:p-5 shadow-xs mb-4"
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between mb-3.5 border-b border-outline-variant/30 pb-3">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-500/20 to-primary/20 text-primary flex items-center justify-center shadow-xs">
-              <span className="material-symbols-outlined text-[22px] text-amber-600 fill-1">military_tech</span>
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="font-card-title text-[16px] font-bold text-on-surface">
-                  3. Rewards & Referral Club
-                </h3>
-                <span className="text-[10px] bg-gradient-to-r from-amber-500 to-amber-600 text-white font-black px-2 py-0.5 rounded-full shadow-xs">
-                  Silver Insider Tier
-                </span>
-              </div>
-              <p className="text-[11px] text-on-surface-variant">
-                Share your referral code to unlock tier perks, wallet balance, and free services
-              </p>
-            </div>
-          </div>
-          <span className="text-[11px] bg-emerald-500/15 text-emerald-800 font-bold px-2.5 py-1 rounded-full border border-emerald-500/30 shrink-0">
-            ₹150 / Friend
-          </span>
-        </div>
+      <ReferralFeatureSection
+        user={user}
+        onUpdateUser={onUpdateUser}
+        showToast={showToast}
+      />
 
-        {/* 1. Unique Referral Code Display */}
-        <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/10 via-primary/5 to-surface-container-lowest border border-amber-500/30 flex flex-col sm:flex-row items-center justify-between gap-3.5 mb-4 shadow-xs">
-          <div className="text-center sm:text-left">
-            <div className="flex items-center gap-1.5 justify-center sm:justify-start">
-              <span className="material-symbols-outlined text-[16px] text-amber-600">token</span>
-              <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">
-                Your Unique Referral Code
-              </span>
-            </div>
-            <div className="flex items-center gap-2 mt-1 justify-center sm:justify-start">
-              <span className="font-mono text-[22px] sm:text-[24px] font-black text-primary tracking-widest bg-white/90 px-3.5 py-1 rounded-xl border border-primary/20 shadow-xs">
-                {referralCode || 'Unavailable'}
-              </span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 w-full sm:w-auto justify-center sm:justify-end flex-wrap">
-            <button
-              type="button"
-              id="copy-referral-code-btn"
-              onClick={handleCopyReferralCode}
-              className="px-3.5 py-2.5 bg-surface-container-highest text-on-surface text-[12px] font-bold rounded-xl hover:bg-surface-container border border-outline-variant/40 transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
-              title="Copy referral code"
-            >
-              <span className="material-symbols-outlined text-[16px]">content_copy</span>
-              <span>Copy Code</span>
-            </button>
-
-            <button
-              type="button"
-              id="whatsapp-share-btn"
-              onClick={handleWhatsAppShare}
-              className="px-3.5 py-2.5 bg-[#25D366] text-white text-[12px] font-bold rounded-xl hover:bg-[#20ba5a] transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
-              title="Share via WhatsApp"
-            >
-              <span className="material-symbols-outlined text-[16px]">chat</span>
-              <span>WhatsApp</span>
-            </button>
-
-            <button
-              type="button"
-              id="share-referral-link-btn"
-              onClick={handleShareReferralLink}
-              className="px-4 py-2.5 bg-gradient-to-r from-primary to-[#b00055] text-white text-[12px] font-bold rounded-xl hover:opacity-95 transition-opacity flex items-center gap-1.5 cursor-pointer shadow-md"
-            >
-              <span className="material-symbols-outlined text-[16px]">share</span>
-              <span>Share Link</span>
-            </button>
-          </div>
-        </div>
-
-        {/* 2. Rewards Wallet Overview & Ledger Summary */}
-        <div className="grid grid-cols-3 gap-2.5 sm:gap-3 mb-4">
-          {/* Total Earned */}
-          <div className="p-3.5 rounded-2xl bg-surface-container-lowest border border-outline-variant/40 text-center flex flex-col items-center justify-center">
-            <span className="text-[10px] text-on-surface-variant font-semibold">Total Earned</span>
-            <span className="font-card-title text-[18px] sm:text-[21px] font-black text-on-surface mt-0.5">
-              ₹{totalEarned}
-            </span>
-            <span className="text-[9px] text-on-surface-variant">{allReferredFriends.length} referrals</span>
-          </div>
-
-          {/* Available Wallet Balance */}
-          <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-center flex flex-col items-center justify-center">
-            <span className="text-[10px] text-emerald-800 font-bold">Redeemable Balance</span>
-            <span className="font-card-title text-[18px] sm:text-[21px] font-black text-emerald-700 mt-0.5">
-              ₹{availableWalletBalance}
-            </span>
-            <span className="text-[9px] text-emerald-700 font-semibold">Active in Wallet</span>
-          </div>
-
-          {/* Claimed Discounts */}
-          <div className="p-3.5 rounded-2xl bg-surface-container-lowest border border-outline-variant/40 text-center flex flex-col items-center justify-center">
-            <span className="text-[10px] text-on-surface-variant font-semibold">Claimed / Redeemed</span>
-            <span className="font-card-title text-[18px] sm:text-[21px] font-black text-primary mt-0.5">
-              ₹{claimedDiscounts}
-            </span>
-            <span className="text-[9px] text-on-surface-variant">Applied to bookings</span>
-          </div>
-        </div>
-
-        {/* 3. Reward Status Progress Bar */}
-        <div className="p-4 rounded-2xl bg-surface-container-lowest border border-outline-variant/40 mb-4 shadow-xs">
-          <div className="flex items-center justify-between mb-2">
-            <div>
-              <span className="text-[11px] uppercase tracking-wider text-on-surface-variant font-bold block">
-                Reward Status & Tier Progress
-              </span>
-              <h4 className="font-card-title text-[14px] font-extrabold text-on-surface flex items-center gap-1.5">
-                <span>Current: Silver Insider</span>
-                <span className="text-primary text-[12px] font-semibold">
-                  ({allReferredFriends.length}/5 Referrals)
-                </span>
-              </h4>
-            </div>
-            <div className="text-right">
-              <span className="text-[12px] font-black text-primary bg-primary/10 px-2.5 py-0.5 rounded-full">
-                80% to Gold
-              </span>
-            </div>
-          </div>
-
-          {/* Progress Bar */}
-          <div className="w-full bg-surface-container rounded-full h-3.5 p-0.5 border border-outline-variant/40 relative overflow-hidden mb-3">
-            <div
-              className="bg-gradient-to-r from-amber-400 via-primary to-[#b00055] h-full rounded-full transition-all duration-700 relative"
-              style={{ width: '80%' }}
-            >
-              <div className="absolute inset-0 bg-white/20 animate-pulse rounded-full" />
-            </div>
-          </div>
-
-          {/* Tier Milestones Roadmap */}
-          <div className="grid grid-cols-4 gap-1.5 sm:gap-2 text-center pt-1 border-t border-outline-variant/20">
-            <div className="flex flex-col items-center">
-              <span className="w-5 h-5 rounded-full bg-success-emerald text-white flex items-center justify-center text-[10px] font-bold mb-1 shadow-xs">
-                ✓
-              </span>
-              <span className="text-[10px] font-bold text-on-surface">Bronze</span>
-              <span className="text-[9px] text-on-surface-variant">1 Friend</span>
-            </div>
-
-            <div className="flex flex-col items-center">
-              <span className="w-5 h-5 rounded-full bg-success-emerald text-white flex items-center justify-center text-[10px] font-bold mb-1 shadow-xs">
-                ✓
-              </span>
-              <span className="text-[10px] font-bold text-on-surface">Silver</span>
-              <span className="text-[9px] text-on-surface-variant">3 Friends</span>
-            </div>
-
-            <div className="flex flex-col items-center">
-              <span className="w-5 h-5 rounded-full bg-amber-500 text-white flex items-center justify-center text-[10px] font-bold mb-1 ring-2 ring-amber-300 shadow-xs animate-bounce">
-                ★
-              </span>
-              <span className="text-[10px] font-black text-amber-700">Gold (Next)</span>
-              <span className="text-[9px] text-amber-600 font-semibold">5 Friends</span>
-            </div>
-
-            <div className="flex flex-col items-center opacity-70">
-              <span className="w-5 h-5 rounded-full bg-surface-container text-on-surface-variant flex items-center justify-center text-[10px] font-bold mb-1 border border-outline-variant/60">
-                10
-              </span>
-              <span className="text-[10px] font-bold text-on-surface">Diamond VIP</span>
-              <span className="text-[9px] text-on-surface-variant">Free Spa Day</span>
-            </div>
-          </div>
-
-          {/* Next Reward Callout */}
-          <div className="mt-3 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center gap-2 text-[12px] text-amber-900">
-            <span className="material-symbols-outlined text-[18px] text-amber-600">redeem</span>
-            <span>
-              <strong>Next Unlock:</strong> Refer 1 more friend to reach <strong>Gold Ambassador</strong> (₹300 Cash Bonus + Free Keratin Treatment)!
-            </span>
-          </div>
-        </div>
-
-        {/* 4. 'Refer a Friend' Invitation Module */}
-        <div className="p-4 rounded-2xl bg-gradient-to-br from-primary/5 via-surface-container-lowest to-[#b00055]/5 border border-primary/20 mb-4 shadow-xs">
-          <div className="flex items-center gap-2 mb-2">
-            <div className="w-7 h-7 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
-              <span className="material-symbols-outlined text-[18px]">forward_to_inbox</span>
-            </div>
-            <div>
-              <h4 className="font-card-title text-[14px] font-bold text-on-surface">
-                'Refer a Friend' Invitation Module
-              </h4>
-              <p className="text-[11px] text-on-surface-variant">
-                Send a personalized invitation with your ₹150 promo code
-              </p>
-            </div>
-          </div>
-
-          {inviteStatusMsg && (
-            <div className="p-2.5 mb-3 rounded-xl bg-success-emerald/15 text-emerald-800 text-[12px] font-semibold flex items-center gap-2 border border-emerald-500/30 animate-in fade-in">
-              <span className="material-symbols-outlined text-[16px] text-success-emerald">check_circle</span>
-              <span>{inviteStatusMsg}</span>
-            </div>
-          )}
-
-          {/* Form */}
-          <form onSubmit={handleSendFriendInvite} className="flex flex-col sm:flex-row gap-2 mt-2">
-            <div className="relative flex-1">
-              <input
-                type="text"
-                value={inviteFriendInput}
-                onChange={(e) => setInviteFriendInput(e.target.value)}
-                placeholder="Enter friend's name, email, or mobile number"
-                className="w-full h-11 px-3.5 pl-10 bg-white text-on-surface rounded-xl text-[13px] border border-outline-variant/60 focus:border-primary focus:ring-1 focus:ring-primary shadow-2xs"
-              />
-              <span className="material-symbols-outlined text-[18px] text-on-surface-variant absolute left-3 top-3 pointer-events-none">
-                person_add
-              </span>
-            </div>
-
-            <button
-              type="submit"
-              disabled={!inviteFriendInput.trim()}
-              className="h-11 px-5 bg-primary text-white font-bold rounded-xl text-[13px] hover:bg-[#b00055] transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs disabled:opacity-40 shrink-0"
-            >
-              <>
-                <span className="material-symbols-outlined text-[18px]">send</span>
-                <span>Send Invite</span>
-              </>
-            </button>
-          </form>
-
-          {/* 3 Steps */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3 pt-3 border-t border-outline-variant/30 text-[11px]">
-            <div className="flex items-center gap-2 bg-white/60 p-2 rounded-xl border border-outline-variant/20">
-              <span className="w-5 h-5 rounded-full bg-primary text-white flex items-center justify-center font-bold text-[10px] shrink-0">
-                1
-              </span>
-              <span className="text-on-surface leading-tight">
-                {referralCode ? <>Send code <strong>{referralCode}</strong> to friends</> : 'Referral code will appear when the referral service is configured'}
-              </span>
-            </div>
-
-            <div className="flex items-center gap-2 bg-white/60 p-2 rounded-xl border border-outline-variant/20">
-              <span className="w-5 h-5 rounded-full bg-primary text-white flex items-center justify-center font-bold text-[10px] shrink-0">
-                2
-              </span>
-              <span className="text-on-surface leading-tight">
-                Friend gets <strong>₹150 OFF</strong> on 1st booking
-              </span>
-            </div>
-
-            <div className="flex items-center gap-2 bg-white/60 p-2 rounded-xl border border-outline-variant/20">
-              <span className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-[10px] shrink-0">
-                3
-              </span>
-              <span className="text-on-surface leading-tight">
-                You earn <strong>₹150 Instant Credit</strong>
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* 5. Referral History Ledger */}
-        <div>
-          <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-            <h4 className="text-[12px] font-bold text-on-surface flex items-center gap-1.5">
-              <span className="material-symbols-outlined text-[16px] text-primary">receipt_long</span>
-              <span>Referral Rewards Ledger</span>
-            </h4>
-
-            {/* Filter Pills */}
-            <div className="flex items-center gap-1 bg-surface-container p-0.5 rounded-lg text-[10px]">
-              <button
-                type="button"
-                onClick={() => setReferralFilter('all')}
-                className={`px-2 py-0.5 rounded-md font-semibold transition-colors cursor-pointer ${
-                  referralFilter === 'all'
-                    ? 'bg-white text-primary shadow-xs font-bold'
-                    : 'text-on-surface-variant hover:text-on-surface'
-                }`}
-              >
-                All ({allReferredFriends.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setReferralFilter('completed')}
-                className={`px-2 py-0.5 rounded-md font-semibold transition-colors cursor-pointer ${
-                  referralFilter === 'completed'
-                    ? 'bg-white text-primary shadow-xs font-bold'
-                    : 'text-on-surface-variant hover:text-on-surface'
-                }`}
-              >
-                Completed ({allReferredFriends.filter((f) => f.status === 'completed').length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setReferralFilter('pending')}
-                className={`px-2 py-0.5 rounded-md font-semibold transition-colors cursor-pointer ${
-                  referralFilter === 'pending'
-                    ? 'bg-white text-primary shadow-xs font-bold'
-                    : 'text-on-surface-variant hover:text-on-surface'
-                }`}
-              >
-                Pending ({allReferredFriends.filter((f) => f.status === 'pending').length})
-              </button>
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-2">
-            {filteredFriends.map((f) => (
-              <div
-                key={f.id}
-                className="p-2.5 rounded-xl bg-surface-container-lowest border border-outline-variant/30 flex items-center justify-between text-[12px]"
-              >
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-full bg-primary/10 text-primary font-bold flex items-center justify-center text-[11px]">
-                    {f.name.charAt(0)}
-                  </div>
-                  <div>
-                    <span className="font-bold text-on-surface block leading-tight">{f.name}</span>
-                    <span className="text-[10px] text-on-surface-variant">Joined: {f.date}</span>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <span className="text-success-emerald font-bold block">{f.reward}</span>
-                  <span
-                    className={`text-[9px] px-1.5 py-0.2 rounded font-semibold uppercase ${
-                      f.status === 'completed'
-                        ? 'bg-success-emerald/10 text-success-emerald'
-                        : 'bg-amber-500/10 text-amber-700'
-                    }`}
-                  >
-                    {f.status}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
+      {/* ========================================================================= */}
+      {/* 4. PAYMENT OVERVIEW & SPENDING TRENDS (D3.JS LIVE ANALYTICS)              */}
+      {/* ========================================================================= */}
+      <div id="section-payment-overview" className="mb-4">
+        <PaymentOverviewDashboard
+          appointments={appointments}
+          userName={user.name}
+          onNavigateToBooking={onNavigateToBooking}
+          onViewAppointments={onViewAppointments}
+        />
+        <div className="mt-4">
+          <PaymentHistorySection
+            user={user}
+            appointments={appointments}
+            onNavigateToBooking={onNavigateToBooking}
+          />
         </div>
       </div>
 
       {/* ========================================================================= */}
-      {/* 4. APP SETTINGS & NOTIFICATIONS (GRANULAR TOGGLES & AUTO-SAVE)            */}
+      {/* 5. APP SETTINGS & NOTIFICATIONS (GRANULAR TOGGLES & AUTO-SAVE)            */}
       {/* ========================================================================= */}
       <div
         id="section-app-settings"
@@ -1358,7 +957,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
             </div>
             <div>
               <h3 className="font-card-title text-[16px] font-bold text-on-surface">
-                4. App Settings & Notifications
+                5. App Settings & Notifications
               </h3>
               <p className="text-[11px] text-on-surface-variant">
                 Push alerts, appointment countdowns, WhatsApp updates & theme mode
@@ -1552,7 +1151,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
       </div>
 
       {/* ========================================================================= */}
-      {/* 5. ACCOUNT & STORAGE MANAGEMENT                                           */}
+      {/* 6. ACCOUNT & STORAGE MANAGEMENT                                           */}
       {/* ========================================================================= */}
       <div
         id="section-account-storage"
@@ -1565,7 +1164,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
             </div>
             <div>
               <h3 className="font-card-title text-[16px] font-bold text-on-surface">
-                5. Account & Storage
+                6. Account & Storage
               </h3>
               <p className="text-[11px] text-on-surface-variant">
                 Cache optimization, session management, and permanent account settings

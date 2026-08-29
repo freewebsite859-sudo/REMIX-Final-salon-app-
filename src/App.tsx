@@ -792,8 +792,11 @@ export default function App() {
             {activeTab === 'profile' && (
               <ProfileTab
                 user={user}
+                appointments={appointments}
                 onUpdateUser={setUser}
                 onOpenAIAdvisor={() => setIsAIAdvisorModalOpen(true)}
+                onNavigateToBooking={() => setActiveTab('explore')}
+                onViewAppointments={handleViewAppointments}
                 onLogout={handleLogout}
                 onDeleteAccount={handleDeleteAccount}
               />

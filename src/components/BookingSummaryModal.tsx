@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Salon, SalonService, Stylist, Appointment } from '../types';
+import { PaymentFailureDialog } from './PaymentFailureDialog';
 
 export interface BookingPaymentRequest {
   salonId: string;
@@ -118,6 +119,8 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
   const [isEditingNotes, setIsEditingNotes] = useState<boolean>(false);
   const [buttonState, setButtonState] = useState<'idle' | 'loading' | 'success'>('idle');
   const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [showFailureDialog, setShowFailureDialog] = useState<boolean>(false);
+  const [isRetryingPayment, setIsRetryingPayment] = useState<boolean>(false);
   const isSubmitting = buttonState !== 'idle';
 
   useEffect(() => {
@@ -131,6 +134,8 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
     setIsEditingNotes(false);
     setButtonState('idle');
     setPaymentError(null);
+    setShowFailureDialog(false);
+    setIsRetryingPayment(false);
   }, [isOpen, salon?.id, date, time, specialNotes]);
 
   // Total duration & price calculations
@@ -198,9 +203,9 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
       // This build has no Razorpay/order/signature adapter. Do not display a
       // success state or create a local appointment that the backend does not
       // know about.
-      setPaymentError(
-        'Online booking is temporarily unavailable because the secure payment and booking service is not configured. No appointment was created.'
-      );
+      const errorMsg = 'Online booking is temporarily unavailable because the secure payment and booking service is not configured. No appointment was created.';
+      setPaymentError(errorMsg);
+      setShowFailureDialog(true);
       return;
     }
 
@@ -224,14 +229,15 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
       setButtonState('success');
       setConfirmedBooking(appointment);
       setIsSuccess(true);
+      setShowFailureDialog(false);
       onConfirmBooking?.(appointment);
     } catch (err) {
       console.error('[Nexora] Payment/booking request failed:', err);
-      setPaymentError(
-        err instanceof Error
-          ? err.message
-          : 'Payment verification failed. No appointment was created.'
-      );
+      const errorMsg = err instanceof Error
+        ? err.message
+        : 'Payment verification failed. No appointment was created.';
+      setPaymentError(errorMsg);
+      setShowFailureDialog(true);
       setButtonState('idle');
     }
   };
@@ -930,6 +936,29 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
           </>
         )}
       </div>
+
+      {/* Dedicated Payment Failure Alert Dialog with Retry Option */}
+      <PaymentFailureDialog
+        isOpen={showFailureDialog}
+        onClose={() => setShowFailureDialog(false)}
+        onRetryPayment={async () => {
+          setIsRetryingPayment(true);
+          try {
+            await handleConfirm();
+          } finally {
+            setIsRetryingPayment(false);
+          }
+        }}
+        errorMessage={paymentError}
+        salon={salon}
+        advanceAmount={advanceAmount}
+        totalAmount={finalTotal}
+        services={services}
+        stylist={stylist}
+        date={date}
+        time={time}
+        isRetrying={isRetryingPayment || buttonState === 'loading'}
+      />
     </div>
   );
 };
