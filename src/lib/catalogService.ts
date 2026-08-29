@@ -12,7 +12,97 @@ export interface CatalogResult {
   warnings: string[];
 }
 
-interface RawRow extends Record<string, unknown> {}
+/**
+ * Strictly typed Supabase row contracts.
+ * No dynamic fallback arrays — each table has a canonical schema.
+ * This replaces the previous RawRow extends Record<string, unknown> pattern
+ * and eliminates salon_setup_proposals-style dynamic key handling.
+ */
+
+// ---------------------------------------------------------------------------
+// Canonical DB row types (strict)
+// ---------------------------------------------------------------------------
+
+export interface SalonDbRow {
+  id: string;
+  name: string;
+  tagline?: string | null;
+  description?: string | null;
+  latitude: number;
+  longitude: number;
+  address?: string | null;
+  area?: string | null;
+  city?: string | null;
+  maps_url?: string | null;
+  image?: string | null;
+  gallery?: string[] | string | null;
+  photo_gallery?: GalleryPhoto[] | null;
+  is_open?: boolean | null;
+  opening_hours?: string | null;
+  price_range?: Salon['priceRange'] | string | null;
+  rating?: number | null;
+  review_count?: number | null;
+  featured?: boolean | null;
+  trending?: boolean | null;
+  amenities?: string[] | string | null;
+  discount_offer?: string | null;
+  phone?: string | null;
+  gender?: Salon['gender'] | string | null;
+  categories?: string[] | string | null;
+  // Embedded relations (optional, when using joined queries)
+  services?: ServiceDbRow[] | null;
+  professionals?: ProfessionalDbRow[] | null;
+  stylists?: ProfessionalDbRow[] | null;
+  reviews?: ReviewDbRow[] | null;
+  distance?: string | null;
+  distance_km?: number | null;
+}
+
+export interface ServiceDbRow {
+  id: string;
+  salon_id?: string;
+  name: string;
+  category?: string | null;
+  duration: number;
+  price: number;
+  discount_price?: number | null;
+  description?: string | null;
+  popular?: boolean | null;
+}
+
+export interface ProfessionalDbRow {
+  id: string;
+  salon_id?: string;
+  name: string;
+  role?: string | null;
+  avatar?: string | null;
+  rating?: number | null;
+  experience?: string | null;
+  specialty?: string[] | string | null;
+}
+
+export interface CategoryDbRow {
+  id: string;
+  salon_id?: string;
+  name: string;
+  slug?: string | null;
+  label?: string | null;
+}
+
+export interface ReviewDbRow {
+  id: string;
+  salon_id?: string | null;
+  user_name?: string | null;
+  user_avatar?: string | null;
+  rating: number;
+  date?: string | null;
+  comment: string;
+  service_used?: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Table name resolution (env overridable, strict fallback)
+// ---------------------------------------------------------------------------
 
 const TABLES = {
   salons: 'VITE_NEXORA_SALONS_TABLE',
@@ -33,50 +123,66 @@ function tableName(key: keyof typeof TABLES, fallback: string): string {
   return value && /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(value) ? value : fallback;
 }
 
-function stringValue(row: RawRow, keys: string[], fallback = ''): string {
-  for (const key of keys) {
-    const value = row[key];
-    if (typeof value === 'string' && value.trim()) return value.trim();
-  }
-  return fallback;
+// ---------------------------------------------------------------------------
+// Strict type guards & coercion helpers (no fallback key arrays)
+// ---------------------------------------------------------------------------
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function numberValue(row: RawRow, keys: string[]): number | null {
-  for (const key of keys) {
-    const value = row[key];
-    const number = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
-    if (Number.isFinite(number)) return number;
+function asTrimmedString(value: unknown, fallback = ''): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback;
+}
+
+function asOptionalString(value: unknown): string | undefined {
+  const s = asTrimmedString(value, '');
+  return s ? s : undefined;
+}
+
+function asNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
   }
   return null;
 }
 
-function booleanValue(row: RawRow, keys: string[], fallback = false): boolean {
-  for (const key of keys) {
-    if (typeof row[key] === 'boolean') return row[key] as boolean;
-  }
-  return fallback;
+function asBoolean(value: unknown, fallback = false): boolean {
+  return typeof value === 'boolean' ? value : fallback;
 }
 
-function stringArray(value: unknown): string[] {
+function asStringArray(value: unknown): string[] {
   if (typeof value === 'string') {
-    return value.split(',').map((item) => item.trim()).filter(Boolean);
+    return value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
   }
   if (!Array.isArray(value)) return [];
   return value
-    .map((item) => (typeof item === 'string' ? item.trim() : isRow(item) ? stringValue(item, ['name', 'label', 'title', 'slug']) : ''))
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
     .filter(Boolean);
 }
 
-function isRow(value: unknown): value is RawRow {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+function asStringArrayFromMixed(value: unknown): string[] {
+  if (typeof value === 'string') return asStringArray(value);
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (typeof item === 'string') return item.trim();
+      if (isRecord(item)) {
+        const name = asTrimmedString(item.name ?? item.label ?? item.title ?? item.slug, '');
+        return name;
+      }
+      return '';
+    })
+    .filter(Boolean);
 }
 
 function categoryValue(value: unknown): SalonService['category'] {
-  const category = (typeof value === 'string'
-    ? value
-    : isRow(value)
-    ? stringValue(value, ['slug', 'name', 'label'])
-    : '').toLowerCase().trim();
+  const category = typeof value === 'string' ? value.toLowerCase().trim() : '';
   if (category === 'grooming' || category === 'barber' || category === 'men') return 'grooming';
   if (category === 'skin' || category === 'facial' || category === 'beauty') return 'skin';
   if (category === 'nails' || category === 'nail') return 'nails';
@@ -93,162 +199,199 @@ function priceRangeValue(value: unknown): Salon['priceRange'] {
   return '₹₹';
 }
 
-function normalizeReview(row: RawRow): Review | null {
-  const id = stringValue(row, ['id', 'review_id']);
-  const comment = stringValue(row, ['comment', 'content', 'body']);
-  const rating = numberValue(row, ['rating', 'stars']);
+function genderValue(value: unknown): Salon['gender'] {
+  const g = typeof value === 'string' ? value.toLowerCase().trim() : '';
+  if (g === 'women' || g === 'men' || g === 'unisex') return g;
+  return 'unisex';
+}
+
+// ---------------------------------------------------------------------------
+// Strict normalizers (no dynamic key fallback)
+// ---------------------------------------------------------------------------
+
+function normalizeReview(row: ReviewDbRow): Review | null {
+  const id = asTrimmedString(row.id, '');
+  const comment = asTrimmedString(row.comment, '');
+  const rating = asNumber(row.rating);
   if (!id || !comment || rating === null || rating < 1 || rating > 5) return null;
+
   return {
     id,
-    userName: stringValue(row, ['user_name', 'userName', 'author_name'], 'Verified customer'),
-    userAvatar: stringValue(row, ['user_avatar', 'userAvatar', 'author_avatar']),
+    userName: asTrimmedString(row.user_name, 'Verified customer'),
+    userAvatar: asTrimmedString(row.user_avatar, ''),
     rating,
-    date: stringValue(row, ['created_at', 'date'], ''),
+    date: asTrimmedString(row.date, ''),
     comment,
-    serviceUsed: stringValue(row, ['service_used', 'serviceUsed']) || undefined,
+    serviceUsed: asOptionalString(row.service_used),
   };
 }
 
-function normalizeService(row: RawRow): SalonService | null {
-  const id = stringValue(row, ['id', 'service_id']);
-  const name = stringValue(row, ['name', 'service_name', 'title']);
-  const duration = numberValue(row, ['duration', 'duration_minutes', 'durationMinutes']);
-  const price = numberValue(row, ['price', 'amount']);
+function normalizeService(row: ServiceDbRow): SalonService | null {
+  const id = asTrimmedString(row.id, '');
+  const name = asTrimmedString(row.name, '');
+  const duration = asNumber(row.duration);
+  const price = asNumber(row.price);
+
   if (!id || !name || duration === null || duration <= 0 || price === null || price < 0) return null;
-  const discountPrice = numberValue(row, ['discount_price', 'discountPrice', 'sale_price']);
+
+  const discountPrice = asNumber(row.discount_price);
+
   return {
     id,
     name,
-    category: categoryValue(row.category ?? row.category_slug ?? row.category_name),
+    category: categoryValue(row.category),
     duration,
     price,
     discountPrice: discountPrice !== null && discountPrice >= 0 ? discountPrice : undefined,
-    description: stringValue(row, ['description', 'details']),
-    popular: booleanValue(row, ['popular', 'is_popular']),
+    description: asTrimmedString(row.description, ''),
+    popular: asBoolean(row.popular, false),
   };
 }
 
-function normalizeStylist(row: RawRow): Stylist | null {
-  const id = stringValue(row, ['id', 'professional_id', 'stylist_id']);
-  const name = stringValue(row, ['name', 'professional_name', 'stylist_name']);
+function normalizeStylist(row: ProfessionalDbRow): Stylist | null {
+  const id = asTrimmedString(row.id, '');
+  const name = asTrimmedString(row.name, '');
   if (!id || !name) return null;
+
   return {
     id,
     name,
-    role: stringValue(row, ['role', 'title', 'specialty_title']),
-    avatar: stringValue(row, ['avatar', 'avatar_url', 'image_url']),
-    rating: numberValue(row, ['rating', 'average_rating']) ?? 0,
-    experience: stringValue(row, ['experience', 'experience_label']),
-    specialty: stringArray(row.specialty ?? row.specialties),
+    role: asTrimmedString(row.role, ''),
+    avatar: asTrimmedString(row.avatar, ''),
+    rating: asNumber(row.rating) ?? 0,
+    experience: asTrimmedString(row.experience, ''),
+    specialty: asStringArrayFromMixed(row.specialty),
   };
 }
 
-function rowsForSalon(rows: RawRow[], salonId: string): RawRow[] {
-  return rows.filter((row) => stringValue(row, ['salon_id', 'salonId', 'business_id']) === salonId);
+function rowsForSalon<T extends { salon_id?: string }>(rows: T[], salonId: string): T[] {
+  return rows.filter((row) => row.salon_id === salonId);
 }
+
+// ---------------------------------------------------------------------------
+// Strict catalog normalization
+// ---------------------------------------------------------------------------
 
 /**
  * Convert the canonical table response into the customer app's view model.
- * Only fields from Supabase are used; missing coordinates make a salon
- * invalid rather than causing a guessed pin to be rendered.
+ * Only strictly typed fields are used; missing coordinates make a salon invalid.
  */
 export function normalizeCatalog(
-  salonRows: RawRow[],
-  serviceRows: RawRow[],
-  categoryRows: RawRow[],
-  professionalRows: RawRow[]
+  salonRows: SalonDbRow[],
+  serviceRows: ServiceDbRow[],
+  categoryRows: CategoryDbRow[],
+  professionalRows: ProfessionalDbRow[]
 ): Salon[] {
   const salons: Salon[] = [];
 
   for (const row of salonRows) {
-    const id = stringValue(row, ['id', 'salon_id', 'business_id']);
-    const name = stringValue(row, ['name', 'salon_name', 'business_name']);
-    const locationRow: RawRow = isRow(row.location) ? { ...row, ...row.location } : row;
-    const latitude = numberValue(locationRow, ['latitude', 'lat', 'location_latitude']);
-    const longitude = numberValue(locationRow, ['longitude', 'lng', 'lon', 'location_longitude']);
-    if (!id || !name || latitude === null || longitude === null || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+    const id = asTrimmedString(row.id, '');
+    const name = asTrimmedString(row.name, '');
+    const latitude = asNumber(row.latitude);
+    const longitude = asNumber(row.longitude);
+
+    if (
+      !id ||
+      !name ||
+      latitude === null ||
+      longitude === null ||
+      latitude < -90 ||
+      latitude > 90 ||
+      longitude < -180 ||
+      longitude > 180
+    ) {
       continue;
     }
 
-    const embeddedServices = Array.isArray(row.services) ? row.services.filter(isRow) : [];
-    const embeddedProfessionals = Array.isArray(row.professionals)
-      ? row.professionals.filter(isRow)
-      : Array.isArray(row.stylists)
-      ? row.stylists.filter(isRow)
+    // Embedded relations take precedence when present (joined query)
+    const embeddedServices: ServiceDbRow[] = Array.isArray(row.services)
+      ? row.services.filter((s): s is ServiceDbRow => isRecord(s) && typeof (s as ServiceDbRow).id === 'string')
       : [];
+    const embeddedProfessionals: ProfessionalDbRow[] = Array.isArray(row.professionals)
+      ? row.professionals.filter((p): p is ProfessionalDbRow => isRecord(p) && typeof (p as ProfessionalDbRow).id === 'string')
+      : Array.isArray(row.stylists)
+        ? row.stylists.filter((p): p is ProfessionalDbRow => isRecord(p) && typeof (p as ProfessionalDbRow).id === 'string')
+        : [];
+
     const services = (embeddedServices.length ? embeddedServices : rowsForSalon(serviceRows, id))
       .map(normalizeService)
       .filter((service): service is SalonService => service !== null);
+
     const stylists = (embeddedProfessionals.length ? embeddedProfessionals : rowsForSalon(professionalRows, id))
       .map(normalizeStylist)
       .filter((stylist): stylist is Stylist => stylist !== null);
+
     const reviews = Array.isArray(row.reviews)
-      ? row.reviews.filter(isRow).map(normalizeReview).filter((review): review is Review => review !== null)
+      ? row.reviews
+          .filter((r): r is ReviewDbRow => isRecord(r) && typeof (r as ReviewDbRow).id === 'string')
+          .map(normalizeReview)
+          .filter((review): review is Review => review !== null)
       : [];
 
     const relatedCategories = rowsForSalon(categoryRows, id);
     const categories = [
-      ...stringArray(row.categories),
-      ...relatedCategories.map((category) => stringValue(category, ['name', 'label', 'slug'])).filter(Boolean),
+      ...asStringArrayFromMixed(row.categories),
+      ...relatedCategories.map((category) => asTrimmedString(category.name || category.label || category.slug, '')).filter(Boolean),
     ].filter((category, index, values) => values.indexOf(category) === index);
 
-    const image = stringValue(row, ['image', 'image_url', 'cover_image', 'cover_image_url']);
-    const gallery = stringArray(row.gallery ?? row.gallery_urls ?? row.images);
-    const address = stringValue(locationRow, ['address', 'full_address', 'location_address']);
-    const area = stringValue(locationRow, ['area', 'locality', 'neighborhood']);
-    const city = stringValue(locationRow, ['city', 'town']);
+    const image = asTrimmedString(row.image, '');
+    const gallery = asStringArrayFromMixed(row.gallery);
+    const address = asTrimmedString(row.address, '');
+    const area = asTrimmedString(row.area, '');
+    const city = asTrimmedString(row.city, '');
+
+    const distanceLabel = asTrimmedString(row.distance, '');
+    const distanceKm = asNumber(row.distance_km);
 
     salons.push({
       id,
       name,
-      tagline: stringValue(row, ['tagline', 'description']),
+      tagline: asTrimmedString(row.tagline ?? row.description, ''),
       categories,
-      rating: numberValue(row, ['rating', 'average_rating']) ?? 0,
-      reviewCount: numberValue(row, ['review_count', 'reviewCount', 'reviews_count']) ?? reviews.length,
-      distance: stringValue(row, ['distance', 'distance_label']) ||
-        (numberValue(row, ['distance_km', 'distanceKm']) !== null
-          ? `${numberValue(row, ['distance_km', 'distanceKm'])} km`
-          : ''),
+      rating: asNumber(row.rating) ?? 0,
+      reviewCount: asNumber(row.review_count) ?? reviews.length,
+      distance: distanceLabel || (distanceKm !== null ? `${distanceKm} km` : ''),
       location: {
         area,
         city,
         address,
         latitude,
         longitude,
-        mapsUrl: stringValue(row, ['maps_url', 'mapsUrl', 'google_maps_url']) || undefined,
+        mapsUrl: asOptionalString(row.maps_url),
       },
       image,
       gallery,
-      photoGallery: Array.isArray(row.photo_gallery)
-        ? row.photo_gallery.filter(isRow).map((photo) => photo as unknown as GalleryPhoto)
-        : undefined,
-      isOpen: booleanValue(row, ['is_open', 'isOpen', 'open_now']),
-      openingHours: stringValue(row, ['opening_hours', 'openingHours', 'hours']),
-      priceRange: priceRangeValue(row.price_range ?? row.priceRange),
-      featured: booleanValue(row, ['featured', 'is_featured']),
-      trending: booleanValue(row, ['trending', 'is_trending']),
+      photoGallery: Array.isArray(row.photo_gallery) ? (row.photo_gallery as GalleryPhoto[]) : undefined,
+      isOpen: asBoolean(row.is_open, false),
+      openingHours: asTrimmedString(row.opening_hours, ''),
+      priceRange: priceRangeValue(row.price_range),
+      featured: asBoolean(row.featured, false),
+      trending: asBoolean(row.trending, false),
       services,
       stylists,
       reviews,
-      amenities: stringArray(row.amenities),
-      discountOffer: stringValue(row, ['discount_offer', 'discountOffer']) || undefined,
-      phone: stringValue(row, ['phone', 'phone_number']) || undefined,
-      gender: ['women', 'men', 'unisex'].includes(String(row.gender))
-        ? (String(row.gender) as Salon['gender'])
-        : 'unisex',
+      amenities: asStringArrayFromMixed(row.amenities),
+      discountOffer: asOptionalString(row.discount_offer),
+      phone: asOptionalString(row.phone),
+      gender: genderValue(row.gender),
     });
   }
 
   return salons;
 }
 
-async function readRows(client: SupabaseClient, table: string): Promise<{ rows: RawRow[]; error?: string }> {
+// ---------------------------------------------------------------------------
+// Supabase fetch helpers (strict generics)
+// ---------------------------------------------------------------------------
+
+async function readRows<T>(client: SupabaseClient, table: string): Promise<{ rows: T[]; error?: string }> {
   try {
     const { data, error } = await client.from(table).select('*');
     if (error) return { rows: [], error: `${table}: ${error.message}` };
-    return {
-      rows: Array.isArray(data) ? data.filter(isRow) : [],
-    };
+    if (!Array.isArray(data)) return { rows: [] };
+    // Ensure each row is a record; strict typing validated later in normalizers
+    const rows = data.filter(isRecord) as unknown as T[];
+    return { rows };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return { rows: [], error: `${table}: ${message}` };
@@ -257,17 +400,15 @@ async function readRows(client: SupabaseClient, table: string): Promise<{ rows: 
 
 /** Fetch the canonical catalog, falling back without ever mixing fake rows into real rows. */
 export async function fetchCatalog(client: SupabaseClient | null = supabase): Promise<CatalogResult> {
-  // An injected client is also used by integration tests and server-side
-  // adapters; runtime callers still receive null when public config is absent.
   if (!client || isNexoraDemoMode) {
     return { salons: DEMO_SALONS, source: 'fallback', warnings: ['Supabase catalog is not configured.'] };
   }
 
   const [salonsResult, servicesResult, categoriesResult, professionalsResult] = await Promise.all([
-    readRows(client, tableName('salons', 'salons')),
-    readRows(client, tableName('services', 'services')),
-    readRows(client, tableName('categories', 'categories')),
-    readRows(client, tableName('professionals', 'professionals')),
+    readRows<SalonDbRow>(client, tableName('salons', 'salons')),
+    readRows<ServiceDbRow>(client, tableName('services', 'services')),
+    readRows<CategoryDbRow>(client, tableName('categories', 'categories')),
+    readRows<ProfessionalDbRow>(client, tableName('professionals', 'professionals')),
   ]);
 
   const warnings = [
@@ -277,9 +418,6 @@ export async function fetchCatalog(client: SupabaseClient | null = supabase): Pr
     professionalsResult.error,
   ].filter((warning): warning is string => Boolean(warning));
 
-  // Salons are the catalog root. An empty/error root falls back as a unit;
-  // child-table failures do not cause mock services to be mixed into real
-  // salons, so newly onboarded records remain authoritative section by section.
   if (salonsResult.rows.length === 0) {
     return {
       salons: DEMO_SALONS,
@@ -294,6 +432,7 @@ export async function fetchCatalog(client: SupabaseClient | null = supabase): Pr
     categoriesResult.rows,
     professionalsResult.rows
   );
+
   if (normalized.length === 0) {
     return {
       salons: DEMO_SALONS,

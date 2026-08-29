@@ -5,6 +5,8 @@ import { OfferDetailModal, OfferPackageDetail } from './OfferDetailModal';
 import nexoraPremiumOfferImg from '../assets/images/nexora_premium_offer_1787146222315.jpg';
 import hydraFacialOfferImg from '../assets/images/hydra_facial_offer_1787146241160.jpg';
 import bridalStylingOfferImg from '../assets/images/bridal_styling_offer_1787146272580.jpg';
+import skinGlowCareHeroImg from '../assets/images/skin_glow_care_hero_1787077833623.jpg';
+import nailBridalArtHeroImg from '../assets/images/nail_bridal_art_hero_1787077848463.jpg';
 
 const EXCLUSIVE_OFFERS: Record<'nexora-premium' | 'hydra-facial' | 'bridal-pass', OfferPackageDetail> = {
   'nexora-premium': {
@@ -242,7 +244,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
     },
     {
       id: 4,
-      image: '/src/assets/images/skin_glow_care_hero_1787077833623.jpg',
+      image: skinGlowCareHeroImg,
       badge: 'Glow Care',
       badgeBg: 'bg-nexora-pink/90',
       title: 'Skin & Glow Care',
@@ -251,7 +253,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
     },
     {
       id: 5,
-      image: '/src/assets/images/nail_bridal_art_hero_1787077848463.jpg',
+      image: nailBridalArtHeroImg,
       badge: 'Bridal Art',
       badgeBg: 'bg-purple-600/90',
       title: 'Nail & Bridal Art',
