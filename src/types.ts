@@ -86,6 +86,17 @@ export interface Appointment {
   time: string; // e.g. "5:30 PM"
   status: 'confirmed' | 'in_progress' | 'completed' | 'cancelled';
   totalPrice: number;
+  advancePaid?: number; // 25% advance amount paid online
+  remainingAmount?: number; // 75% balance payable at salon
+  paymentMode?: 'advance_25' | 'full' | 'pay_at_salon';
+  paymentStatus?: 'paid' | 'pending' | 'failed';
+  razorpayPaymentId?: string;
+  razorpayOrderId?: string;
+  razorpaySignature?: string;
+  paymentMethodUsed?: 'upi' | 'card' | 'netbanking' | 'qr' | 'wallet';
+  salonConfirmationStatus?: 'confirmed_by_owner' | 'auto_verified' | 'pending_owner_approval';
+  ownerConfirmedAt?: string;
+  ownerName?: string;
   discountApplied?: number;
   bookingRef: string;
   notes?: string;
@@ -166,6 +177,8 @@ export interface UserProfile {
   referralEarnings?: number;
   claimedDiscounts?: number;
   referredFriends?: ReferredFriend[];
+  // Loyalty & Rewards state
+  claimedRewardIds?: string[];
   // App Settings & Preferences
   notificationsEnabled?: boolean;
   appointmentReminders?: boolean;
@@ -233,4 +246,42 @@ export interface AIStyleQuizResult {
   recommendedServices: RecommendedServiceMatch[];
   homeCareTips: string[];
   groundingSources?: GroundingChunk[];
+}
+
+export interface LoyaltyReward {
+  id: string;
+  title: string;
+  category: 'discount' | 'free_service' | 'upgrade' | 'multiplier';
+  pointsRequired: number;
+  discountValue?: number; // In INR, e.g. 200
+  discountCode: string;
+  description: string;
+  isUnlocked: boolean;
+  basedOnHistory?: string;
+  badgeLabel?: string;
+  serviceCategory?: 'hair' | 'skin' | 'nails' | 'spa' | 'grooming' | 'all';
+}
+
+export interface LoyaltyActivityItem {
+  id: string;
+  title: string;
+  type: 'earned' | 'redeemed' | 'bonus';
+  points: number;
+  date: string;
+  source: 'appointment' | 'referral' | 'review' | 'quiz' | 'birthday';
+  appointmentRef?: string;
+  salonName?: string;
+  serviceName?: string;
+}
+
+export interface SpendMilestoneReward {
+  id: string;
+  title: string;
+  requiredSpend: number;
+  discountValue: number;
+  discountCode: string;
+  description: string;
+  perkBadge: string;
+  isUnlocked: boolean;
+  unlockedAtDate?: string;
 }

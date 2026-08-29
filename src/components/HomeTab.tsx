@@ -161,10 +161,14 @@ interface HomeTabProps {
   upcomingAppointment: Appointment | null;
   savedSalonIds: string[];
   savedServicesCount: number;
+  recentlyViewedSalons?: Salon[];
+  onClearRecentlyViewed?: () => void;
+  onRemoveRecentlyViewed?: (salonId: string) => void;
   onOpenSalonDetails: (salon: Salon) => void;
   onBookSalon: (salon: Salon, service?: SalonService, stylist?: Stylist) => void;
   onOpenAppointmentDetails: (appointment: Appointment) => void;
   onToggleSaveSalon: (salonId: string) => void;
+  onShareSalon?: (salon: Salon) => void;
   onOpenQuickNearest: () => void;
   onOpenAIAdvisor: () => void;
   onSelectCategory: (category: string) => void;
@@ -178,10 +182,14 @@ export const HomeTab: React.FC<HomeTabProps> = ({
   upcomingAppointment,
   savedSalonIds,
   savedServicesCount,
+  recentlyViewedSalons = [],
+  onClearRecentlyViewed,
+  onRemoveRecentlyViewed,
   onOpenSalonDetails,
   onBookSalon,
   onOpenAppointmentDetails,
   onToggleSaveSalon,
+  onShareSalon,
   onOpenQuickNearest,
   onOpenAIAdvisor,
   onSelectCategory,
@@ -192,6 +200,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
   const [activeSlide, setActiveSlide] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const [selectedOfferModal, setSelectedOfferModal] = useState<OfferPackageDetail | null>(null);
+  const recentlyViewedScrollRef = useRef<HTMLDivElement>(null);
   const [isBannerDismissed, setIsBannerDismissed] = useState<boolean>(() => {
     try {
       return localStorage.getItem('hideBookNearestBanner') === 'true';
@@ -201,6 +210,13 @@ export const HomeTab: React.FC<HomeTabProps> = ({
   });
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [selectedFilter, setSelectedFilter] = useState<string | null>(null);
+
+  const scrollRecentlyViewed = (direction: 'left' | 'right') => {
+    if (recentlyViewedScrollRef.current) {
+      const scrollAmount = direction === 'left' ? -300 : 300;
+      recentlyViewedScrollRef.current.scrollBy({ left: scrollAmount, behavior: 'smooth' });
+    }
+  };
 
   const handleDismissNearestBanner = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -675,6 +691,219 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           </div>
         </section>
 
+        {/* Recently Viewed Salons Carousel — Smooth Navigation & Instant Re-Access */}
+        <section id="recently-viewed-salons-section" className="-mx-page-margin mb-[24px]">
+          <div className="flex items-center justify-between mb-[12px] px-page-margin">
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-6 rounded-lg bg-[rgba(255,225,235,0.7)] text-[#b00055] flex items-center justify-center">
+                <span className="material-symbols-outlined text-[16px]">history</span>
+              </div>
+              <h2 className="font-section-heading text-[15px] font-bold text-on-surface">
+                Recently Viewed Salons
+              </h2>
+              {recentlyViewedSalons.length > 0 && (
+                <span className="px-2 py-0.5 rounded-full bg-[rgba(180,0,80,0.08)] text-[#b00055] text-[10px] font-bold">
+                  {recentlyViewedSalons.length}
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              {recentlyViewedSalons.length > 0 && onClearRecentlyViewed && (
+                <button
+                  type="button"
+                  onClick={onClearRecentlyViewed}
+                  className="font-button-text text-[11px] font-semibold text-[#b00055] hover:opacity-75 transition-opacity cursor-pointer mr-1"
+                >
+                  Clear History
+                </button>
+              )}
+              {/* Carousel Left / Right Navigation Controls */}
+              {recentlyViewedSalons.length > 2 && (
+                <div className="hidden sm:flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => scrollRecentlyViewed('left')}
+                    aria-label="Scroll recently viewed left"
+                    className="w-7 h-7 rounded-full bg-white/80 border border-outline-variant/60 text-on-surface flex items-center justify-center hover:bg-white hover:text-nexora-pink hover:border-nexora-pink/40 shadow-2xs transition-all active:scale-95 cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[17px]">chevron_left</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => scrollRecentlyViewed('right')}
+                    aria-label="Scroll recently viewed right"
+                    className="w-7 h-7 rounded-full bg-white/80 border border-outline-variant/60 text-on-surface flex items-center justify-center hover:bg-white hover:text-nexora-pink hover:border-nexora-pink/40 shadow-2xs transition-all active:scale-95 cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[17px]">chevron_right</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {recentlyViewedSalons.length > 0 ? (
+            <div
+              ref={recentlyViewedScrollRef}
+              className="flex overflow-x-auto no-scrollbar gap-3.5 px-page-margin pb-2 snap-x scroll-smooth"
+            >
+              {recentlyViewedSalons.map((salon) => {
+                const isSaved = savedSalonIds.includes(salon.id);
+                return (
+                  <div
+                    key={`recent-${salon.id}`}
+                    id={`recently-viewed-card-${salon.id}`}
+                    className="min-w-[260px] max-w-[280px] sm:min-w-[290px] snap-start bg-white/80 dark:bg-surface-container-low backdrop-blur-[16px] border border-[rgba(180,0,80,0.13)] rounded-[20px] overflow-hidden shadow-[0_8px_25px_rgba(0,0,0,0.045)] hover:-translate-y-1 hover:shadow-[0_14px_32px_rgba(0,0,0,0.08)] hover:border-[rgba(176,0,85,0.25)] transition-all duration-200 flex flex-col group relative"
+                  >
+                    {/* Thumbnail Image Header */}
+                    <div
+                      className="relative h-[125px] cursor-pointer overflow-hidden group/img"
+                      onClick={() => onOpenSalonDetails(salon)}
+                    >
+                      <img
+                        src={salon.image}
+                        alt={salon.name}
+                        className="w-full h-full object-cover group-hover/img:scale-105 transition-transform duration-500"
+                        referrerPolicy="no-referrer"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20 pointer-events-none" />
+
+                      {/* Top-Left Rating Pill */}
+                      <div className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-full bg-black/60 backdrop-blur-md border border-white/20 flex items-center gap-1 text-white text-[11px] font-bold shadow-xs">
+                        <span className="material-symbols-outlined text-[13px] text-warning-amber fill-1">star</span>
+                        <span>{salon.rating}</span>
+                        <span className="text-[9px] opacity-80">({salon.reviewCount})</span>
+                      </div>
+
+                      {/* Top-Right Quick Actions (Share, Save, Dismiss) */}
+                      <div className="absolute top-2.5 right-2.5 flex items-center gap-1 z-10">
+                        {onShareSalon && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onShareSalon(salon);
+                            }}
+                            className="w-7 h-7 rounded-full bg-black/50 hover:bg-black/80 text-white backdrop-blur-md flex items-center justify-center hover:scale-105 transition-all cursor-pointer"
+                            title="Share Salon"
+                            aria-label={`Share ${salon.name}`}
+                          >
+                            <span className="material-symbols-outlined text-[15px]">share</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onToggleSaveSalon(salon.id);
+                          }}
+                          className="w-7 h-7 rounded-full bg-black/50 hover:bg-black/80 text-nexora-pink backdrop-blur-md flex items-center justify-center hover:scale-105 transition-all cursor-pointer"
+                          title={isSaved ? 'Remove from saved' : 'Save salon'}
+                          aria-label="Toggle Save"
+                        >
+                          <span className={`material-symbols-outlined text-[16px] ${isSaved ? 'fill-1' : ''}`}>
+                            favorite
+                          </span>
+                        </button>
+                        {onRemoveRecentlyViewed && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onRemoveRecentlyViewed(salon.id);
+                            }}
+                            className="w-7 h-7 rounded-full bg-black/50 hover:bg-black/80 text-white/90 hover:text-white backdrop-blur-md flex items-center justify-center hover:scale-105 transition-all cursor-pointer opacity-75 group-hover:opacity-100"
+                            title="Remove from recently viewed"
+                            aria-label="Remove from recent history"
+                          >
+                            <span className="material-symbols-outlined text-[15px]">close</span>
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Bottom Tags (Open status & distance) */}
+                      <div className="absolute bottom-2 left-2.5 right-2.5 flex items-center justify-between text-[10px] font-bold text-white pointer-events-none">
+                        <span className={`px-2 py-0.5 rounded-md ${salon.isOpen ? 'bg-success-emerald/90' : 'bg-black/60'} backdrop-blur-xs uppercase tracking-wider`}>
+                          {salon.isOpen ? 'Open' : 'Closed'}
+                        </span>
+                        <span className="px-2 py-0.5 rounded-md bg-black/60 backdrop-blur-xs flex items-center gap-1">
+                          <span className="material-symbols-outlined text-[11px]">near_me</span>
+                          <span>{salon.distance}</span>
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Card Content & Direct Navigation */}
+                    <div className="p-3 flex flex-col justify-between flex-1 gap-2.5">
+                      <div>
+                        <h3
+                          onClick={() => onOpenSalonDetails(salon)}
+                          className="font-card-title text-[13px] sm:text-[14px] font-bold text-on-surface hover:text-[#b00055] cursor-pointer transition-colors leading-tight line-clamp-1 mb-1"
+                        >
+                          {salon.name}
+                        </h3>
+
+                        <div className="flex items-center gap-1 text-[11px] text-on-surface-variant line-clamp-1 mb-1">
+                          <span className="material-symbols-outlined text-[13px] text-[#b00055]/80">location_on</span>
+                          <span>{salon.location.area}, {salon.location.city || 'Jaipur'}</span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 overflow-hidden text-[10px] text-on-surface-variant/90">
+                          <span className="px-1.5 py-0.5 rounded bg-surface-container font-medium truncate">
+                            {salon.categories[0]}
+                          </span>
+                          {salon.categories[1] && (
+                            <span className="px-1.5 py-0.5 rounded bg-surface-container font-medium truncate">
+                              {salon.categories[1]}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Action Buttons */}
+                      <div className="flex items-center gap-2 pt-1 border-t border-outline-variant/30">
+                        <button
+                          type="button"
+                          onClick={() => onOpenSalonDetails(salon)}
+                          className="flex-1 py-1.5 px-2 bg-surface-container hover:bg-surface-container-high text-on-surface font-button-text text-[11px] font-medium rounded-lg transition-colors text-center cursor-pointer"
+                        >
+                          Details
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onBookSalon(salon)}
+                          className="flex-1 py-1.5 px-2 bg-[#b00055] hover:bg-[#8f0044] text-white font-button-text text-[11px] font-semibold rounded-lg shadow-xs transition-colors text-center cursor-pointer"
+                        >
+                          Book Now
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="px-page-margin">
+              <div className="bg-white/60 dark:bg-surface-container-low border border-dashed border-outline-variant rounded-[18px] p-4 text-center flex flex-col items-center justify-center">
+                <div className="w-10 h-10 rounded-full bg-[rgba(255,225,235,0.7)] text-[#b00055] flex items-center justify-center mb-2">
+                  <span className="material-symbols-outlined text-[20px]">storefront</span>
+                </div>
+                <p className="text-[12px] font-semibold text-on-surface mb-0.5">No recently viewed salons</p>
+                <p className="text-[11px] text-on-surface-variant mb-2.5">
+                  Salons you explore will appear here for fast re-access.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => onSearchSubmit('')}
+                  className="px-3 py-1.5 bg-[#b00055] text-white text-[11px] font-semibold rounded-lg hover:bg-[#8f0044] transition-colors cursor-pointer"
+                >
+                  Explore Salons
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
+
         {/* Recent Searches — Compact Glass Chips */}
         {recentSearches.length > 0 && (
           <section className="px-page-margin mb-[24px]">
@@ -1025,17 +1254,36 @@ export const HomeTab: React.FC<HomeTabProps> = ({
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                       src={salon.image}
                     />
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onToggleSaveSalon(salon.id);
-                      }}
-                      className="absolute top-3 right-3 w-8 h-8 rounded-full bg-surface/80 backdrop-blur-md flex items-center justify-center text-nexora-pink hover:bg-white transition-colors"
-                    >
-                      <span className={`material-symbols-outlined text-[20px] ${isSaved ? 'fill-1' : ''}`}>
-                        favorite
-                      </span>
-                    </button>
+                    <div className="absolute top-3 right-3 flex items-center gap-1.5">
+                      {onShareSalon && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onShareSalon(salon);
+                          }}
+                          className="w-8 h-8 rounded-full bg-surface/80 backdrop-blur-md flex items-center justify-center text-on-surface-variant hover:text-nexora-pink hover:bg-white transition-all cursor-pointer"
+                          title="Share Salon"
+                          aria-label={`Share ${salon.name}`}
+                        >
+                          <span className="material-symbols-outlined text-[18px]">
+                            share
+                          </span>
+                        </button>
+                      )}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onToggleSaveSalon(salon.id);
+                        }}
+                        className="w-8 h-8 rounded-full bg-surface/80 backdrop-blur-md flex items-center justify-center text-nexora-pink hover:bg-white transition-colors"
+                        aria-label="Save salon"
+                      >
+                        <span className={`material-symbols-outlined text-[20px] ${isSaved ? 'fill-1' : ''}`}>
+                          favorite
+                        </span>
+                      </button>
+                    </div>
                     <div className="absolute bottom-3 left-3 px-2 py-0.5 bg-success-emerald text-white text-[10px] font-bold rounded uppercase tracking-wider">
                       {salon.isOpen ? 'Open Now' : 'Closed'}
                     </div>
