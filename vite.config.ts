@@ -19,6 +19,7 @@ export default defineConfig(() => {
             'react-vendor': ['react', 'react-dom'],
             'supabase-vendor': ['@supabase/supabase-js'],
             'ui-vendor': ['lucide-react'],
+            'd3-vendor': ['d3'],
           },
         },
       },

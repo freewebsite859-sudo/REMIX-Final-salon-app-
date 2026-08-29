@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Salon, SalonService, Stylist, GroundingChunk } from '../types';
+import { ShareSalonModal } from './ShareSalonModal';
 
 interface ExploreTabProps {
   salons: Salon[];
@@ -9,11 +10,21 @@ interface ExploreTabProps {
   onOpenSalonDetails: (salon: Salon) => void;
   onBookSalon: (salon: Salon, service?: SalonService, stylist?: Stylist) => void;
   onToggleSaveSalon: (salonId: string) => void;
+  onShareSalon?: (salon: Salon) => void;
   onOpenAIAdvisor: () => void;
 }
 
 export type PriceRangeFilter = 'all' | '1' | '2' | '3';
+export type DistanceFilter = 'all' | '1' | '2' | '5' | '10';
 export type SortOption = 'recommended' | 'price_asc' | 'price_desc' | 'rating' | 'distance';
+
+export const DISTANCE_TIERS: { id: DistanceFilter; label: string; maxKm: number | null; desc: string; icon: string }[] = [
+  { id: 'all', label: 'Anywhere', maxKm: null, desc: 'All distances', icon: 'explore' },
+  { id: '1', label: '< 1 km', maxKm: 1.0, desc: 'Walking distance (≤ 1km)', icon: 'directions_walk' },
+  { id: '2', label: 'Within 2 km', maxKm: 2.0, desc: 'Quick commute (≤ 2km)', icon: 'near_me' },
+  { id: '5', label: 'Within 5 km', maxKm: 5.0, desc: 'Local area (≤ 5km)', icon: 'location_on' },
+  { id: '10', label: 'Within 10 km', maxKm: 10.0, desc: 'City-wide (≤ 10km)', icon: 'distance' },
+];
 
 const PRICE_TIERS = [
   { id: 'all' as PriceRangeFilter, label: 'All Budgets', symbol: 'All', desc: 'Any budget' },
@@ -30,14 +41,52 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
   onOpenSalonDetails,
   onBookSalon,
   onToggleSaveSalon,
+  onShareSalon,
   onOpenAIAdvisor,
 }) => {
   const [searchQuery, setSearchQuery] = useState(initialSearchQuery);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedPriceRange, setSelectedPriceRange] = useState<PriceRangeFilter>('all');
+  const [selectedDistance, setSelectedDistance] = useState<DistanceFilter>('all');
   const [sortBy, setSortBy] = useState<SortOption>('recommended');
   const [viewMode, setViewMode] = useState<'list' | 'map' | 'ai_grounded'>('list');
   const [selectedMapSalon, setSelectedMapSalon] = useState<Salon | null>(null);
+  const [selectedShareSalon, setSelectedShareSalon] = useState<Salon | null>(null);
+
+  // References for smooth scrolling
+  const salonListRef = useRef<HTMLDivElement>(null);
+  const isFirstDistanceRender = useRef(true);
+
+  // Smooth scroll helper for salon list
+  const scrollToSalonList = (behavior: ScrollBehavior = 'smooth') => {
+    if (salonListRef.current) {
+      const headerOffset = 95; // Account for fixed top navigation header + breathing space
+      const elementPosition = salonListRef.current.getBoundingClientRect().top;
+      const offsetPosition = elementPosition + window.pageYOffset - headerOffset;
+      window.scrollTo({
+        top: Math.max(0, offsetPosition),
+        behavior,
+      });
+    }
+  };
+
+  // Smoothly scroll to the salon list when users switch between different distance filters
+  useEffect(() => {
+    if (isFirstDistanceRender.current) {
+      isFirstDistanceRender.current = false;
+      return;
+    }
+
+    scrollToSalonList('smooth');
+
+    // Also center the active distance chip in horizontal view on mobile screens
+    if (selectedDistance !== 'all') {
+      const chipElement = document.getElementById(`distance-filter-${selectedDistance}`);
+      if (chipElement) {
+        chipElement.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+      }
+    }
+  }, [selectedDistance]);
 
   // Recent searches are ephemeral UI state. Do not persist them in a shared
   // origin where the next account could inherit another user's activity.
@@ -151,8 +200,15 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
     }
   }, [initialSearchQuery]);
 
-  // Compute salon match counts per price tier for the current category & search filter
+  const getSalonDistanceKm = (salon: Salon): number => {
+    if (!salon.distance) return 999;
+    const parsed = parseFloat(salon.distance.replace(/[^0-9.]/g, ''));
+    return isNaN(parsed) ? 999 : parsed;
+  };
+
+  // Compute salon match counts per price tier for the current category, distance & search filter
   const getCountForTier = (tierId: PriceRangeFilter) => {
+    const maxDistKm = DISTANCE_TIERS.find((d) => d.id === selectedDistance)?.maxKm;
     return salons.filter((s) => {
       const matchesCategory =
         selectedCategory === 'all' ||
@@ -166,8 +222,37 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
         s.services.some((srv) => srv.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
         s.categories.some((c) => c.toLowerCase().includes(searchQuery.toLowerCase()));
 
-      if (tierId === 'all') return matchesCategory && matchesQuery;
-      return matchesCategory && matchesQuery && getPriceTierForSalon(s.priceRange) === tierId;
+      const distKm = getSalonDistanceKm(s);
+      const matchesDistance = maxDistKm === null || distKm <= maxDistKm;
+
+      if (tierId === 'all') return matchesCategory && matchesQuery && matchesDistance;
+      return matchesCategory && matchesQuery && matchesDistance && getPriceTierForSalon(s.priceRange) === tierId;
+    }).length;
+  };
+
+  // Compute salon match counts per distance tier for the current category, price & search filter
+  const getCountForDistance = (distanceId: DistanceFilter) => {
+    const maxDistKm = DISTANCE_TIERS.find((d) => d.id === distanceId)?.maxKm;
+    return salons.filter((s) => {
+      const matchesCategory =
+        selectedCategory === 'all' ||
+        s.services.some((srv) => srv.category === selectedCategory) ||
+        s.categories.some((c) => c.toLowerCase().includes(selectedCategory.toLowerCase()));
+
+      const matchesQuery =
+        !searchQuery.trim() ||
+        s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        s.location.area.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        s.services.some((srv) => srv.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        s.categories.some((c) => c.toLowerCase().includes(searchQuery.toLowerCase()));
+
+      const salonTier = getPriceTierForSalon(s.priceRange);
+      const matchesPrice = selectedPriceRange === 'all' || salonTier === selectedPriceRange;
+
+      const distKm = getSalonDistanceKm(s);
+      const matchesDist = maxDistKm === null || distKm <= maxDistKm;
+
+      return matchesCategory && matchesQuery && matchesPrice && matchesDist;
     }).length;
   };
 
@@ -188,7 +273,11 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
       const salonTier = getPriceTierForSalon(s.priceRange);
       const matchesPrice = selectedPriceRange === 'all' || salonTier === selectedPriceRange;
 
-      return matchesCategory && matchesQuery && matchesPrice;
+      const distKm = getSalonDistanceKm(s);
+      const maxDistKm = DISTANCE_TIERS.find((d) => d.id === selectedDistance)?.maxKm;
+      const matchesDistance = maxDistKm === null || distKm <= maxDistKm;
+
+      return matchesCategory && matchesQuery && matchesPrice && matchesDistance;
     })
     .sort((a, b) => {
       if (sortBy === 'price_asc') {
@@ -201,18 +290,23 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
         return b.rating - a.rating;
       }
       if (sortBy === 'distance') {
-        const distA = parseFloat(a.distance) || 0;
-        const distB = parseFloat(b.distance) || 0;
+        const distA = getSalonDistanceKm(a);
+        const distB = getSalonDistanceKm(b);
         return distA - distB;
       }
       return 0; // Default recommended
     });
 
-  const isFiltered = selectedCategory !== 'all' || selectedPriceRange !== 'all' || searchQuery.trim().length > 0;
+  const isFiltered =
+    selectedCategory !== 'all' ||
+    selectedPriceRange !== 'all' ||
+    selectedDistance !== 'all' ||
+    searchQuery.trim().length > 0;
 
   const handleResetFilters = () => {
     setSelectedCategory('all');
     setSelectedPriceRange('all');
+    setSelectedDistance('all');
     setSearchQuery('');
     setSortBy('recommended');
   };
@@ -364,10 +458,106 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
           ))}
         </div>
 
-        {/* Price Range Filter & Sort Bar */}
-        <div className="p-2.5 rounded-2xl bg-surface-container-low border border-outline-variant/40 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-          {/* Price Range Pills */}
-          <div className="flex items-center gap-1.5 flex-wrap">
+        {/* Filters & Sorting Panel */}
+        <div className="p-3 rounded-2xl bg-surface-container-low border border-outline-variant/40 flex flex-col gap-2.5 shadow-2xs">
+          {/* Top Filter Row: Distance Filter & Dropdown Controls */}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
+            {/* Distance / Radius Filter */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <div className="flex items-center gap-1 text-[11px] font-bold text-on-surface uppercase tracking-wider mr-1">
+                <span className="material-symbols-outlined text-[16px] text-nexora-pink">near_me</span>
+                <span>Distance:</span>
+              </div>
+
+              <div className="flex items-center gap-1 flex-wrap">
+                {DISTANCE_TIERS.map((tier) => {
+                  const count = getCountForDistance(tier.id);
+                  const isSelected = selectedDistance === tier.id;
+
+                  return (
+                    <button
+                      key={tier.id}
+                      id={`distance-filter-${tier.id}`}
+                      type="button"
+                      onClick={() => setSelectedDistance(isSelected && tier.id !== 'all' ? 'all' : tier.id)}
+                      className={`px-2.5 py-1 rounded-xl text-[11px] font-semibold flex items-center gap-1.5 transition-all border ${
+                        isSelected
+                          ? 'bg-primary text-white border-primary shadow-xs'
+                          : 'bg-surface-container-lowest text-on-surface-variant border-outline-variant/30 hover:bg-surface-container hover:text-on-surface'
+                      }`}
+                      title={tier.desc}
+                    >
+                      <span className="material-symbols-outlined text-[13px]">
+                        {tier.icon}
+                      </span>
+                      <span>{tier.label}</span>
+                      <span
+                        className={`text-[9px] px-1 py-0.2 rounded-full font-bold ${
+                          isSelected ? 'bg-white/20 text-white' : 'bg-surface-container text-on-surface-variant'
+                        }`}
+                      >
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Quick Select Dropdowns & Reset */}
+            <div className="flex items-center gap-2 self-start lg:self-auto shrink-0 flex-wrap">
+              {/* Distance Quick Dropdown */}
+              <div className="flex items-center gap-1 bg-surface-container-lowest border border-outline-variant/30 rounded-xl px-2 py-1">
+                <span className="material-symbols-outlined text-[15px] text-primary">distance</span>
+                <select
+                  id="salon-distance-select"
+                  value={selectedDistance}
+                  onChange={(e) => setSelectedDistance(e.target.value as DistanceFilter)}
+                  aria-label="Filter salons by distance"
+                  className="bg-transparent text-[11px] font-semibold text-on-surface focus:outline-none cursor-pointer"
+                >
+                  {DISTANCE_TIERS.map((tier) => (
+                    <option key={tier.id} value={tier.id}>
+                      {tier.label} ({getCountForDistance(tier.id)})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Sort By Dropdown */}
+              <div className="flex items-center gap-1 bg-surface-container-lowest border border-outline-variant/30 rounded-xl px-2 py-1">
+                <span className="material-symbols-outlined text-[15px] text-on-surface-variant">swap_vert</span>
+                <select
+                  id="salon-sort-select"
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as SortOption)}
+                  aria-label="Sort salons by"
+                  className="bg-transparent text-[11px] font-semibold text-on-surface focus:outline-none cursor-pointer"
+                >
+                  <option value="recommended">Recommended</option>
+                  <option value="distance">Nearest Distance</option>
+                  <option value="rating">Top Rated (★)</option>
+                  <option value="price_asc">Price: Low to High ($ → $$$)</option>
+                  <option value="price_desc">Price: High to Low ($$$ → $)</option>
+                </select>
+              </div>
+
+              {isFiltered && (
+                <button
+                  id="clear-all-filters-btn"
+                  onClick={handleResetFilters}
+                  className="text-[11px] font-semibold text-nexora-pink hover:underline flex items-center gap-0.5 py-1 px-1.5"
+                  title="Clear all active filters"
+                >
+                  <span className="material-symbols-outlined text-[13px]">filter_alt_off</span>
+                  <span>Reset</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Budget / Price Range Filter Row */}
+          <div className="flex items-center gap-1.5 flex-wrap pt-1.5 border-t border-outline-variant/25">
             <div className="flex items-center gap-1 text-[11px] font-bold text-on-surface uppercase tracking-wider mr-1">
               <span className="material-symbols-outlined text-[16px] text-nexora-pink">payments</span>
               <span>Budget:</span>
@@ -382,6 +572,7 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
                   <button
                     key={tier.id}
                     id={`price-filter-${tier.id}`}
+                    type="button"
                     onClick={() => setSelectedPriceRange(isSelected && tier.id !== 'all' ? 'all' : tier.id)}
                     className={`px-2.5 py-1 rounded-xl text-[11px] font-semibold flex items-center gap-1.5 transition-all border ${
                       isSelected
@@ -402,37 +593,6 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
                 );
               })}
             </div>
-          </div>
-
-          {/* Sort & Reset Actions */}
-          <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
-            <div className="flex items-center gap-1 bg-surface-container-lowest border border-outline-variant/30 rounded-xl px-2 py-1">
-              <span className="material-symbols-outlined text-[15px] text-on-surface-variant">swap_vert</span>
-              <select
-                id="salon-sort-select"
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as SortOption)}
-                aria-label="Sort salons by"
-                className="bg-transparent text-[11px] font-semibold text-on-surface focus:outline-none cursor-pointer"
-              >
-                <option value="recommended">Recommended</option>
-                <option value="price_asc">Price: Low to High ($ → $$$)</option>
-                <option value="price_desc">Price: High to Low ($$$ → $)</option>
-                <option value="rating">Top Rated (★)</option>
-                <option value="distance">Nearest Distance</option>
-              </select>
-            </div>
-
-            {isFiltered && (
-              <button
-                onClick={handleResetFilters}
-                className="text-[11px] font-semibold text-nexora-pink hover:underline flex items-center gap-0.5 py-1 px-1.5"
-                title="Clear all active filters"
-              >
-                <span className="material-symbols-outlined text-[13px]">filter_alt_off</span>
-                <span>Reset</span>
-              </button>
-            )}
           </div>
         </div>
       </div>
@@ -654,6 +814,21 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
                 >
                   Details
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onShareSalon) {
+                      onShareSalon(selectedMapSalon);
+                    } else {
+                      setSelectedShareSalon(selectedMapSalon);
+                    }
+                  }}
+                  className="px-3 py-1 bg-surface-container text-on-surface text-[11px] font-medium rounded-lg flex items-center justify-center gap-1 hover:bg-surface-container-high transition-colors cursor-pointer"
+                  title="Share Salon"
+                >
+                  <span className="material-symbols-outlined text-[13px]">share</span>
+                  <span>Share</span>
+                </button>
               </div>
             </div>
           ) : (
@@ -664,51 +839,101 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
         </div>
       )}
 
-      {/* Salons Grid / List */}
-      {filteredSalons.length === 0 ? (
-        <div className="p-8 rounded-2xl bg-surface-container-low border border-outline-variant/40 flex flex-col items-center justify-center text-center gap-3 my-4">
-          <div className="w-12 h-12 rounded-full bg-primary/10 text-primary flex items-center justify-center">
-            <span className="material-symbols-outlined text-[24px]">filter_alt_off</span>
-          </div>
-          <div>
-            <h3 className="font-card-title text-[16px] font-bold text-on-surface">
-              No Salons Found in this Budget Range
-            </h3>
-            <p className="text-[12px] text-on-surface-variant mt-1 max-w-md">
-              {selectedPriceRange !== 'all'
-                ? `No salons currently match ${PRICE_TIERS.find((t) => t.id === selectedPriceRange)?.label} (${PRICE_TIERS.find((t) => t.id === selectedPriceRange)?.desc}). Try selecting a different budget tier or clearing your filters.`
-                : 'No salons match your search query or category filter. Try clearing filters to see all available salons.'}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 mt-2">
-            {selectedPriceRange !== 'all' && (
-              <button
-                onClick={() => setSelectedPriceRange('all')}
-                className="px-4 py-2 bg-primary text-white text-[12px] font-bold rounded-xl hover:bg-nexora-pink transition-colors shadow-xs"
-              >
-                View All Price Ranges
-              </button>
-            )}
+      {/* Salons Grid / List with Smooth Scroll Reference */}
+      <div
+        ref={salonListRef}
+        id="salon-results-section"
+        className="scroll-mt-24 transition-all duration-300"
+      >
+        {/* Active Distance Filter Badge indicator */}
+        {selectedDistance !== 'all' && (
+          <div className="flex items-center justify-between bg-primary/8 border border-primary/20 rounded-2xl px-3.5 py-2.5 mb-3 text-[12px] text-primary shadow-2xs animate-in fade-in slide-in-from-top-1 duration-200">
+            <div className="flex items-center gap-2 font-medium">
+              <div className="w-5 h-5 rounded-full bg-primary/15 flex items-center justify-center text-primary">
+                <span className="material-symbols-outlined text-[13px]">near_me</span>
+              </div>
+              <span>
+                Showing salons {DISTANCE_TIERS.find((d) => d.id === selectedDistance)?.desc} ({filteredSalons.length} results)
+              </span>
+            </div>
             <button
-              onClick={handleResetFilters}
-              className="px-4 py-2 bg-surface-container text-on-surface text-[12px] font-semibold rounded-xl hover:bg-surface-container-high transition-colors"
+              type="button"
+              onClick={() => setSelectedDistance('all')}
+              className="text-[11px] font-bold text-nexora-pink hover:underline cursor-pointer flex items-center gap-0.5"
+              title="Clear distance filter"
             >
-              Reset All Filters
+              <span>Show All Distances</span>
+              <span className="material-symbols-outlined text-[14px]">close</span>
             </button>
           </div>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-3.5">
-          {filteredSalons.map((salon) => {
-            const isSaved = savedSalonIds.includes(salon.id);
-            const priceInfo = getPriceTierDisplay(salon.priceRange);
-            const minPrice = getMinStartingPrice(salon);
+        )}
 
-            return (
-              <div
-                key={salon.id}
-                className="bg-surface-container-low border border-outline-variant rounded-2xl p-3.5 sm:p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xs hover:shadow-md transition-all"
+        {filteredSalons.length === 0 ? (
+          <div className="p-8 rounded-2xl bg-surface-container-low border border-outline-variant/40 flex flex-col items-center justify-center text-center gap-3 my-2">
+            <div className="w-12 h-12 rounded-full bg-primary/10 text-primary flex items-center justify-center">
+              <span className="material-symbols-outlined text-[24px]">
+                {selectedDistance !== 'all' ? 'near_me_disabled' : 'filter_alt_off'}
+              </span>
+            </div>
+            <div>
+              <h3 className="font-card-title text-[16px] font-bold text-on-surface">
+                {selectedDistance !== 'all' && selectedPriceRange !== 'all'
+                  ? 'No Salons Found in this Distance & Budget Range'
+                  : selectedDistance !== 'all'
+                  ? `No Salons Found ${DISTANCE_TIERS.find((t) => t.id === selectedDistance)?.label}`
+                  : selectedPriceRange !== 'all'
+                  ? 'No Salons Found in this Budget Tier'
+                  : 'No Salons Match Your Search'}
+              </h3>
+              <p className="text-[12px] text-on-surface-variant mt-1 max-w-md">
+                {selectedDistance !== 'all'
+                  ? `No salons currently match your distance constraint (${DISTANCE_TIERS.find((t) => t.id === selectedDistance)?.label}). Try expanding your distance filter to "Within 5 km" or "Anywhere" to discover more local options.`
+                  : selectedPriceRange !== 'all'
+                  ? `No salons currently match ${PRICE_TIERS.find((t) => t.id === selectedPriceRange)?.label} (${PRICE_TIERS.find((t) => t.id === selectedPriceRange)?.desc}). Try selecting a different budget tier or clearing your filters.`
+                  : 'No salons match your search query or category filter. Try clearing filters to see all available salons.'}
+              </p>
+            </div>
+            <div className="flex items-center gap-2 mt-2 flex-wrap justify-center">
+              {selectedDistance !== 'all' && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedDistance('all')}
+                  className="px-4 py-2 bg-primary text-white text-[12px] font-bold rounded-xl hover:bg-nexora-pink transition-colors shadow-xs flex items-center gap-1"
+                >
+                  <span className="material-symbols-outlined text-[14px]">explore</span>
+                  <span>Search Anywhere (All Distances)</span>
+                </button>
+              )}
+              {selectedPriceRange !== 'all' && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedPriceRange('all')}
+                  className="px-4 py-2 bg-primary/90 text-white text-[12px] font-bold rounded-xl hover:bg-nexora-pink transition-colors shadow-xs"
+                >
+                  View All Budgets
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleResetFilters}
+                className="px-4 py-2 bg-surface-container text-on-surface text-[12px] font-semibold rounded-xl hover:bg-surface-container-high transition-colors"
               >
+                Reset All Filters
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3.5 transition-all duration-300">
+            {filteredSalons.map((salon) => {
+              const isSaved = savedSalonIds.includes(salon.id);
+              const priceInfo = getPriceTierDisplay(salon.priceRange);
+              const minPrice = getMinStartingPrice(salon);
+
+              return (
+                <div
+                  key={salon.id}
+                  className="bg-surface-container-low border border-outline-variant rounded-2xl p-3.5 sm:p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xs hover:shadow-md transition-all duration-200"
+                >
                 <div className="flex items-center gap-3.5 w-full sm:w-auto">
                   <img
                     src={salon.image}
@@ -732,6 +957,23 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
                         <span className={`material-symbols-outlined text-[18px] ${isSaved ? 'fill-1' : ''}`}>
                           favorite
                         </span>
+                      </button>
+                      <button
+                        id={`salon-share-header-btn-${salon.id}`}
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (onShareSalon) {
+                            onShareSalon(salon);
+                          } else {
+                            setSelectedShareSalon(salon);
+                          }
+                        }}
+                        className="text-on-surface-variant hover:text-nexora-pink hover:scale-110 transition-all cursor-pointer"
+                        title="Share Salon"
+                        aria-label={`Share ${salon.name}`}
+                      >
+                        <span className="material-symbols-outlined text-[18px]">share</span>
                       </button>
                     </div>
 
@@ -772,6 +1014,22 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
 
                 {/* Action Buttons */}
                 <div className="flex items-center gap-2 w-full sm:w-auto justify-end pt-2 sm:pt-0 border-t sm:border-t-0 border-outline-variant/30">
+                  <button
+                    id={`salon-share-action-btn-${salon.id}`}
+                    type="button"
+                    onClick={() => {
+                      if (onShareSalon) {
+                        onShareSalon(salon);
+                      } else {
+                        setSelectedShareSalon(salon);
+                      }
+                    }}
+                    className="p-2 bg-surface-container text-on-surface-variant hover:text-nexora-pink rounded-xl hover:bg-surface-container-high transition-colors cursor-pointer"
+                    title="Share Salon"
+                    aria-label="Share Salon"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">share</span>
+                  </button>
                   {salon.location.mapsUrl && (
                     <a
                       href={salon.location.mapsUrl}
@@ -801,6 +1059,14 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
           })}
         </div>
       )}
+      </div>
+
+      {/* Share Salon Modal for Explore Tab */}
+      <ShareSalonModal
+        isOpen={!!selectedShareSalon}
+        onClose={() => setSelectedShareSalon(null)}
+        salon={selectedShareSalon}
+      />
     </div>
   );
 };

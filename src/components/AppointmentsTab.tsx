@@ -139,21 +139,27 @@ export const AppointmentsTab: React.FC<AppointmentsTabProps> = ({
                     </div>
                   </div>
 
-                  <span
-                    className={`text-[11px] font-bold px-2 py-0.5 rounded-full capitalize ${
-                      apt.status === 'confirmed'
-                        ? 'bg-success-emerald/15 text-success-emerald'
-                        : apt.status === 'completed'
-                        ? 'bg-secondary-container text-secondary'
-                        : 'bg-error-container text-error'
-                    }`}
-                  >
-                    {apt.status}
-                  </span>
+                  <div className="flex flex-col items-end gap-1">
+                    <span
+                      className={`text-[11px] font-bold px-2 py-0.5 rounded-full capitalize ${
+                        apt.status === 'confirmed'
+                          ? 'bg-success-emerald/15 text-success-emerald'
+                          : apt.status === 'completed'
+                          ? 'bg-secondary-container text-secondary'
+                          : 'bg-error-container text-error'
+                      }`}
+                    >
+                      {apt.status}
+                    </span>
+                    <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 px-2 py-0.5 rounded-full flex items-center gap-0.5 border border-emerald-500/20">
+                      <span className="material-symbols-outlined text-[12px]">verified</span>
+                      Owner Confirmed
+                    </span>
+                  </div>
                 </div>
 
                 {/* Details Grid */}
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-surface-container-lowest p-3 rounded-xl border border-outline-variant/30 text-[12px]">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 bg-surface-container-lowest p-3 rounded-xl border border-outline-variant/30 text-[12px]">
                   <div>
                     <span className="text-[11px] text-on-surface-variant block">Scheduled Time</span>
                     <span className="font-semibold text-on-surface">
@@ -169,8 +175,23 @@ export const AppointmentsTab: React.FC<AppointmentsTabProps> = ({
                   </div>
 
                   <div>
-                    <span className="text-[11px] text-on-surface-variant block">Amount</span>
-                    <span className="font-bold text-primary text-[13px]">₹{apt.totalPrice}</span>
+                    <span className="text-[11px] text-on-surface-variant block">25% Razorpay Advance</span>
+                    <span className="font-bold text-success-emerald text-[12px] flex items-center gap-0.5">
+                      <span className="material-symbols-outlined text-[13px]">check_circle</span>
+                      ₹{apt.advancePaid !== undefined ? apt.advancePaid : Math.round(apt.totalPrice * 0.25)} Paid
+                    </span>
+                    {apt.razorpayPaymentId && (
+                      <span className="text-[9px] font-mono text-on-surface-variant truncate block">
+                        ID: {apt.razorpayPaymentId.slice(0, 14)}...
+                      </span>
+                    )}
+                  </div>
+
+                  <div>
+                    <span className="text-[11px] text-on-surface-variant block">Due at Counter (75%)</span>
+                    <span className="font-bold text-primary text-[13px]">
+                      ₹{apt.remainingAmount !== undefined ? apt.remainingAmount : Math.max(0, apt.totalPrice - Math.round(apt.totalPrice * 0.25))}
+                    </span>
                   </div>
                 </div>
 
@@ -222,6 +243,17 @@ export const AppointmentsTab: React.FC<AppointmentsTabProps> = ({
 
                   {apt.status === 'completed' && (
                     <div className="w-full flex flex-col gap-3">
+                      {/* Loyalty Rewards Credit Badge */}
+                      <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-between text-[11px]">
+                        <div className="flex items-center gap-1.5 text-emerald-800 dark:text-emerald-300 font-semibold">
+                          <span className="material-symbols-outlined text-[16px] text-success-emerald">stars</span>
+                          <span>Loyalty Reward Credited</span>
+                        </div>
+                        <span className="font-bold text-emerald-800 dark:text-emerald-200">
+                          +{Math.round((apt.totalPrice || 500) * 0.1)} pts (₹{Math.round((apt.totalPrice || 500) * 0.05)} discount)
+                        </span>
+                      </div>
+
                       {reviewSubmittedId === apt.id ? (
                         <div className="p-2.5 bg-success-emerald/10 text-success-emerald rounded-lg text-[12px] font-semibold flex items-center gap-1.5">
                           <span className="material-symbols-outlined text-[16px]">check_circle</span>

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Salon, SalonService, Stylist, Review } from '../types';
 import { StaticMapPreview } from './StaticMapPreview';
 import { SalonPhotoGallery } from './SalonPhotoGallery';
+import { ShareSalonModal } from './ShareSalonModal';
 
 interface SalonDetailModalProps {
   salon: Salon | null;
@@ -10,6 +11,7 @@ interface SalonDetailModalProps {
   onBookService: (salon: Salon, service?: SalonService, stylist?: Stylist) => void;
   isSaved?: boolean;
   onToggleSave?: (salonId: string) => void;
+  onShareSalon?: (salon: Salon) => void;
   onAddReview?: (salonId: string, review: Review) => void;
   initialTab?: 'services' | 'gallery' | 'reviews' | 'about';
   userLocation?: string;
@@ -27,6 +29,7 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
   onBookService,
   isSaved = false,
   onToggleSave,
+  onShareSalon,
   onAddReview,
   initialTab = 'services',
   userLocation = '',
@@ -53,6 +56,7 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
   const [helpfulVotes, setHelpfulVotes] = useState<Record<string, number>>({});
   const [userVoted, setUserVoted] = useState<Record<string, boolean>>({});
   const [submitSuccessMessage, setSubmitSuccessMessage] = useState<string | null>(null);
+  const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
 
   if (!isOpen || !salon) return null;
 
@@ -204,6 +208,23 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
               >
                 <span className="material-symbols-outlined text-[15px]">photo_library</span>
                 <span>Gallery ({(salon.photoGallery?.length || images.length)})</span>
+              </button>
+
+              <button
+                id="salon-modal-share-btn"
+                type="button"
+                onClick={() => {
+                  if (onShareSalon) {
+                    onShareSalon(salon);
+                  } else {
+                    setIsShareModalOpen(true);
+                  }
+                }}
+                className="w-9 h-9 rounded-full bg-black/50 text-white hover:bg-black/70 backdrop-blur-md flex items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95 shadow-sm cursor-pointer border border-white/10"
+                title="Share Salon"
+                aria-label="Share salon"
+              >
+                <span className="material-symbols-outlined text-[20px]">share</span>
               </button>
 
               {onToggleSave && (
@@ -1165,6 +1186,13 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Share Salon Modal Fallback / Internal */}
+      <ShareSalonModal
+        isOpen={isShareModalOpen}
+        onClose={() => setIsShareModalOpen(false)}
+        salon={salon}
+      />
     </div>
   );
 };

@@ -8,6 +8,7 @@ interface SavedTabProps {
   onOpenSalonDetails: (salon: Salon) => void;
   onBookSalon: (salon: Salon, service?: SalonService, stylist?: Stylist) => void;
   onToggleSaveSalon: (salonId: string) => void;
+  onShareSalon?: (salon: Salon) => void;
   onToggleSaveService?: (salonId: string, serviceId: string) => void;
 }
 
@@ -18,6 +19,7 @@ export const SavedTab: React.FC<SavedTabProps> = ({
   onOpenSalonDetails,
   onBookSalon,
   onToggleSaveSalon,
+  onShareSalon,
   onToggleSaveService,
 }) => {
   const [activeTab, setActiveTab] = useState<'salons' | 'services'>('salons');
@@ -101,12 +103,26 @@ export const SavedTab: React.FC<SavedTabProps> = ({
                       <span className="text-on-surface-variant">({salon.reviewCount})</span>
                     </div>
                   </div>
-                  <button
-                    onClick={() => onToggleSaveSalon(salon.id)}
-                    className="text-nexora-pink"
-                  >
-                    <span className="material-symbols-outlined text-[20px] fill-1">favorite</span>
-                  </button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {onShareSalon && (
+                      <button
+                        type="button"
+                        onClick={() => onShareSalon(salon)}
+                        className="text-on-surface-variant hover:text-nexora-pink p-1 transition-colors"
+                        title="Share Salon"
+                        aria-label={`Share ${salon.name}`}
+                      >
+                        <span className="material-symbols-outlined text-[19px]">share</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => onToggleSaveSalon(salon.id)}
+                      className="text-nexora-pink p-1"
+                      aria-label="Remove from saved"
+                    >
+                      <span className="material-symbols-outlined text-[20px] fill-1">favorite</span>
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex gap-2">
