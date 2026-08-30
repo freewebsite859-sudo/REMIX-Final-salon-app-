@@ -11,38 +11,85 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
  * Only public `VITE_*` values are ever read here. A `service_role` key must
  * never reach the browser bundle; a defensive guard below rejects one if it is
  * ever mis-configured into `VITE_SUPABASE_ANON_KEY`.
+ *
+ * Uses Vite public env vars:
+ * - VITE_SUPABASE_URL
+ * - VITE_SUPABASE_ANON_KEY
+ * Both are read via import.meta.env (Vite injects at build time) with fallback
+ * to process.env for Node contexts (SSR, tests).
  */
 
-/**
- * Read public config from Vite's `import.meta.env` (browser/bundled) and fall
- * back to `process.env` for Node contexts such as SSR and test harnesses.
- * Both sources are restricted to public `VITE_*` values.
- */
-function readEnv(name: string): string | undefined {
-  const viteEnv =
-    (import.meta as unknown as { env?: Record<string, string | undefined> })?.env || {};
-  const fromVite = viteEnv[name];
-  if (fromVite) return fromVite;
+// Read env with static access for Vite inlining + dynamic fallback for Node
+function getEnvVar(name: string): string | undefined {
+  // Vite static access - these are inlined at build time
+  // We check both static and dynamic to support HMR and tests
+  try {
+    // @ts-ignore - Vite env
+    const viteEnv = (import.meta as any)?.env as Record<string, string | undefined> | undefined;
+    if (viteEnv) {
+      const val = viteEnv[name];
+      if (val) return val;
+    }
+  } catch {
+    // import.meta not available in Node
+  }
 
-  const nodeEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } })
-    .process?.env;
-  return nodeEnv?.[name];
+  // Node fallback (tests, SSR, server.ts)
+  try {
+    const nodeEnv = (globalThis as any)?.process?.env as Record<string, string | undefined> | undefined;
+    if (nodeEnv) {
+      const val = nodeEnv[name];
+      if (val) return val;
+    }
+  } catch {
+    // no process
+  }
+
+  return undefined;
 }
 
-/** Public Nexora project URL (safe to ship — it is in every network request). */
+// Public URL - with fallback to intended project for safety
+// Uses static import.meta.env access so Vite can inline at build
+const envUrl = (() => {
+  try {
+    // Static access for Vite build-time inlining
+    // @ts-ignore
+    return (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim();
+  } catch {
+    return undefined;
+  }
+})() || getEnvVar('VITE_SUPABASE_URL')?.trim();
+
 export const NEXORA_SUPABASE_URL =
-  readEnv('VITE_SUPABASE_URL')?.trim() || 'https://qwaehqsmodekbgvnaavz.supabase.co';
+  envUrl || 'https://qwaehqsmodekbgvnaavz.supabase.co';
 
-/**
- * Shared Nexora auth storage key. Every Nexora surface (customer, salon,
- * admin) uses this exact key so a session created by one is recognised by the
- * others on the same origin.
- */
+// Shared auth storage key
+const envStorageKey = (() => {
+  try {
+    // @ts-ignore
+    return (import.meta.env.VITE_SUPABASE_STORAGE_KEY as string | undefined)?.trim();
+  } catch {
+    return undefined;
+  }
+})() || getEnvVar('VITE_SUPABASE_STORAGE_KEY')?.trim();
+
 export const NEXORA_AUTH_STORAGE_KEY =
-  readEnv('VITE_SUPABASE_STORAGE_KEY')?.trim() || 'nexora.auth.qwaehqsmodekbgvnaavz';
+  envStorageKey || 'nexora.auth.qwaehqsmodekbgvnaavz';
 
-/** Public anon key — supplied at build/run time, never committed to git. */
-const supabaseAnonKey = readEnv('VITE_SUPABASE_ANON_KEY')?.trim() || '';
+// Public anon key - MUST be supplied via VITE_SUPABASE_ANON_KEY
+// No hardcoded fallback for anon key to avoid leaking credentials
+// In dev, .env provides it; in tests, setup-jsdom provides dummy JWT
+const envAnonKey = (() => {
+  try {
+    // Static access for Vite inlining - critical for build to include env
+    // @ts-ignore
+    return (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim();
+  } catch {
+    return undefined;
+  }
+})() || getEnvVar('VITE_SUPABASE_ANON_KEY')?.trim();
+
+const supabaseAnonKey = envAnonKey || '';
 
 /**
  * Decode the `role` claim of a Supabase JWT without pulling in a JWT library.
@@ -104,8 +151,14 @@ export const isSupabaseConfigured = Boolean(hasValidUrl && hasAnonKey && !isPriv
  */
 function logConfigDiagnostics(): void {
   if (typeof console === 'undefined') return;
-  // Only log in development or when explicitly debugging
-  const isDev = readEnv('MODE') === 'development' || readEnv('DEV') === 'true' || (import.meta as any)?.env?.DEV;
+  
+  let isDev = false;
+  try {
+    // @ts-ignore
+    isDev = Boolean((import.meta.env as any)?.DEV);
+  } catch {
+    isDev = getEnvVar('MODE') === 'development' || getEnvVar('DEV') === 'true';
+  }
   
   if (!isSupabaseConfigured) {
     console.warn(
@@ -141,12 +194,17 @@ function logConfigDiagnostics(): void {
 // Run diagnostics once at module load
 logConfigDiagnostics();
 
-/**
- * Explicit QA switch for the hybrid catalog. In normal operation the same
- * fixture is used only as a graceful fallback when the canonical catalog is
- * empty/unavailable; valid remote rows always win and are never mixed with it.
- */
-export const isNexoraDemoMode = readEnv('VITE_NEXORA_DEMO_MODE') === 'true';
+// Demo mode flag
+const demoModeEnv = (() => {
+  try {
+    // @ts-ignore
+    return (import.meta.env.VITE_NEXORA_DEMO_MODE as string | undefined);
+  } catch {
+    return undefined;
+  }
+})() || getEnvVar('VITE_NEXORA_DEMO_MODE');
+
+export const isNexoraDemoMode = demoModeEnv === 'true';
 
 /**
  * Singleton guard: Vite HMR (and React StrictMode double-invocation) can
