@@ -151,6 +151,8 @@ export interface ReferredFriend {
   status: 'completed' | 'pending';
 }
 
+export type AppUserRole = 'customer' | 'salon_owner';
+
 export interface UserProfile {
   name: string;
   email: string;
@@ -159,6 +161,7 @@ export interface UserProfile {
   locationArea: string;
   city: string;
   loyaltyPoints: number;
+  role?: AppUserRole;
   dateOfBirth?: string;
   gender?: 'men' | 'women';
   preferredServices: string[];

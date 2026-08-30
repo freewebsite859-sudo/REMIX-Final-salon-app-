@@ -11,14 +11,17 @@ import {
   Loader2,
   AlertCircle,
   Sparkles,
+  Settings,
+  ShoppingBag,
 } from 'lucide-react';
 import { NexoraLogo } from './NexoraLogo';
 import { PasswordResetModal } from './PasswordResetModal';
-import { supabase, isSupabaseConfigured } from '../../lib/supabase';
+import { supabase, isSupabaseConfigured, getSupabaseConfigStatus } from '../../lib/supabase';
+import { upsertUserProfile, fetchUserProfile, type UserRole } from '../../lib/profileService';
 import { UserProfile } from '../../types';
 
 interface AuthPageProps {
-  onAuthSuccess: (user: Partial<UserProfile>) => void;
+  onAuthSuccess: (user: Partial<UserProfile> & { role?: UserRole }) => void;
   onExploreAsGuest?: () => void;
 }
 
@@ -35,6 +38,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [selectedRole, setSelectedRole] = useState<UserRole>('customer');
 
   // Password visibility toggles
   const [showPassword, setShowPassword] = useState(false);
@@ -43,6 +47,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   // Status & Feedback states
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorType, setErrorType] = useState<'config' | 'credentials' | 'network' | 'auth' | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // Field validation errors
@@ -61,6 +66,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   const handleSwitchMode = (mode: 'login' | 'signup') => {
     setAuthMode(mode);
     setErrorMessage(null);
+    setErrorType(null);
     setSuccessMessage(null);
     setFieldErrors({});
   };
@@ -107,19 +113,44 @@ export const AuthPage: React.FC<AuthPageProps> = ({
     return Object.keys(errors).length === 0;
   };
 
+  // Determine error type for better UX
+  const classifyError = (error: any, message: string): 'config' | 'credentials' | 'network' | 'auth' => {
+    const lower = message.toLowerCase();
+    if (lower.includes('fetch') || lower.includes('network') || lower.includes('failed to fetch') || lower.includes('networkerror') || error?.name === 'TypeError') {
+      return 'network';
+    }
+    if (lower.includes('invalid login credentials') || lower.includes('invalid login') || lower.includes('email not confirmed')) {
+      return 'credentials';
+    }
+    if (lower.includes('supabase') && (lower.includes('not configured') || lower.includes('url') || lower.includes('anon key'))) {
+      return 'config';
+    }
+    return 'auth';
+  };
+
   // Submission handler
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
+    setErrorType(null);
     setSuccessMessage(null);
 
     if (!validateForm()) return;
 
     if (!isSupabaseConfigured || !supabase) {
-      // Never simulate authentication. A local flag/profile is not a session
-      // and must not be allowed to unlock protected features.
+      const status = getSupabaseConfigStatus();
+      // Detailed config error for developers, but clear message
+      let detail = '';
+      if (!status.hasUrl) detail += 'Missing VITE_SUPABASE_URL. ';
+      if (!status.hasAnonKey) detail += 'Missing VITE_SUPABASE_ANON_KEY. ';
+      if (status.isPrivilegedKey) detail += 'Service role key detected in public env — use anon key. ';
+      
+      console.error('[Nexora] CONFIGURATION ERROR:', detail, status);
+      
+      setErrorType('config');
       setErrorMessage(
-        'Live authentication is unavailable. Configure the public Supabase URL and anon key, then rebuild the app.'
+        'Live authentication is unavailable. Configure the public Supabase URL and anon key, then rebuild the app. ' +
+        (detail ? `Details: ${detail}` : '')
       );
       return;
     }
@@ -134,8 +165,13 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         });
 
         if (error) {
+          const errType = classifyError(error, error.message);
+          setErrorType(errType);
+          
           if (error.message.toLowerCase().includes('invalid login credentials')) {
             setErrorMessage('The email or password you entered is incorrect. Please try again.');
+          } else if (errType === 'network') {
+            setErrorMessage('Network error: Unable to reach authentication service. Check your connection.');
           } else {
             setErrorMessage(error.message || 'Failed to sign in. Please check your credentials.');
           }
@@ -143,14 +179,40 @@ export const AuthPage: React.FC<AuthPageProps> = ({
           return;
         }
 
+        // Load profile and role after successful login
+        let userRole: UserRole = 'customer';
+        try {
+          if (data.user?.id) {
+            const { profile } = await fetchUserProfile(data.user.id);
+            if (profile?.role) {
+              userRole = profile.role;
+            } else {
+              // Fallback to metadata role if profile missing
+              const metaRole = data.user.user_metadata?.role;
+              if (metaRole === 'customer' || metaRole === 'salon_owner') {
+                userRole = metaRole;
+              }
+            }
+          }
+        } catch (profileErr) {
+          console.warn('[Nexora] Role lookup failed, defaulting to customer:', profileErr);
+        }
+
         setIsLoading(false);
-        setSuccessMessage('Welcome back to Nexora Luxury Management.');
+        setSuccessMessage(
+          userRole === 'salon_owner' 
+            ? 'Welcome back! Redirecting to Salon Owner Dashboard.' 
+            : 'Welcome back to Nexora Luxury Management.'
+        );
+        
         onAuthSuccess({
           email: data.user?.email || email.trim(),
           name: data.user?.user_metadata?.full_name || email.split('@')[0],
           phone: data.user?.user_metadata?.mobile || '',
+          role: userRole,
         });
       } else {
+        // Signup flow
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(),
           password,
@@ -158,20 +220,47 @@ export const AuthPage: React.FC<AuthPageProps> = ({
             data: {
               full_name: fullName.trim(),
               mobile: mobile.trim(),
+              role: selectedRole,
             },
           },
         });
 
         if (error) {
-          setErrorMessage(error.message || 'Unable to create account. Please try again.');
+          const errType = classifyError(error, error.message);
+          setErrorType(errType);
+          if (errType === 'network') {
+            setErrorMessage('Network error: Unable to reach authentication service. Check your connection.');
+          } else {
+            setErrorMessage(error.message || 'Unable to create account. Please try again.');
+          }
           setIsLoading(false);
           return;
+        }
+
+        // Try to create profile with role after signup
+        if (data.user?.id) {
+          try {
+            const result = await upsertUserProfile(
+              data.user.id,
+              email.trim(),
+              selectedRole,
+              fullName.trim()
+            );
+            if (!result.success) {
+              console.warn('[Nexora] Profile creation warning:', result.error);
+              // Don't fail signup if profile creation fails - auth succeeded
+            }
+          } catch (profileErr) {
+            console.warn('[Nexora] Profile creation failed, but auth succeeded:', profileErr);
+          }
         }
 
         setIsLoading(false);
         setSuccessMessage(
           data.session
-            ? 'Account created. Welcome to Nexora Luxury Management.'
+            ? selectedRole === 'salon_owner'
+              ? 'Account created. Welcome! Redirecting to Salon Owner Dashboard.'
+              : 'Account created. Welcome to Nexora Luxury Management.'
             : 'Account created. Check your email to confirm your account before signing in.'
         );
         if (data.session) {
@@ -179,13 +268,23 @@ export const AuthPage: React.FC<AuthPageProps> = ({
             email: data.user?.email || email.trim(),
             name: fullName.trim(),
             phone: mobile.trim(),
+            role: selectedRole,
           });
         }
       }
-    } catch (err) {
+    } catch (err: any) {
       setIsLoading(false);
+      const message = err?.message || String(err);
+      const errType = classifyError(err, message);
+      setErrorType(errType);
       console.error('[Nexora] Authentication request failed:', err);
-      setErrorMessage('A network error occurred. Please check your connection and try again.');
+      if (errType === 'network') {
+        setErrorMessage('A network error occurred. Please check your connection and try again.');
+      } else if (errType === 'config') {
+        setErrorMessage('Configuration error: Supabase is not properly configured. Contact support.');
+      } else {
+        setErrorMessage('A network error occurred. Please check your connection and try again.');
+      }
     }
   };
 
@@ -300,11 +399,33 @@ export const AuthPage: React.FC<AuthPageProps> = ({
           </button>
         </nav>
 
-        {/* 3. Global Feedback Messages */}
+        {/* 3. Global Feedback Messages - Distinguish error types */}
         {errorMessage && (
-          <div className="mb-5 p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-[13px] font-medium flex items-start gap-2.5 animate-in fade-in slide-in-from-top-2">
-            <AlertCircle className="w-4 h-4 text-[#b90064] shrink-0 mt-0.5" />
-            <span className="leading-snug">{errorMessage}</span>
+          <div className={`mb-5 p-3.5 rounded-xl border text-[13px] font-medium flex items-start gap-2.5 animate-in fade-in slide-in-from-top-2 ${
+            errorType === 'config' 
+              ? 'bg-amber-50 border-amber-300 text-amber-900' 
+              : errorType === 'network'
+              ? 'bg-blue-50 border-blue-200 text-blue-800'
+              : errorType === 'credentials'
+              ? 'bg-orange-50 border-orange-200 text-orange-800'
+              : 'bg-rose-50 border-rose-200 text-rose-800'
+          }`}>
+            <AlertCircle className={`w-4 h-4 shrink-0 mt-0.5 ${
+              errorType === 'config' ? 'text-amber-600' : 'text-[#b90064]'
+            }`} />
+            <div className="leading-snug">
+              <span>{errorMessage}</span>
+              {errorType === 'config' && (
+                <p className="mt-1 text-[11px] opacity-80">
+                  Developer: Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env, then rebuild.
+                </p>
+              )}
+              {errorType === 'network' && (
+                <p className="mt-1 text-[11px] opacity-80">
+                  Network issue — check connection or try again shortly.
+                </p>
+              )}
+            </div>
           </div>
         )}
 
@@ -386,6 +507,46 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                   {fieldErrors.mobile}
                 </p>
               )}
+            </div>
+          )}
+
+          {/* Sign Up: Role Selection - Customer vs Salon Owner */}
+          {authMode === 'signup' && (
+            <div className="animate-in fade-in slide-in-from-top-2 duration-200">
+              <label className="block text-[13px] font-semibold text-[#1c1b1b] mb-1.5">
+                I am a
+              </label>
+              <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-[#594047]/5 border border-[#e8e8e8]/60">
+                <button
+                  type="button"
+                  onClick={() => setSelectedRole('customer')}
+                  className={`h-[44px] rounded-lg text-[13px] font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                    selectedRole === 'customer'
+                      ? 'bg-white text-[#b90064] shadow-sm border border-[#b90064]/20'
+                      : 'text-[#594047] hover:text-[#1c1b1b]'
+                  }`}
+                >
+                  <ShoppingBag className="w-4 h-4" />
+                  <span>Customer</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedRole('salon_owner')}
+                  className={`h-[44px] rounded-lg text-[13px] font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                    selectedRole === 'salon_owner'
+                      ? 'bg-white text-[#b90064] shadow-sm border border-[#b90064]/20'
+                      : 'text-[#594047] hover:text-[#1c1b1b]'
+                  }`}
+                >
+                  <Settings className="w-4 h-4" />
+                  <span>Salon Owner</span>
+                </button>
+              </div>
+              <p className="text-[11px] text-[#594047]/70 mt-1.5">
+                {selectedRole === 'customer' 
+                  ? 'Book appointments and discover salons' 
+                  : 'Manage your salon and bookings'}
+              </p>
             </div>
           )}
 

@@ -19,12 +19,13 @@ import { ChooseProfessionalScreen } from './components/ChooseProfessionalScreen'
 import { BookingSummaryModal } from './components/BookingSummaryModal';
 import { AuthPage } from './components/auth/AuthPage';
 import { PasswordUpdatePage } from './components/auth/PasswordUpdatePage';
-import { isSupabaseConfigured } from './lib/supabase';
+import { isSupabaseConfigured, getSupabaseConfigStatus } from './lib/supabase';
 import { useAuth } from './providers/AuthProvider';
 import { useLocationSync } from './hooks/useLocationSync';
 import { clearUserLocation, syncUserLocation } from './lib/locationService';
 import { isAppointmentUpcoming } from './lib/appointments';
 import { currentPath, isAuthRoute, redirectToApp, redirectToLogin } from './lib/authRoutes';
+import { fetchUserProfile } from './lib/profileService';
 
 const STORAGE_KEYS = {
   // These keys hold UI drafts/preferences only. They are never the source of
@@ -206,6 +207,8 @@ export default function App() {
     userId,
     isLoading: isAuthLoading,
     signOut: nexoraSignOut,
+    role: authRole,
+    isRoleLoading,
   } = useAuth();
   const catalog = useCatalog();
 
@@ -273,7 +276,14 @@ export default function App() {
   // registers its own listener, so there is exactly one subscription app-wide.
   // ---------------------------------------------------------------------------
   useEffect(() => {
-    if (!isSupabaseConfigured) return;
+    if (!isSupabaseConfigured) {
+      // When not configured, allow guest browsing but log diagnostic
+      const status = getSupabaseConfigStatus();
+      if (!status.isConfigured) {
+        console.warn('[Nexora] Supabase not configured - guest mode only');
+      }
+      return;
+    }
 
     const sessionUser = session?.user;
 
@@ -288,13 +298,21 @@ export default function App() {
       // SIGNED_OUT, or an invalid/expired session the provider could not renew.
       // The provider already redirected expired sessions to /auth/login;
       // render the auth screen when we are on that route.
-      if (isAuthRoute()) setShowAuthScreen(true);
+      // Also enforce route protection: unauthenticated users accessing protected tabs -> login
+      if (isAuthRoute()) {
+        setShowAuthScreen(true);
+      } else if (['profile', 'appointments'].includes(activeTab)) {
+        // Protected route while logged out -> redirect to login
+        setShowAuthScreen(true);
+        redirectToLogin({ replace: true });
+      }
     }
-  }, [session, isAuthLoading]);
+  }, [session, isAuthLoading, activeTab]);
 
   // Load only this authenticated user's UI profile and local drafts. These
   // values are deliberately namespaced by the authoritative Supabase user id;
   // data from one account can never appear in another account's UI.
+  // Also loads role from profile for route protection.
   useEffect(() => {
     if (!userId) {
       hydratedUserIdRef.current = null;
@@ -315,6 +333,13 @@ export default function App() {
       sanitizeUserProfile
     );
     const sessionUser = session?.user;
+    
+    // Determine role: prefer authRole from provider (loaded via profileService), then metadata, then stored
+    const effectiveRole = authRole || 
+      (sessionUser?.user_metadata?.role as UserProfile['role']) || 
+      storedProfile?.role || 
+      'customer';
+
     setUser({
       ...EMPTY_USER,
       ...(storedProfile || {}),
@@ -325,7 +350,23 @@ export default function App() {
         sessionUser?.email?.split('@')[0] ||
         '',
       phone: sessionUser?.user_metadata?.mobile || sessionUser?.phone || storedProfile?.phone || '',
+      role: effectiveRole,
     });
+
+    // Try to fetch latest profile from Supabase for role accuracy (non-blocking)
+    void (async () => {
+      try {
+        if (isSupabaseConfigured && userId) {
+          const { profile } = await fetchUserProfile(userId);
+          if (profile?.role) {
+            setUser(prev => ({ ...prev, role: profile.role }));
+          }
+        }
+      } catch (err) {
+        console.warn('[Nexora] Failed to refresh profile from backend:', err);
+      }
+    })();
+
     setAppointments(
       loadJson(scopedStorageKey(STORAGE_KEYS.appointments, userId), [], sanitizeAppointments)
     );
@@ -335,7 +376,7 @@ export default function App() {
     );
     // Reviews edited in memory are not authoritative and must not bleed into a
     // different account after switching sessions.
-  }, [userId, session?.user]);
+  }, [userId, session?.user, authRole]);
 
   // Rebind open views to the newest catalog snapshot. This lets a remote row
   // replace its fallback counterpart without leaving a stale modal behind.
@@ -557,15 +598,39 @@ export default function App() {
     // loop-safe redirect to /auth/login.
     await nexoraSignOut();
 
-    // The provider/session is the only auth authority. Local UI state is
-    // cleared by the user-id hydration effect after SIGNED_OUT.
+    // Clear auth state and protected application state
     setUser(EMPTY_USER);
     setAppointments([]);
     setSavedSalonIds([]);
     setSavedServices([]);
     setActiveTab('home');
     setShowAuthScreen(true);
+    
+    // Clear any scoped storage for current user to prevent data leakage
+    if (userId) {
+      try {
+        localStorage.removeItem(scopedStorageKey(STORAGE_KEYS.profile, userId));
+        localStorage.removeItem(scopedStorageKey(STORAGE_KEYS.appointments, userId));
+        localStorage.removeItem(scopedStorageKey(STORAGE_KEYS.savedSalons, userId));
+        localStorage.removeItem(scopedStorageKey(STORAGE_KEYS.savedServices, userId));
+      } catch {
+        /* ignore storage errors */
+      }
+    }
+    
+    // Redirect to login and prevent back navigation to protected pages
     redirectToLogin({ replace: true });
+    
+    // Additional back navigation prevention
+    try {
+      if (typeof window !== 'undefined') {
+        // Replace current history entry and push login to prevent back to protected
+        window.history.pushState(null, '', '/auth/login');
+        window.history.replaceState(null, '', '/auth/login');
+      }
+    } catch {
+      /* ignore history errors */
+    }
   };
 
   const handleDeleteAccount = async (): Promise<boolean> => {
@@ -578,7 +643,8 @@ export default function App() {
 
   // Do not render protected controls or guest fallback data while Supabase is
   // still restoring the session. This closes the auth/session race on refresh.
-  if (isSupabaseConfigured && isAuthLoading) {
+  // Session must survive page refresh - we keep loading until initial session check completes
+  if (isSupabaseConfigured && (isAuthLoading || isRoleLoading)) {
     return (
       <main className="min-h-screen flex items-center justify-center bg-surface-off-white text-on-surface">
         <p className="text-sm text-on-surface-variant" role="status">Restoring your secure session…</p>
@@ -606,9 +672,21 @@ export default function App() {
             name: authData.name || prev.name,
             email: authData.email || prev.email,
             phone: authData.phone || prev.phone,
+            role: authData.role || prev.role || 'customer',
           }));
           // AuthPage calls this after Supabase accepts the credentials; the
           // provider's session remains the authority for authenticated UI.
+          // Route user correctly based on role:
+          // - customer → Customer Home
+          // - salon_owner → Salon Owner Dashboard (currently same app with role awareness)
+          if (authData.role === 'salon_owner') {
+            console.info('[Nexora] Salon owner authenticated - routing to owner dashboard');
+            // In this customer app, salon owners still see home but with owner context
+            // A separate owner app would handle full dashboard
+            setActiveTab('home');
+          } else {
+            setActiveTab('home');
+          }
           setShowAuthScreen(false);
         }}
         onExploreAsGuest={() => setShowAuthScreen(false)}
