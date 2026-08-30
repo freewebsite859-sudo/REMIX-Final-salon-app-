@@ -1,4 +1,12 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  describeLocationFailure,
+  getGeolocationPermissionState,
+  isEmbeddedFrame,
+  requestDeviceLocation,
+  type DeviceLocationFailure,
+} from '../lib/deviceLocation';
+import { formatCoordsLabel } from '../lib/locationService';
 
 interface LocationModalProps {
   isOpen: boolean;
@@ -7,6 +15,8 @@ interface LocationModalProps {
   onSelectLocation: (area: string, lat?: number, lng?: number) => void;
   /** True while Nexora live-location sync is streaming for a signed-in user. */
   isLiveSyncActive?: boolean;
+  /** True when the background live sync cannot run because access was denied/blocked. */
+  isLiveSyncBlocked?: boolean;
 }
 
 export const LocationModal: React.FC<LocationModalProps> = ({
@@ -15,10 +25,69 @@ export const LocationModal: React.FC<LocationModalProps> = ({
   currentLocation,
   onSelectLocation,
   isLiveSyncActive = false,
+  isLiveSyncBlocked = false,
 }) => {
   const [customInput, setCustomInput] = useState('');
   const [isDetectingGps, setIsDetectingGps] = useState(false);
-  const [gpsError, setGpsError] = useState<string | null>(null);
+  const [detectAttempt, setDetectAttempt] = useState(0);
+  const [gpsFailure, setGpsFailure] = useState<DeviceLocationFailure | null>(null);
+
+  const embedded = isEmbeddedFrame();
+
+  /**
+   * Pre-flight check: if the browser already knows location access is denied,
+   * say so up front instead of firing a prompt that cannot succeed. This is
+   * what turns the old catch-all error into an instruction the user can act on.
+   */
+  useEffect(() => {
+    if (!isOpen) return;
+    setGpsFailure(null);
+    setDetectAttempt(0);
+    let cancelled = false;
+
+    void getGeolocationPermissionState().then((state) => {
+      if (cancelled || state !== 'denied') return;
+      setGpsFailure(describeLocationFailure('denied', { isEmbedded: isEmbeddedFrame() }));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
+
+  const handleDetectGPS = useCallback(async () => {
+    setGpsFailure(null);
+    setIsDetectingGps(true);
+    setDetectAttempt(1);
+
+    const result = await requestDeviceLocation({
+      timeoutMs: 10_000,
+      onAttempt: setDetectAttempt,
+    });
+
+    setIsDetectingGps(false);
+    setDetectAttempt(0);
+
+    if (result.status === 'ok') {
+      onSelectLocation(
+        formatCoordsLabel(result.latitude, result.longitude),
+        result.latitude,
+        result.longitude
+      );
+      onClose();
+      return;
+    }
+
+    console.warn(
+      `[Nexora] Device location failed (${result.code}): ${result.detail || 'no detail'}`
+    );
+    setGpsFailure(result);
+  }, [onClose, onSelectLocation]);
+
+  const openInNewTab = () => {
+    if (typeof window === 'undefined') return;
+    window.open(window.location.href, '_blank', 'noopener,noreferrer');
+  };
 
   if (!isOpen) return null;
 
@@ -33,32 +102,6 @@ export const LocationModal: React.FC<LocationModalProps> = ({
     { name: 'Jagatpura, Jaipur', lat: 26.8202, lng: 75.8576 },
   ];
 
-  const handleDetectGPS = () => {
-    if (!navigator.geolocation) {
-      setGpsError('Geolocation is not supported by your browser.');
-      return;
-    }
-
-    setIsDetectingGps(true);
-    setGpsError(null);
-
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setIsDetectingGps(false);
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
-        const formatted = `Current Location (${lat.toFixed(3)}, ${lng.toFixed(3)})`;
-        onSelectLocation(formatted, lat, lng);
-        onClose();
-      },
-      (err) => {
-        setIsDetectingGps(false);
-        setGpsError('Unable to detect location. Please select an area below.');
-      },
-      { timeout: 10000, enableHighAccuracy: true }
-    );
-  };
-
   const handleCustomSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (customInput.trim()) {
@@ -68,9 +111,12 @@ export const LocationModal: React.FC<LocationModalProps> = ({
     }
   };
 
+  const gpsBlocked = gpsFailure?.code === 'blocked';
+  const gpsUnavailable = gpsFailure?.code === 'unsupported' || gpsFailure?.code === 'insecure';
+
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in duration-200">
-      <div 
+      <div
         id="location-picker-modal"
         className="w-full max-w-md bg-surface rounded-t-3xl sm:rounded-2xl p-6 shadow-2xl border border-outline-variant/30 max-h-[85vh] overflow-y-auto"
       >
@@ -79,7 +125,7 @@ export const LocationModal: React.FC<LocationModalProps> = ({
             <span className="material-symbols-outlined text-nexora-pink text-[24px]">location_on</span>
             <h2 className="font-section-heading text-[18px] text-on-surface">Select Your Location</h2>
           </div>
-          <button 
+          <button
             onClick={onClose}
             className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container transition-colors"
           >
@@ -91,17 +137,69 @@ export const LocationModal: React.FC<LocationModalProps> = ({
         <button
           id="detect-gps-button"
           onClick={handleDetectGPS}
-          disabled={isDetectingGps}
-          className="w-full py-3 px-4 mb-4 rounded-xl bg-surface-container-low border border-outline-variant flex items-center justify-center gap-2 text-nexora-pink font-button-text hover:bg-surface-container transition-colors shadow-sm"
+          disabled={isDetectingGps || gpsUnavailable}
+          className="w-full py-3 px-4 mb-3 rounded-xl bg-surface-container-low border border-outline-variant flex items-center justify-center gap-2 text-nexora-pink font-button-text hover:bg-surface-container transition-colors shadow-sm disabled:opacity-60"
         >
           <span className={`material-symbols-outlined text-[20px] ${isDetectingGps ? 'animate-spin' : ''}`}>
             {isDetectingGps ? 'sync' : 'my_location'}
           </span>
-          <span>{isDetectingGps ? 'Detecting GPS...' : 'Use Current Device Location'}</span>
+          <span>
+            {isDetectingGps
+              ? detectAttempt > 1
+                ? 'Still locating… (trying Wi-Fi & network)'
+                : 'Detecting GPS...'
+              : 'Use Current Device Location'}
+          </span>
         </button>
 
-        {gpsError && (
-          <p className="text-[12px] text-error font-medium mb-3 px-1">{gpsError}</p>
+        {/* Actionable failure panel — replaces the old one-line catch-all. */}
+        {gpsFailure && (
+          <div
+            id="location-error"
+            role="alert"
+            className="mb-4 rounded-xl border border-error/30 bg-error/5 px-3 py-2.5"
+          >
+            <div className="flex gap-2">
+              <span className="material-symbols-outlined text-error text-[18px] leading-tight">
+                {gpsBlocked ? 'tab' : 'error_outline'}
+              </span>
+              <div className="flex-1 min-w-0">
+                <p id="location-error-message" className="text-[12px] text-error font-medium leading-snug">
+                  {gpsFailure.message}
+                </p>
+                {gpsFailure.detail && (
+                  <p className="mt-1 text-[10px] text-on-surface-variant break-words">
+                    Browser reported: {gpsFailure.detail}
+                  </p>
+                )}
+                {(gpsFailure.canRetry || gpsBlocked || (embedded && gpsFailure.code === 'denied')) && (
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {gpsFailure.canRetry && (
+                      <button
+                        type="button"
+                        id="location-retry-button"
+                        onClick={handleDetectGPS}
+                        disabled={isDetectingGps}
+                        className="px-3 py-1.5 rounded-lg bg-primary text-white text-[11px] font-semibold disabled:opacity-50"
+                      >
+                        {isDetectingGps ? 'Locating…' : 'Try again'}
+                      </button>
+                    )}
+                    {(gpsBlocked || (embedded && gpsFailure.code === 'denied')) && (
+                      <button
+                        type="button"
+                        id="location-open-new-tab-button"
+                        onClick={openInNewTab}
+                        className="px-3 py-1.5 rounded-lg border border-outline-variant text-on-surface text-[11px] font-semibold hover:bg-surface-container transition-colors"
+                      >
+                        Open in new tab
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         )}
 
         {/* Nexora live-location sync indicator (authenticated users only) */}
@@ -118,6 +216,18 @@ export const LocationModal: React.FC<LocationModalProps> = ({
               Live location sync active — securely synced to your Nexora account.
             </p>
           </div>
+        )}
+
+        {/* Live sync is running but cannot see the device — say so, silently
+            failing here is what made the location state feel random. */}
+        {isLiveSyncBlocked && !gpsFailure && (
+          <p
+            id="live-sync-blocked-hint"
+            className="text-[11px] text-on-surface-variant mb-3 px-1"
+          >
+            Live location sync is paused because this site does not have location
+            access. Allow Location in your browser settings to resume it.
+          </p>
         )}
 
         {/* Search custom input */}

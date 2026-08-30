@@ -1062,6 +1062,7 @@ export default function App() {
         onClose={() => setIsLocationModalOpen(false)}
         currentLocation={currentLocation}
         isLiveSyncActive={locationSync.isWatching}
+        isLiveSyncBlocked={locationSync.permissionDenied && !locationSync.isWatching}
         onSelectLocation={(loc, lat, lng) => {
           setCurrentLocation(loc);
           // A device-GPS pick from the existing modal is pushed straight to the
