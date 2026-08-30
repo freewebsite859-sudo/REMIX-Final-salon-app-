@@ -1,8 +1,19 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { UserProfile, Appointment } from '../types';
+import { UserProfile, Appointment, SavedAddress, MembershipTier } from '../types';
 import { ReferralFeatureSection } from './ReferralFeatureSection';
 import { PaymentOverviewDashboard } from './PaymentOverviewDashboard';
 import { PaymentHistorySection } from './PaymentHistorySection';
+import { ProfileMenu } from './ProfileMenu';
+import { ProfileLegalModal, type LegalDocument } from './ProfileLegalModal';
+import { useOptionalAuth } from '../providers/AuthProvider';
+import { isSupabaseConfigured } from '../lib/supabase';
+import {
+  fetchNotificationPreferences,
+  isChannelEnabled,
+  saveNotificationPreference,
+  type NotificationChannel,
+  type NotificationType,
+} from '../lib/notificationService';
 
 interface ProfileTabProps {
   user: UserProfile;
@@ -11,6 +22,14 @@ interface ProfileTabProps {
   onOpenAIAdvisor: () => void;
   onNavigateToBooking?: () => void;
   onViewAppointments?: () => void;
+  /** Opens the saved salons/services screen (Profile menu → Favourites). */
+  onViewFavourites?: () => void;
+  /** Opens the notification centre (Profile menu → Notifications). */
+  onOpenNotifications?: () => void;
+  /** Real unread count, used for the Notifications menu badge. */
+  unreadNotifications?: number;
+  /** Real saved salons+services count, used for the Favourites menu badge. */
+  favouritesCount?: number;
   onLogout?: () => void;
   onDeleteAccount?: () => Promise<boolean>;
 }
@@ -142,6 +161,16 @@ const compressAndResizeImage = (
   });
 };
 
+/**
+ * Support contact for the profile Support section. Configured per deployment —
+ * when unset the email button is hidden instead of showing an address nobody reads.
+ *
+ * `import.meta.env` is optional-chained because it is undefined outside a Vite
+ * build (test harness runs under plain tsx), where a direct property read throws.
+ */
+const SUPPORT_EMAIL =
+  (import.meta.env?.VITE_NEXORA_SUPPORT_EMAIL as string | undefined)?.trim() || '';
+
 export const ProfileTab: React.FC<ProfileTabProps> = ({
   user,
   appointments = [],
@@ -149,9 +178,19 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
   onOpenAIAdvisor,
   onNavigateToBooking,
   onViewAppointments,
+  onViewFavourites,
+  onOpenNotifications,
+  unreadNotifications = 0,
+  favouritesCount = 0,
   onLogout,
   onDeleteAccount,
 }) => {
+  // Signed-in user — notification preferences are stored per account in the
+  // database, so they need the authoritative Supabase user id.
+  const auth = useOptionalAuth();
+  const authUserId = auth?.userId ?? null;
+  const preferencesLoadedRef = useRef(false);
+
   // Personal Details state
   const [fullName, setFullName] = useState(user.name || '');
   const [dob, setDob] = useState(user.dateOfBirth || '');
@@ -178,6 +217,23 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteInputText, setDeleteInputText] = useState('');
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [legalDocument, setLegalDocument] = useState<LegalDocument | null>(null);
+
+  // Personal Information: editable mirrors of the profile fields.
+  const [genderPreference, setGenderPreference] = useState<UserProfile['genderPreference']>(
+    user.genderPreference || 'all'
+  );
+  const [preferredLocation, setPreferredLocation] = useState(user.defaultLocality || '');
+
+  // Addresses
+  const [addressDraft, setAddressDraft] = useState<Omit<SavedAddress, 'id'>>({
+    label: '',
+    line1: '',
+    area: '',
+    city: '',
+    pincode: '',
+  });
+  const [addressError, setAddressError] = useState<string | null>(null);
 
   // File Upload Ref
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -187,6 +243,8 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
     setFullName(user.name || '');
     setDob(user.dateOfBirth || '');
     setPhone(user.phone || '');
+    setGenderPreference(user.genderPreference || 'all');
+    setPreferredLocation(user.defaultLocality || '');
     if (user.gender) setGenderRole(user.gender);
   }, [user]);
 
@@ -274,6 +332,87 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
     });
   };
 
+  // 3b. Gender preference for salon matching (separate from the avatar role)
+  const handleGenderPreferenceChange = (value: UserProfile['genderPreference']) => {
+    setGenderPreference(value);
+    triggerDetailsSave();
+    onUpdateUser({
+      ...user,
+      genderPreference: value,
+    });
+  };
+
+  // 3c. Preferred location (where the customer usually books)
+  const handlePreferredLocationChange = (value: string) => {
+    setPreferredLocation(value);
+    triggerDetailsSave();
+    onUpdateUser({
+      ...user,
+      defaultLocality: value,
+      // Keep the header/overview locality label in step with the saved value.
+      locationArea: value || user.locationArea,
+    });
+  };
+
+  // 3d. Saved addresses
+  const savedAddresses = useMemo<SavedAddress[]>(
+    () => (Array.isArray(user.savedAddresses) ? user.savedAddresses : []),
+    [user.savedAddresses]
+  );
+
+  const handleAddAddress = () => {
+    const label = addressDraft.label.trim();
+    const line1 = addressDraft.line1.trim();
+    if (!label || !line1) {
+      setAddressError('Add a label (Home/Work) and the address line.');
+      return;
+    }
+    const isFirst = savedAddresses.length === 0;
+    const next: SavedAddress = {
+      ...addressDraft,
+      label,
+      line1,
+      area: addressDraft.area?.trim() || undefined,
+      city: addressDraft.city?.trim() || undefined,
+      pincode: addressDraft.pincode?.trim() || undefined,
+      id: `addr-${Date.now()}`,
+      isDefault: isFirst || Boolean(addressDraft.isDefault),
+      createdAt: new Date().toISOString(),
+    };
+    const rest = next.isDefault
+      ? savedAddresses.map((a) => ({ ...a, isDefault: false }))
+      : savedAddresses;
+
+    setAddressError(null);
+    setAddressDraft({ label: '', line1: '', area: '', city: '', pincode: '' });
+    triggerDetailsSave();
+    onUpdateUser({ ...user, savedAddresses: [...rest, next] });
+    showToast(`${label} address saved`);
+  };
+
+  const handleDeleteAddress = (id: string) => {
+    onUpdateUser({
+      ...user,
+      savedAddresses: savedAddresses.filter((a) => a.id !== id),
+    });
+    showToast('Address removed');
+  };
+
+  const handleSetDefaultAddress = (id: string) => {
+    onUpdateUser({
+      ...user,
+      savedAddresses: savedAddresses.map((a) => ({ ...a, isDefault: a.id === id })),
+    });
+    showToast('Default address updated');
+  };
+
+  /** Scroll to one of this screen's own sections (used by the profile menu). */
+  const scrollToSection = (id: string) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
   // 4. Gender / Role Switcher (Men / Women)
   const handleGenderRoleSwitch = (newRole: 'men' | 'women') => {
     setGenderRole(newRole);
@@ -289,10 +428,13 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
 
     const updatedAvatar = isCurrentAvatarCustom ? user.avatar : defaultAvatarForRole;
 
+    // NOTE: this switcher only changes the avatar theme and preset services.
+    // `genderPreference` (which salons are shown to the customer) is owned by
+    // the dedicated "Gender Preference" control in Personal Information, so it
+    // is deliberately left untouched here rather than silently overwritten.
     onUpdateUser({
       ...user,
       gender: newRole,
-      genderPreference: newRole,
       avatar: updatedAvatar,
       preferredServices:
         newRole === 'men'
@@ -355,11 +497,67 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
   };
 
   // 10. Granular Notification Toggles (with Auto-Save)
+  //
+  // The local profile keeps the UI responsive, but notification preferences are
+  // stored in the database (notification_preferences) so they apply to every
+  // channel producer — in-app, email, WhatsApp and push — not just this device.
   const notificationsEnabled = user.notificationsEnabled ?? true;
   const appointmentReminders = user.appointmentReminders ?? true;
   const promotionalOffers = user.promotionalOffers ?? true;
   const whatsappAlerts = user.whatsappAlerts ?? true;
   const aiAdvisorAlerts = user.aiAdvisorAlerts ?? true;
+
+  /** UI toggle → database preference row(s). */
+  const persistPreference = (
+    channel: NotificationChannel | 'all',
+    category: NotificationType | 'all',
+    enabled: boolean
+  ) => {
+    if (!authUserId || !isSupabaseConfigured) return;
+    void saveNotificationPreference({ userId: authUserId, channel, category, enabled }).then(
+      (result) => {
+        if (!result.ok) {
+          console.warn('[Nexora] Notification preference not saved:', result.error);
+          showToast('Preference saved on this device only — backend unreachable.');
+        }
+      }
+    );
+  };
+
+  // Load stored preferences once per user so the switches reflect the database
+  // (the backend is the source of truth, not this browser's localStorage).
+  useEffect(() => {
+    if (!authUserId || !isSupabaseConfigured || preferencesLoadedRef.current) return;
+    preferencesLoadedRef.current = true;
+
+    void (async () => {
+      const result = await fetchNotificationPreferences(authUserId);
+      if (!result.ok || !result.data) return;
+      const prefs = result.data;
+      const patch: Partial<UserProfile> = {};
+      const master = isChannelEnabled(prefs, 'push', 'all');
+      const reminders = isChannelEnabled(prefs, 'in_app', 'booking_reminder');
+      const offers = isChannelEnabled(prefs, 'in_app', 'offer');
+      const whatsapp = isChannelEnabled(prefs, 'whatsapp', 'all');
+
+      if (prefs.matrix.push?.all !== undefined && master !== notificationsEnabled) {
+        patch.notificationsEnabled = master;
+      }
+      if (prefs.matrix.in_app?.booking_reminder !== undefined && reminders !== appointmentReminders) {
+        patch.appointmentReminders = reminders;
+      }
+      if (prefs.matrix.in_app?.offer !== undefined && offers !== promotionalOffers) {
+        patch.promotionalOffers = offers;
+      }
+      if (prefs.matrix.whatsapp?.all !== undefined && whatsapp !== whatsappAlerts) {
+        patch.whatsappAlerts = whatsapp;
+      }
+
+      if (Object.keys(patch).length > 0) onUpdateUser({ ...user, ...patch });
+    })();
+    // Runs once per user; the toggle handlers keep local state and DB in sync.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUserId]);
 
   const handleToggleMasterNotifications = () => {
     const nextVal = !notificationsEnabled;
@@ -368,6 +566,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
       ...user,
       notificationsEnabled: nextVal,
     });
+    persistPreference('all', 'all', nextVal);
     showToast(`Push notifications ${nextVal ? 'enabled' : 'disabled'}`);
   };
 
@@ -380,6 +579,12 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
       ...user,
       [key]: nextVal,
     });
+
+    // Persist the database-backed preferences. `aiAdvisorAlerts` is an
+    // in-product AI setting with no external channel, so it stays local.
+    if (key === 'appointmentReminders') persistPreference('all', 'booking_reminder', nextVal);
+    if (key === 'promotionalOffers') persistPreference('all', 'offer', nextVal);
+    if (key === 'whatsappAlerts') persistPreference('whatsapp', 'all', nextVal);
   };
 
   // 11. Theme Switcher
@@ -445,9 +650,28 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
     !MEN_AVATARS.some((a) => a.url === user.avatar) &&
     !WOMEN_AVATARS.some((a) => a.url === user.avatar);
 
-  const totalEarned = user.referralEarnings ?? ((user.referredFriends?.filter((f) => f.status === 'completed').length ?? 3) * 150);
-  const claimedDiscounts = user.claimedDiscounts || 150;
+  // Reward balance. Derived only from recorded data — no assumed defaults, so a
+  // new account shows a real 0 rather than a fabricated credit.
+  const completedReferrals =
+    user.referredFriends?.filter((f) => f.status === 'completed').length ?? 0;
+  const totalEarned = user.referralEarnings ?? completedReferrals * 150;
+  const claimedDiscounts = user.claimedDiscounts ?? 0;
   const availableWalletBalance = Math.max(0, totalEarned - claimedDiscounts);
+
+  // Membership. The badge reflects stored state; `standard` means no paid
+  // membership is active, and an expired date is reported as expired.
+  const membershipTier: MembershipTier = user.membershipTier || 'standard';
+  const membershipExpiry = user.membershipExpiresAt ? new Date(user.membershipExpiresAt) : null;
+  const membershipActive =
+    membershipTier !== 'standard' &&
+    Boolean(membershipExpiry && !Number.isNaN(membershipExpiry.getTime()) && membershipExpiry.getTime() > Date.now());
+  const membershipLabel =
+    membershipTier === 'standard'
+      ? 'Standard Member'
+      : `${membershipTier.charAt(0).toUpperCase()}${membershipTier.slice(1)} Member`;
+  const membershipDaysLeft = membershipExpiry
+    ? Math.ceil((membershipExpiry.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+    : null;
 
   return (
     <div className="flex flex-col w-full pb-28 max-w-4xl mx-auto px-page-margin pt-2">
@@ -489,17 +713,35 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
 
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="font-card-title text-[22px] font-extrabold truncate">{user.name}</h2>
-                <span className="text-[10px] bg-white/20 px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider backdrop-blur-xs border border-white/30">
-                  VIP Club Member
+                <h2 className="font-card-title text-[22px] font-extrabold truncate">
+                  {user.name || 'Your Name'}
+                </h2>
+                <span
+                  id="profile-membership-badge"
+                  data-active={membershipActive ? 'true' : 'false'}
+                  className="text-[10px] bg-white/20 px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider backdrop-blur-xs border border-white/30"
+                >
+                  {membershipActive ? membershipLabel : 'Standard Member'}
                 </span>
               </div>
-              <p className="text-[12px] opacity-90">{user.email}</p>
+              <p className="text-[12px] opacity-90">{user.email || 'No email on file'}</p>
               <div className="flex items-center gap-2 text-[12px] opacity-85 mt-0.5 flex-wrap">
-                <span>{user.phone || '+91 98290 12345'}</span>
-                <span>·</span>
-                {ageInfo && <span>{ageInfo.text} ·</span>}
-                <span>{user.locationArea || 'Mansarovar'}, Jaipur</span>
+                <span>{user.phone || 'No mobile number added'}</span>
+                {ageInfo && (
+                  <>
+                    <span>·</span>
+                    <span>{ageInfo.text}</span>
+                  </>
+                )}
+                {(user.defaultLocality || user.locationArea) && (
+                  <>
+                    <span>·</span>
+                    <span>
+                      {user.defaultLocality || user.locationArea}
+                      {user.city ? `, ${user.city}` : ''}
+                    </span>
+                  </>
+                )}
                 <span>·</span>
                 <span className="px-2 py-0.2 bg-white/15 rounded-md font-semibold text-[11px]">
                   {genderRole === 'men' ? "👔 Men's Grooming" : "✨ Women's Beauty"}
@@ -523,17 +765,43 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
         <div className="mt-4 pt-3 border-t border-white/20 flex items-center justify-between relative z-10 text-[13px] flex-wrap gap-2">
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-[20px] text-amber-300 fill-1">stars</span>
-            <span>
-              Nexora Beauty Club: <strong>{user.loyaltyPoints} Rewards Points</strong>
+            <span id="profile-reward-points">
+              Nexora Beauty Club: <strong>{user.loyaltyPoints ?? 0} Reward Points</strong>
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[11px] bg-white text-primary px-3 py-1 rounded-full font-extrabold shadow-xs">
-              ₹{availableWalletBalance} Wallet Balance
+            <span
+              id="profile-reward-balance"
+              className="text-[11px] bg-white text-primary px-3 py-1 rounded-full font-extrabold shadow-xs"
+            >
+              ₹{availableWalletBalance} Reward Balance
             </span>
           </div>
         </div>
       </div>
+
+      {/* ========================================================================= */}
+      {/* PROFILE MENU — index over every account destination                       */}
+      {/* ========================================================================= */}
+      <ProfileMenu
+        unreadNotifications={unreadNotifications}
+        bookingsCount={appointments.filter((a) => a.status !== 'cancelled').length}
+        favouritesCount={favouritesCount}
+        addressesCount={savedAddresses.length}
+        onPersonalInformation={() => scrollToSection('section-personal-details')}
+        onMyBookings={() => onViewAppointments?.()}
+        onFavourites={() => onViewFavourites?.()}
+        onReferral={() => scrollToSection('section-rewards')}
+        onMembership={() => scrollToSection('section-membership')}
+        onRewards={() => scrollToSection('section-rewards')}
+        onNotifications={() => onOpenNotifications?.()}
+        onAddresses={() => scrollToSection('section-addresses')}
+        onSupport={() => scrollToSection('section-support')}
+        onAppSettings={() => scrollToSection('section-app-settings')}
+        onPrivacyPolicy={() => setLegalDocument('privacy')}
+        onTerms={() => setLegalDocument('terms')}
+        onLogout={() => setShowLogoutConfirm(true)}
+      />
 
       {/* ========================================================================= */}
       {/* 1. PERSONAL DETAILS SECTION (EDITABLE - AUTO-SAVE & MICRO-INDICATOR)      */}
@@ -752,6 +1020,75 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Gender preference for salon matching + preferred location */}
+        <div className="mt-4 pt-3 border-t border-outline-variant/30 grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* Gender Preference */}
+          <div>
+            <label
+              htmlFor="input-profile-gender-preference"
+              className="text-[12px] font-bold text-on-surface block mb-1.5 flex items-center justify-between"
+            >
+              <span>Gender Preference</span>
+              <span className="text-[10px] text-on-surface-variant font-normal">
+                Used to match salons
+              </span>
+            </label>
+            <div className="relative">
+              <select
+                id="input-profile-gender-preference"
+                value={genderPreference}
+                onChange={(e) =>
+                  handleGenderPreferenceChange(e.target.value as UserProfile['genderPreference'])
+                }
+                className="w-full h-11 px-3.5 pl-10 pr-8 bg-surface-container-lowest text-on-surface rounded-xl text-[13px] border border-outline-variant/50 focus:border-primary focus:ring-1 focus:ring-primary transition-all cursor-pointer appearance-none"
+              >
+                <option value="all">All salons</option>
+                <option value="women">Women only</option>
+                <option value="men">Men only</option>
+                <option value="unisex">Unisex</option>
+              </select>
+              <span className="material-symbols-outlined text-[18px] text-on-surface-variant absolute left-3 top-3 pointer-events-none">
+                wc
+              </span>
+              <span className="material-symbols-outlined text-[18px] text-on-surface-variant absolute right-3 top-3 pointer-events-none">
+                expand_more
+              </span>
+            </div>
+            <p className="text-[10px] text-on-surface-variant mt-1">
+              Filters the salons shown to you. It does not change your profile photo theme.
+            </p>
+          </div>
+
+          {/* Preferred Location */}
+          <div>
+            <label
+              htmlFor="input-profile-preferred-location"
+              className="text-[12px] font-bold text-on-surface block mb-1.5 flex items-center justify-between"
+            >
+              <span>Preferred Location</span>
+              <span className="text-[10px] text-on-surface-variant font-normal">
+                Where you usually book
+              </span>
+            </label>
+            <div className="relative">
+              <input
+                id="input-profile-preferred-location"
+                type="text"
+                value={preferredLocation}
+                onChange={(e) => handlePreferredLocationChange(e.target.value)}
+                placeholder="e.g. Mansarovar, Jaipur"
+                className="w-full h-11 px-3.5 pl-10 bg-surface-container-lowest text-on-surface rounded-xl text-[13px] border border-outline-variant/50 focus:border-primary focus:ring-1 focus:ring-primary transition-all"
+              />
+              <span className="material-symbols-outlined text-[18px] text-on-surface-variant absolute left-3 top-3 pointer-events-none">
+                my_location
+              </span>
+            </div>
+            <p className="text-[10px] text-on-surface-variant mt-1">
+              Saved addresses live in the Addresses section below.
+            </p>
+          </div>
+        </div>
       </div>
 
       {/* ========================================================================= */}
@@ -913,6 +1250,196 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
             </div>
           )}
         </div>
+      </div>
+
+      {/* ========================================================================= */}
+      {/* 2b. MEMBERSHIP                                                            */}
+      {/* ========================================================================= */}
+      <div
+        id="section-membership"
+        className="bg-surface-container-low border border-outline-variant/50 rounded-2xl p-4 sm:p-5 shadow-xs mb-4"
+      >
+        <div className="flex items-center justify-between mb-3 border-b border-outline-variant/30 pb-2.5">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-xl bg-amber-500/15 text-amber-700 flex items-center justify-center">
+              <span className="material-symbols-outlined text-[20px]">card_membership</span>
+            </div>
+            <div>
+              <h3 className="font-card-title text-[16px] font-bold text-on-surface">Membership</h3>
+              <p className="text-[11px] text-on-surface-variant">Your tier, benefits and renewal date</p>
+            </div>
+          </div>
+          <span
+            id="membership-tier-pill"
+            className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${
+              membershipActive
+                ? 'bg-amber-500/15 text-amber-800 border-amber-500/30'
+                : 'bg-surface-container text-on-surface-variant border-outline-variant/40'
+            }`}
+          >
+            {membershipActive ? membershipLabel : 'Standard'}
+          </span>
+        </div>
+
+        {membershipActive ? (
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div>
+              <p className="text-[13px] font-bold text-on-surface">
+                {membershipLabel} is active
+              </p>
+              <p className="text-[11px] text-on-surface-variant mt-0.5">
+                {membershipDaysLeft !== null && membershipDaysLeft > 0
+                  ? `Renews on ${membershipExpiry?.toLocaleDateString('en-IN', {
+                      day: 'numeric',
+                      month: 'short',
+                      year: 'numeric',
+                    })} — ${membershipDaysLeft} day${membershipDaysLeft === 1 ? '' : 's'} left.`
+                  : 'Renewal date recorded.'}
+              </p>
+            </div>
+            <span className="text-[11px] font-semibold text-amber-800 bg-amber-500/10 border border-amber-500/30 px-3 py-1.5 rounded-xl">
+              Priority booking & member rates
+            </span>
+          </div>
+        ) : membershipTier !== 'standard' && membershipDaysLeft !== null && membershipDaysLeft <= 0 ? (
+          <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-[12px] text-rose-800">
+            Your {membershipLabel} membership expired on{' '}
+            {membershipExpiry?.toLocaleDateString('en-IN', {
+              day: 'numeric',
+              month: 'short',
+              year: 'numeric',
+            })}
+            . Renew to keep member rates and priority booking.
+          </div>
+        ) : (
+          <p className="text-[12px] text-on-surface-variant leading-relaxed">
+            You are on the Standard plan — every booking still earns reward points. Paid tiers add
+            member rates and priority booking; ask at any partner salon or contact Support to
+            upgrade.
+          </p>
+        )}
+      </div>
+
+      {/* ========================================================================= */}
+      {/* 2c. ADDRESSES                                                             */}
+      {/* ========================================================================= */}
+      <div
+        id="section-addresses"
+        className="bg-surface-container-low border border-outline-variant/50 rounded-2xl p-4 sm:p-5 shadow-xs mb-4"
+      >
+        <div className="flex items-center gap-2 mb-3 border-b border-outline-variant/30 pb-2.5">
+          <div className="w-8 h-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+            <span className="material-symbols-outlined text-[20px]">location_on</span>
+          </div>
+          <div>
+            <h3 className="font-card-title text-[16px] font-bold text-on-surface">Addresses</h3>
+            <p className="text-[11px] text-on-surface-variant">
+              Saved locations used for directions and home-service bookings
+            </p>
+          </div>
+        </div>
+
+        {savedAddresses.length === 0 ? (
+          <p className="text-[12px] text-on-surface-variant mb-3">
+            No saved addresses yet. Add your home or work address so bookings can include
+            directions.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-2 mb-3">
+            {savedAddresses.map((address) => (
+              <div
+                key={address.id}
+                id={`address-row-${address.id}`}
+                className="p-3 rounded-xl bg-surface-container-lowest border border-outline-variant/40 flex items-start justify-between gap-3"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[13px] font-bold text-on-surface">{address.label}</span>
+                    {address.isDefault && (
+                      <span className="text-[9px] font-bold uppercase bg-primary/10 text-primary px-1.5 py-0.5 rounded">
+                        Default
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-on-surface-variant leading-snug mt-0.5">
+                    {address.line1}
+                    {address.area ? `, ${address.area}` : ''}
+                    {address.city ? `, ${address.city}` : ''}
+                    {address.pincode ? ` — ${address.pincode}` : ''}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  {!address.isDefault && (
+                    <button
+                      type="button"
+                      onClick={() => handleSetDefaultAddress(address.id)}
+                      className="text-[10px] font-bold text-on-surface-variant hover:text-primary transition-colors cursor-pointer"
+                    >
+                      Set default
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    aria-label={`Delete ${address.label} address`}
+                    onClick={() => handleDeleteAddress(address.id)}
+                    className="text-on-surface-variant hover:text-rose-700 transition-colors cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">delete</span>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <input
+            id="input-address-label"
+            type="text"
+            value={addressDraft.label}
+            onChange={(e) => setAddressDraft({ ...addressDraft, label: e.target.value })}
+            placeholder="Label (Home / Work)"
+            className="h-10 px-3 bg-surface-container-lowest text-on-surface rounded-xl text-[12px] border border-outline-variant/50 focus:border-primary focus:ring-1 focus:ring-primary transition-all col-span-2 sm:col-span-1"
+          />
+          <input
+            id="input-address-line1"
+            type="text"
+            value={addressDraft.line1}
+            onChange={(e) => setAddressDraft({ ...addressDraft, line1: e.target.value })}
+            placeholder="Flat / Street"
+            className="h-10 px-3 bg-surface-container-lowest text-on-surface rounded-xl text-[12px] border border-outline-variant/50 focus:border-primary focus:ring-1 focus:ring-primary transition-all col-span-2 sm:col-span-1"
+          />
+          <input
+            id="input-address-area"
+            type="text"
+            value={addressDraft.area || ''}
+            onChange={(e) => setAddressDraft({ ...addressDraft, area: e.target.value })}
+            placeholder="Area"
+            className="h-10 px-3 bg-surface-container-lowest text-on-surface rounded-xl text-[12px] border border-outline-variant/50 focus:border-primary focus:ring-1 focus:ring-primary transition-all"
+          />
+          <input
+            id="input-address-city"
+            type="text"
+            value={addressDraft.city || ''}
+            onChange={(e) => setAddressDraft({ ...addressDraft, city: e.target.value })}
+            placeholder="City / Pincode"
+            className="h-10 px-3 bg-surface-container-lowest text-on-surface rounded-xl text-[12px] border border-outline-variant/50 focus:border-primary focus:ring-1 focus:ring-primary transition-all"
+          />
+        </div>
+
+        {addressError && (
+          <p className="text-[11px] text-rose-700 font-medium mt-1.5">{addressError}</p>
+        )}
+
+        <button
+          type="button"
+          id="add-address-btn"
+          onClick={handleAddAddress}
+          className="mt-2.5 px-4 py-2 bg-primary text-white text-[12px] font-bold rounded-xl hover:bg-[#a00056] transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+        >
+          <span className="material-symbols-outlined text-[16px]">add_location_alt</span>
+          <span>Save Address</span>
+        </button>
       </div>
 
       {/* ========================================================================= */}
@@ -1151,6 +1678,95 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
       </div>
 
       {/* ========================================================================= */}
+      {/* 5b. SUPPORT                                                               */}
+      {/* ========================================================================= */}
+      <div
+        id="section-support"
+        className="bg-surface-container-low border border-outline-variant/50 rounded-2xl p-4 sm:p-5 shadow-xs mb-4"
+      >
+        <div className="flex items-center gap-2 mb-3 border-b border-outline-variant/30 pb-2.5">
+          <div className="w-8 h-8 rounded-xl bg-indigo-500/15 text-indigo-700 flex items-center justify-center">
+            <span className="material-symbols-outlined text-[20px]">support_agent</span>
+          </div>
+          <div>
+            <h3 className="font-card-title text-[16px] font-bold text-on-surface">Support</h3>
+            <p className="text-[11px] text-on-surface-variant">
+              Help with a booking, payment or your account
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-2.5">
+          <p className="text-[12px] text-on-surface-variant leading-relaxed">
+            Tell us the booking reference and what went wrong. Including your account details below
+            speeds up the reply — they contain no password or payment data.
+          </p>
+
+          <button
+            type="button"
+            id="copy-support-details-btn"
+            onClick={() => {
+              const details = [
+                `Nexora support request`,
+                `Name: ${user.name || '-'}`,
+                `Email: ${user.email || '-'}`,
+                `Mobile: ${user.phone || '-'}`,
+                `Member since: ${user.membershipExpiresAt ? 'see membership' : 'Standard plan'}`,
+                `Reward points: ${user.loyaltyPoints ?? 0}`,
+              ].join('\n');
+              const write = navigator.clipboard?.writeText(details);
+              if (write && typeof write.then === 'function') {
+                write
+                  .then(() => showToast('Account details copied for support'))
+                  .catch(() => showToast('Could not copy — please note your details manually'));
+              } else {
+                showToast('Clipboard unavailable in this browser');
+              }
+            }}
+            className="px-4 py-2.5 bg-surface-container-lowest border border-outline-variant/40 hover:border-primary/40 text-on-surface text-[12px] font-bold rounded-xl transition-colors flex items-center gap-2 cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[16px] text-primary">content_copy</span>
+            <span>Copy my account details</span>
+          </button>
+
+          {SUPPORT_EMAIL ? (
+            <a
+              id="support-email-link"
+              href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Nexora support request')}`}
+              className="px-4 py-2.5 bg-primary text-white text-[12px] font-bold rounded-xl hover:bg-[#a00056] transition-colors flex items-center gap-2 shadow-xs"
+            >
+              <span className="material-symbols-outlined text-[16px]">mail</span>
+              <span>Email {SUPPORT_EMAIL}</span>
+            </a>
+          ) : (
+            <p className="text-[11px] text-on-surface-variant bg-surface-container-lowest border border-outline-variant/30 rounded-xl px-3 py-2.5">
+              The support contact address is not configured for this deployment yet
+              (VITE_NEXORA_SUPPORT_EMAIL), so email contact is hidden rather than showing an address
+              nobody reads.
+            </p>
+          )}
+
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => setLegalDocument('privacy')}
+              className="text-[11px] font-semibold text-primary hover:underline cursor-pointer"
+            >
+              Privacy Policy
+            </button>
+            <span className="text-on-surface-variant/50">·</span>
+            <button
+              type="button"
+              onClick={() => setLegalDocument('terms')}
+              className="text-[11px] font-semibold text-primary hover:underline cursor-pointer"
+            >
+              Terms of Service
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ========================================================================= */}
       {/* 6. ACCOUNT & STORAGE MANAGEMENT                                           */}
       {/* ========================================================================= */}
       <div
@@ -1261,6 +1877,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
               </button>
               <button
                 type="button"
+                id="confirm-logout-btn"
                 onClick={() => {
                   setShowLogoutConfirm(false);
                   if (onLogout) onLogout();
@@ -1344,6 +1961,9 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
         <p className="font-semibold text-on-surface">Nexora SalonOS · Enterprise v2.5</p>
         <p>Grounded in Google Maps & Gemini 3.7 Beauty Intelligence</p>
       </div>
+
+      {/* Privacy Policy / Terms of Service */}
+      <ProfileLegalModal document={legalDocument} onClose={() => setLegalDocument(null)} />
     </div>
   );
 };

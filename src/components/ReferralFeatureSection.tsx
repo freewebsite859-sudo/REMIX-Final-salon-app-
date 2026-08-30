@@ -1,5 +1,13 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { UserProfile, ReferredFriend } from '../types';
+import { isSupabaseConfigured } from '../lib/supabase';
+import { useOptionalAuth } from '../providers/AuthProvider';
+import {
+  REFERRAL_ELIGIBLE_ROLES,
+  buildReferralSignupLink,
+  ensureReferralCode,
+  normalizeReferralCode,
+} from '../lib/referralService';
 
 interface ReferralFeatureSectionProps {
   user: UserProfile;
@@ -54,35 +62,66 @@ export const ReferralFeatureSection: React.FC<ReferralFeatureSectionProps> = ({
   onUpdateUser,
   showToast,
 }) => {
-  // 1. Generate or load unique referral code
-  const referralCode = useMemo(() => {
-    if (user.referralCode && user.referralCode.trim().length > 0) {
-      return user.referralCode;
-    }
-    const cleanName = (user.name || 'NEXORA')
-      .replace(/[^a-zA-Z0-9]/g, '')
-      .toUpperCase()
-      .slice(0, 5) || 'USER';
-    return `NX-${cleanName}${Math.floor(100 + Math.random() * 900)}`;
-  }, [user.referralCode, user.name]);
+  const auth = useOptionalAuth();
+  const authUserId = auth?.userId ?? null;
 
-  // Sync back to user profile if missing
+  // Business rule seam: which roles may invite. Both roles are eligible by
+  // default (see REFERRAL_ELIGIBLE_ROLES); narrowing that list here is the only
+  // change needed to restrict referrals to one role.
+  const roleCanInvite = REFERRAL_ELIGIBLE_ROLES.includes(
+    (user.role ?? 'customer') as (typeof REFERRAL_ELIGIBLE_ROLES)[number]
+  );
+
+  // 1. Load (or create) this account's persistent referral code.
+  // The database owns the code: it is unique, stable and resolvable when a
+  // friend signs up. A locally generated value is only a display fallback for
+  // as long as the referral backend is unreachable.
+  const [backendCode, setBackendCode] = useState<string | null>(null);
+  const [backendChecked, setBackendChecked] = useState(false);
+
   useEffect(() => {
-    if (!user.referralCode && referralCode) {
-      onUpdateUser({
-        ...user,
-        referralCode,
-      });
+    let cancelled = false;
+    if (!authUserId || !isSupabaseConfigured || !roleCanInvite) {
+      setBackendChecked(true);
+      return;
     }
-  }, [user.referralCode, referralCode]);
+    void (async () => {
+      const result = await ensureReferralCode(authUserId, { seed: user.name });
+      if (cancelled) return;
+      setBackendChecked(true);
+      if (result.code) setBackendCode(result.code);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUserId, roleCanInvite]);
 
-  // 2. Unique Referral Link
-  const referralLink = useMemo(() => {
+  // The referral code comes from the database and nowhere else. A locally
+  // invented code would look like a real invite but resolve to nobody when a
+  // friend signs up, so when the backend has no code the UI shows an honest
+  // "unavailable" state instead of fabricating one.
+  const referralCode = useMemo<string | null>(() => {
+    if (backendCode) return backendCode;
+    // Rows written before the backend owned the code may still carry one.
+    return normalizeReferralCode(user.referralCode) ?? null;
+  }, [backendCode, user.referralCode]);
+
+  /** True only when the code actually exists in the referral backend. */
+  const isCodePersisted = Boolean(backendCode);
+
+  // 2. Unique Referral Link — points at the signup screen so opening it lands
+  // on Signup with the code pre-filled (never on the homepage).
+  const referralLink = useMemo<string | null>(() => {
+    if (!referralCode) return null;
     const origin =
       typeof window !== 'undefined' && window.location.origin
         ? window.location.origin
         : 'https://nexora.app';
-    return `${origin}/?ref=${encodeURIComponent(referralCode)}`;
+    return (
+      buildReferralSignupLink(referralCode, origin) ??
+      `${origin}/auth/signup?ref=${encodeURIComponent(referralCode)}`
+    );
   }, [referralCode]);
 
   // Local state
@@ -128,6 +167,10 @@ export const ReferralFeatureSection: React.FC<ReferralFeatureSectionProps> = ({
 
   // Copy unique link
   const handleCopyLink = async () => {
+    if (!referralLink) {
+      showToast?.('Your invite link is not ready yet — the referral service is unavailable.');
+      return;
+    }
     try {
       if (navigator.clipboard) {
         await navigator.clipboard.writeText(referralLink);
@@ -144,6 +187,10 @@ export const ReferralFeatureSection: React.FC<ReferralFeatureSectionProps> = ({
 
   // Copy code
   const handleCopyCode = async () => {
+    if (!referralCode) {
+      showToast?.('Your invite code is not available yet — the referral service is unreachable.');
+      return;
+    }
     try {
       if (navigator.clipboard) {
         await navigator.clipboard.writeText(referralCode);
@@ -160,6 +207,10 @@ export const ReferralFeatureSection: React.FC<ReferralFeatureSectionProps> = ({
 
   // WhatsApp share
   const handleWhatsAppShare = () => {
+    if (!referralLink || !referralCode) {
+      showToast?.('Cannot share yet — your invite link is not available.');
+      return;
+    }
     const text = encodeURIComponent(
       `Hey! Use my Nexora referral link to get ₹150 OFF your first luxury haircut, facial, or spa treatment:\n\n${referralLink}\n\nPromo Code: *${referralCode}*`
     );
@@ -169,6 +220,10 @@ export const ReferralFeatureSection: React.FC<ReferralFeatureSectionProps> = ({
 
   // Native share
   const handleNativeShare = async () => {
+    if (!referralLink || !referralCode) {
+      showToast?.('Cannot share yet — your invite link is not available.');
+      return;
+    }
     if (navigator.share) {
       try {
         await navigator.share({
@@ -200,15 +255,22 @@ export const ReferralFeatureSection: React.FC<ReferralFeatureSectionProps> = ({
     };
 
     const updatedFriends = [newFriend, ...friends];
+    // `referralCode` is owned by the database and is deliberately NOT written
+    // onto the local profile object — keeping a second copy on the client is
+    // what caused stale/placeholder codes to be shared.
     onUpdateUser({
       ...user,
-      referralCode,
       referredFriends: updatedFriends,
       referralCount: completedFriends.length,
     });
 
     setInviteInput('');
-    showToast?.(`Invitation link sent to ${cleanInput}! You'll receive +150 Loyalty Points upon sign-up.`);
+    // Nothing is transmitted here, so this must not claim the invite was sent.
+    showToast?.(
+      referralLink
+        ? `Saved ${cleanInput} as pending. Share your link above to invite them — points are credited only when they sign up with your code.`
+        : `Saved ${cleanInput} as pending, but your invite link is unavailable right now.`
+    );
   };
 
   // 4. Simulate a Friend Sign-Up & Award Bonus Loyalty Points
@@ -347,7 +409,11 @@ export const ReferralFeatureSection: React.FC<ReferralFeatureSectionProps> = ({
             {/* Link Container with Copy Button */}
             <div className="flex items-center gap-2 mt-1.5 max-w-xl">
               <div className="flex-1 bg-white/90 border border-primary/25 rounded-xl px-3 py-2 text-[12px] font-mono text-primary font-semibold truncate shadow-2xs">
-                {referralLink}
+                {referralLink ?? (
+                  <span className="text-on-surface-variant font-sans font-medium not-italic">
+                    Invite link unavailable — the referral service is not reachable
+                  </span>
+                )}
               </div>
               <button
                 type="button"
@@ -373,11 +439,20 @@ export const ReferralFeatureSection: React.FC<ReferralFeatureSectionProps> = ({
                 className="font-mono font-black text-on-surface bg-white/80 border border-outline-variant/60 px-2.5 py-0.5 rounded-lg hover:border-primary transition-colors flex items-center gap-1 cursor-pointer"
                 title="Click to copy code"
               >
-                <span>{referralCode}</span>
+                <span>{referralCode ?? '—'}</span>
                 <span className="material-symbols-outlined text-[13px] text-primary">
                   {copiedCode ? 'check' : 'copy_all'}
                 </span>
               </button>
+              {backendChecked && !isCodePersisted && (
+                <span
+                  id="referral-code-not-synced"
+                  className="text-[10px] font-semibold text-amber-800 bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 rounded-full"
+                  title="This code is not stored in the referral backend yet, so invites cannot be attributed."
+                >
+                  Not synced yet
+                </span>
+              )}
             </div>
           </div>
 
@@ -410,9 +485,9 @@ export const ReferralFeatureSection: React.FC<ReferralFeatureSectionProps> = ({
               id="view-qr-btn"
               onClick={() => setShowQRModal(true)}
               className="px-3 py-2.5 bg-surface-container-highest text-on-surface text-[12px] font-bold rounded-xl hover:bg-surface-container border border-outline-variant/40 transition-colors flex items-center justify-center gap-1 cursor-pointer shadow-xs"
-              title="Show QR Code for scanning"
+              title="View your invite link and code"
             >
-              <span className="material-symbols-outlined text-[18px]">qr_code_2</span>
+              <span className="material-symbols-outlined text-[18px]">redeem</span>
             </button>
           </div>
         </div>
@@ -531,7 +606,7 @@ export const ReferralFeatureSection: React.FC<ReferralFeatureSectionProps> = ({
               1
             </span>
             <span className="text-on-surface leading-tight">
-              Share link with code <strong>{referralCode}</strong>
+              Share link with code <strong>{referralCode ?? 'your code'}</strong>
             </span>
           </div>
 
@@ -759,46 +834,45 @@ export const ReferralFeatureSection: React.FC<ReferralFeatureSectionProps> = ({
         </div>
       </div>
 
-      {/* QR Code Modal */}
+      {/* Share Invite modal — surfaces the REAL link and code.
+          No QR is drawn here: the previous version rendered a fixed SVG pattern
+          that encoded nothing, so the "scan to join" promise could never work.
+          A real QR needs a verified encoder; a wrong one is worse than none. */}
       {showQRModal && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-surface-container-lowest border border-outline-variant/60 rounded-3xl p-6 max-w-sm w-full shadow-2xl text-center animate-in fade-in zoom-in-95 duration-200">
             <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mx-auto mb-3">
-              <span className="material-symbols-outlined text-[28px]">qr_code_2</span>
+              <span className="material-symbols-outlined text-[28px]">redeem</span>
             </div>
             <h3 className="font-card-title text-[18px] font-bold text-on-surface">
-              Scan to Join Nexora
+              Invite a Friend to Nexora
             </h3>
             <p className="text-[12px] text-on-surface-variant mt-1">
-              Have your friend scan this QR code on their camera to get ₹150 OFF their first salon booking!
+              Send them your personal link — they get ₹150 OFF their first booking, and you earn
+              points when they sign up with it.
             </p>
 
-            {/* Visual QR Code Mockup */}
-            <div className="my-5 p-4 bg-white rounded-2xl border-2 border-primary/20 inline-block shadow-md">
-              <div className="w-44 h-44 bg-surface-container-highest rounded-xl flex flex-col items-center justify-center relative overflow-hidden p-2">
-                <svg
-                  className="w-full h-full text-on-surface"
-                  viewBox="0 0 100 100"
-                  fill="currentColor"
-                >
-                  <path d="M0 0h30v30H0zm4 4h22v22H4z" />
-                  <path d="M8 8h14v14H8z" />
-                  <path d="M70 0h30v30H70zm4 4h22v22H74z" />
-                  <path d="M78 8h14v14H78z" />
-                  <path d="M0 70h30v30H0zm4 4h22v22H4z" />
-                  <path d="M8 78h14v14H8z" />
-                  <path d="M40 10h10v10H40zm15 0h5v15h-5zm-15 20h20v10H40zm0 20h10v20H40zm20-10h10v10H60zm10 20h10v20H70zm-20 20h30v10H50zm35-30h15v10H85zm0 20h15v10H85z" />
-                </svg>
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center text-white font-black text-[12px] shadow-lg border-2 border-white">
-                    NX
-                  </div>
+            {referralLink ? (
+              <div className="my-5 text-left">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant block mb-1">
+                  Your invite link
+                </span>
+                <div className="p-3 bg-white rounded-xl border-2 border-primary/20 text-[11px] font-mono text-primary break-all shadow-2xs">
+                  {referralLink}
+                </div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant block mt-3 mb-1">
+                  Invite code
+                </span>
+                <div className="p-2.5 bg-white rounded-xl border border-outline-variant/50 text-[15px] font-mono font-black text-primary tracking-wider text-center">
+                  {referralCode}
                 </div>
               </div>
-              <span className="font-mono text-[13px] font-black text-primary block mt-2 tracking-wider">
-                {referralCode}
-              </span>
-            </div>
+            ) : (
+              <p className="my-5 p-3 text-[12px] text-amber-900 bg-amber-500/10 border border-amber-500/30 rounded-xl">
+                Your invite link is not available right now — the referral service cannot be
+                reached. Nothing has been shared; try again once it is back.
+              </p>
+            )}
 
             <div className="flex items-center gap-2">
               <button

@@ -24,8 +24,21 @@ import { useAuth } from './providers/AuthProvider';
 import { useLocationSync } from './hooks/useLocationSync';
 import { clearUserLocation, syncUserLocation } from './lib/locationService';
 import { isAppointmentUpcoming } from './lib/appointments';
-import { currentPath, isAuthRoute, redirectToApp, redirectToLogin } from './lib/authRoutes';
+import { currentPath, isAuthRoute, isSignupRoute, redirectToApp, redirectToLogin } from './lib/authRoutes';
 import { fetchUserProfile } from './lib/profileService';
+import {
+  clearReferralContext,
+  finalizePendingReferral,
+  getStoredReferralCode,
+  getStoredReferralContext,
+  readReferralCodeFromUrl,
+  redirectReferralEntryToSignup,
+} from './lib/referralService';
+import {
+  listNotifications,
+  resolveNotificationTarget,
+  type AppNotification,
+} from './lib/notificationService';
 
 const STORAGE_KEYS = {
   // These keys hold UI drafts/preferences only. They are never the source of
@@ -248,6 +261,15 @@ export default function App() {
 
   // Modals state
   const [showAuthScreen, setShowAuthScreen] = useState<boolean>(() => isAuthRoute());
+  // Referral entry state: an invite link opens Signup (not Home) with its code
+  // pre-filled. The code itself lives in the temporary referral context and in
+  // the database after signup — never only in this component state.
+  const [authInitialMode, setAuthInitialMode] = useState<'login' | 'signup'>(() =>
+    isSignupRoute() ? 'signup' : 'login'
+  );
+  const [referralEntryCode, setReferralEntryCode] = useState<string | null>(() =>
+    readReferralCodeFromUrl() ?? (typeof window !== 'undefined' ? getStoredReferralCode() : null)
+  );
   const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
   const [isSalonDetailModalOpen, setIsSalonDetailModalOpen] = useState(false);
@@ -256,6 +278,78 @@ export default function App() {
   const [aiAdvisorInitialSalonId, setAiAdvisorInitialSalonId] = useState<string | undefined>(undefined);
   const [isQuickNearestModalOpen, setIsQuickNearestModalOpen] = useState(false);
   const [isNotificationsModalOpen, setIsNotificationsModalOpen] = useState(false);
+
+  // ---------------------------------------------------------------------------
+  // NOTIFICATIONS (database-backed)
+  // The list is a cache of what the backend returned. Nothing is fabricated
+  // here: if the backend is unreachable the panel says so instead of showing
+  // sample rows.
+  // ---------------------------------------------------------------------------
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [isNotificationsLoading, setIsNotificationsLoading] = useState(false);
+  const [notificationsDisabled, setNotificationsDisabled] = useState(false);
+  const [notificationsError, setNotificationsError] = useState<string | null>(null);
+  const unreadNotifications = notifications.filter((n) => !n.isRead).length;
+
+  const refreshNotifications = useCallback(async () => {
+    if (!userId || !isSupabaseConfigured) {
+      setNotifications([]);
+      return;
+    }
+    setIsNotificationsLoading(true);
+    const result = await listNotifications(userId, { limit: 50 });
+    setIsNotificationsLoading(false);
+    if (result.ok) {
+      setNotifications(result.data ?? []);
+      setNotificationsError(null);
+      // A successful read proves the backend is reachable.
+      setNotificationsDisabled(false);
+    } else {
+      const unavailable = Boolean(result.disabled);
+      setNotificationsDisabled(unavailable);
+      setNotificationsError(
+        unavailable ? 'Notifications are unavailable right now.' : 'Could not load notifications.'
+      );
+      console.warn('[Nexora] Notification fetch failed:', result.error);
+    }
+  }, [userId]);
+
+  // Load once per signed-in user, then keep the list warm while the app is open.
+  useEffect(() => {
+    if (!userId) {
+      setNotifications([]);
+      setNotificationsError(null);
+      setNotificationsDisabled(false);
+      return;
+    }
+    void refreshNotifications();
+    const timer = window.setInterval(() => {
+      void refreshNotifications();
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, [userId, refreshNotifications]);
+
+  /** Open the screen a notification points at. */
+  const handleOpenNotification = useCallback(
+    (notification: AppNotification) => {
+      const target = resolveNotificationTarget(notification);
+      if (!target) return;
+      setChooseProfessionalData(null);
+      setSelectedCategoryScreen(null);
+      setIsNotificationsModalOpen(false);
+      setActiveTab(target.tab);
+      // Scroll to the section the notification refers to, once it is mounted.
+      if (target.section) {
+        window.setTimeout(() => {
+          document.getElementById(target.section as string)?.scrollIntoView({
+            behavior: 'smooth',
+            block: 'start',
+          });
+        }, 120);
+      }
+    },
+    []
+  );
 
   // Selected entities for modals
   const [selectedSalonForDetail, setSelectedSalonForDetail] = useState<Salon | null>(null);
@@ -308,6 +402,61 @@ export default function App() {
       }
     }
   }, [session, isAuthLoading, activeTab]);
+
+  // ---------------------------------------------------------------------------
+  // REFERRAL ENTRY
+  // An invite link (`?ref=CODE` on ANY route, including `/`) must open the
+  // Signup screen with the code pre-filled — never the generic homepage. The
+  // code is captured into the temporary referral context BEFORE the URL is
+  // rewritten, so it survives the redirect, a page refresh, and a detour to
+  // Login and back.
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    // Wait for session restore so a signed-in user is never pushed to signup.
+    if (isSupabaseConfigured && isAuthLoading) return;
+    if (session?.user) return;
+
+    const codeInUrl = readReferralCodeFromUrl();
+    const navigated = redirectReferralEntryToSignup();
+    if (!codeInUrl && !navigated) return;
+
+    const code = codeInUrl ?? getStoredReferralCode();
+    if (code) setReferralEntryCode(code);
+    setAuthInitialMode('signup');
+    setShowAuthScreen(true);
+  }, [isAuthLoading, session?.user]);
+
+  // ---------------------------------------------------------------------------
+  // REFERRAL CATCH-UP
+  // If the Supabase project requires email confirmation, signup returns no
+  // session, so the relationship is written as soon as the confirmed session
+  // appears. Accounts older than the pending window are ignored, which keeps an
+  // existing user signing in later from being silently re-attributed.
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    const sessionUser = session?.user;
+    const uid = sessionUser?.id;
+    if (!uid || !isSupabaseConfigured) return;
+    const context = getStoredReferralContext();
+    if (!context?.code) return;
+
+    let cancelled = false;
+    void (async () => {
+      const result = await finalizePendingReferral({
+        userId: uid,
+        code: context.code,
+        capturedAt: context.capturedAt,
+        accountCreatedAt: sessionUser?.created_at ?? null,
+      });
+      if (cancelled || !result) return;
+      // Keep the context only while the backend could not accept it yet.
+      if (result.status !== 'unavailable') clearReferralContext();
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user]);
 
   // Load only this authenticated user's UI profile and local drafts. These
   // values are deliberately namespaced by the authoritative Supabase user id;
@@ -666,6 +815,8 @@ export default function App() {
 
     return (
       <AuthPage
+        initialMode={authInitialMode}
+        initialReferralCode={referralEntryCode}
         onAuthSuccess={(authData) => {
           setUser((prev) => ({
             ...prev,
@@ -674,6 +825,9 @@ export default function App() {
             phone: authData.phone || prev.phone,
             role: authData.role || prev.role || 'customer',
           }));
+          // The invite has been consumed: the database now owns the referral.
+          setReferralEntryCode(null);
+          setAuthInitialMode('login');
           // AuthPage calls this after Supabase accepts the credentials; the
           // provider's session remains the authority for authenticated UI.
           // Route user correctly based on role:
@@ -804,6 +958,7 @@ export default function App() {
             }}
             onOpenNotifications={() => setIsNotificationsModalOpen(true)}
             onOpenAuth={() => setShowAuthScreen(true)}
+            hasUnreadNotifications={unreadNotifications > 0}
           />
 
           {/* Main Content Area */}
@@ -875,6 +1030,10 @@ export default function App() {
                 onOpenAIAdvisor={() => setIsAIAdvisorModalOpen(true)}
                 onNavigateToBooking={() => setActiveTab('explore')}
                 onViewAppointments={handleViewAppointments}
+                onViewFavourites={() => setActiveTab('saved')}
+                onOpenNotifications={() => setIsNotificationsModalOpen(true)}
+                unreadNotifications={unreadNotifications}
+                favouritesCount={savedSalonIds.length}
                 onLogout={handleLogout}
                 onDeleteAccount={handleDeleteAccount}
               />
@@ -1055,6 +1214,14 @@ export default function App() {
       <NotificationsModal
         isOpen={isNotificationsModalOpen}
         onClose={() => setIsNotificationsModalOpen(false)}
+        userId={userId}
+        notifications={notifications}
+        isLoading={isNotificationsLoading}
+        isDisabled={notificationsDisabled}
+        errorMessage={notificationsError}
+        onSelectNotification={handleOpenNotification}
+        onRefresh={refreshNotifications}
+        onNotificationsChanged={() => void refreshNotifications()}
       />
     </div>
   );

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Mail,
   Lock,
@@ -13,24 +13,62 @@ import {
   Sparkles,
   Settings,
   ShoppingBag,
+  Gift,
+  X,
 } from 'lucide-react';
 import { NexoraLogo } from './NexoraLogo';
 import { PasswordResetModal } from './PasswordResetModal';
+import { SupabaseConfigBanner } from '../SupabaseConfigBanner';
 import { supabase, isSupabaseConfigured, getSupabaseConfigStatus } from '../../lib/supabase';
 import { upsertUserProfile, fetchUserProfile, type UserRole } from '../../lib/profileService';
+import {
+  captureReferralFromUrl,
+  clearReferralContext,
+  createReferralRelationship,
+  ensureReferralCode,
+  getStoredReferralCode,
+  normalizeReferralCode,
+  storeReferralContext,
+  validateReferralCode,
+  type ReferralValidation,
+} from '../../lib/referralService';
 import { UserProfile } from '../../types';
 
 interface AuthPageProps {
   onAuthSuccess: (user: Partial<UserProfile> & { role?: UserRole }) => void;
   onExploreAsGuest?: () => void;
+  /** Opens the signup tab directly (used by referral links). */
+  initialMode?: 'login' | 'signup';
+  /** Referral code captured from the invite link, pre-filled into the form. */
+  initialReferralCode?: string | null;
 }
+
+/** UI state of the referral field. */
+type ReferralFieldState =
+  | 'empty'
+  | 'checking'
+  | 'applied'
+  | 'invalid'
+  | 'inactive'
+  | 'unavailable';
+
+const REFERRAL_MESSAGES: Record<'invalid' | 'inactive' | 'unavailable' | 'self_referral', string> = {
+  invalid: 'Referral code is invalid.',
+  inactive: 'This referral code is no longer active.',
+  unavailable: 'Unable to verify referral code. Please try again.',
+  self_referral: 'You cannot use your own referral code.',
+};
 
 export const AuthPage: React.FC<AuthPageProps> = ({
   onAuthSuccess,
   onExploreAsGuest,
+  initialMode = 'login',
+  initialReferralCode = null,
 }) => {
   // Mode: 'login' | 'signup'
-  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
+  const [authMode, setAuthMode] = useState<'login' | 'signup'>(
+    initialMode === 'signup' ? 'signup' : 'login'
+  );
 
   // Form fields
   const [fullName, setFullName] = useState('');
@@ -61,6 +99,127 @@ export const AuthPage: React.FC<AuthPageProps> = ({
 
   // Forgot password modal
   const [isForgotModalOpen, setIsForgotModalOpen] = useState(false);
+
+  // -------------------------------------------------------------------------
+  // REFERRAL CODE (optional). Value may come from an invite link
+  // (`/auth/signup?ref=ABC123`), from the temporary referral context, or be
+  // typed by the user. It is ALWAYS re-validated against the database before
+  // the account is created — the URL value is untrusted input.
+  // -------------------------------------------------------------------------
+  const [referralCode, setReferralCode] = useState<string>(() => {
+    const fromProp = normalizeReferralCode(initialReferralCode);
+    if (fromProp) return fromProp;
+    const stored = typeof window !== 'undefined' ? getStoredReferralCode() : null;
+    return stored ?? '';
+  });
+  /** True when the code came from an invite link rather than manual entry. */
+  const [referralFromLink, setReferralFromLink] = useState<boolean>(
+    () => Boolean(normalizeReferralCode(initialReferralCode) ?? (typeof window !== 'undefined' ? getStoredReferralCode() : null))
+  );
+  const [referralState, setReferralState] = useState<ReferralFieldState>(() => {
+    const hasCode = Boolean(
+      normalizeReferralCode(initialReferralCode) ?? (typeof window !== 'undefined' ? getStoredReferralCode() : null)
+    );
+    return hasCode ? 'checking' : 'empty';
+  });
+  const [referralError, setReferralError] = useState<string | null>(null);
+  /** Referrer id resolved by the database — never taken from the invite link. */
+  const [verifiedReferrerId, setVerifiedReferrerId] = useState<string | null>(null);
+
+  /** Latest input value, so async verification cannot apply to a stale code. */
+  const referralCodeRef = useRef<string>('');
+  useEffect(() => {
+    referralCodeRef.current = referralCode;
+  }, [referralCode]);
+
+  // A referral link must land on the signup tab.
+  useEffect(() => {
+    if (initialMode === 'signup') setAuthMode('signup');
+  }, [initialMode]);
+
+  // Capture `?ref=` once on mount (and clean the visible URL afterwards). The
+  // code is written to temporary storage first, so cleanup can never lose it.
+  useEffect(() => {
+    const captured = captureReferralFromUrl();
+    const incoming = normalizeReferralCode(initialReferralCode) ?? captured.code;
+    if (!incoming) return;
+    setReferralCode(incoming);
+    setReferralFromLink(captured.source === 'url' || Boolean(normalizeReferralCode(initialReferralCode)));
+    storeReferralContext(incoming);
+  }, [initialReferralCode]);
+
+  /** Database-backed verification. Resolves the referrer id server-side. */
+  const verifyReferralCode = useCallback(async (code: string): Promise<ReferralValidation> => {
+    if (!isSupabaseConfigured) {
+      setReferralState('unavailable');
+      setReferralError(REFERRAL_MESSAGES.unavailable);
+      setVerifiedReferrerId(null);
+      return { status: 'unavailable', referrerUserId: null, error: 'Supabase not configured' };
+    }
+
+    let result: ReferralValidation;
+    try {
+      result = await validateReferralCode(code);
+    } catch (err) {
+      result = {
+        status: 'unavailable',
+        referrerUserId: null,
+        error: (err as Error)?.message || 'Referral verification failed',
+      };
+    }
+
+    // The user may already have edited the field — do not overwrite its state.
+    if (normalizeReferralCode(referralCodeRef.current) !== code) return result;
+
+    if (result.status === 'valid') {
+      setReferralState('applied');
+      setReferralError(null);
+      setVerifiedReferrerId(result.referrerUserId);
+    } else {
+      setReferralState(result.status);
+      setReferralError(REFERRAL_MESSAGES[result.status]);
+      setVerifiedReferrerId(null);
+    }
+    return result;
+  }, []);
+
+  // Verify as the user types (debounced). Empty = normal signup, no check.
+  useEffect(() => {
+    if (authMode !== 'signup') return;
+    const normalized = normalizeReferralCode(referralCode);
+
+    if (!normalized) {
+      setReferralState('empty');
+      setReferralError(null);
+      setVerifiedReferrerId(null);
+      return;
+    }
+
+    setReferralState('checking');
+    setReferralError(null);
+    const timer = setTimeout(() => {
+      void verifyReferralCode(normalized);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [authMode, referralCode, verifyReferralCode]);
+
+  const handleReferralChange = (value: string) => {
+    // Keep the field forgiving: strip separators as they are typed, upper-case.
+    const cleaned = value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 24);
+    setReferralCode(cleaned);
+    setReferralFromLink(false);
+    if (cleaned) storeReferralContext(cleaned);
+  };
+
+  /** Let the user drop an invite and continue with a normal signup. */
+  const handleClearReferralCode = () => {
+    setReferralCode('');
+    setReferralFromLink(false);
+    setReferralState('empty');
+    setReferralError(null);
+    setVerifiedReferrerId(null);
+    clearReferralContext();
+  };
 
   // Clear errors when switching modes
   const handleSwitchMode = (mode: 'login' | 'signup') => {
@@ -200,11 +359,15 @@ export const AuthPage: React.FC<AuthPageProps> = ({
 
         setIsLoading(false);
         setSuccessMessage(
-          userRole === 'salon_owner' 
-            ? 'Welcome back! Redirecting to Salon Owner Dashboard.' 
+          userRole === 'salon_owner'
+            ? 'Welcome back! Redirecting to Salon Owner Dashboard.'
             : 'Welcome back to Nexora Luxury Management.'
         );
-        
+
+        // Signing in to an existing account must never create or overwrite a
+        // referral relationship. Any leftover invite context is dropped here.
+        clearReferralContext();
+
         onAuthSuccess({
           email: data.user?.email || email.trim(),
           name: data.user?.user_metadata?.full_name || email.split('@')[0],
@@ -213,6 +376,28 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         });
       } else {
         // Signup flow
+        // ---- Referral step 1/2: read + validate BEFORE creating the account --
+        // An empty code is a normal signup. A non-empty code must resolve to a
+        // real, active referrer in the database, otherwise we stop and let the
+        // user correct or remove it — a broken relationship is never written.
+        const normalizedReferral = normalizeReferralCode(referralCode);
+        if (referralCode.trim() && !normalizedReferral) {
+          setIsLoading(false);
+          setReferralState('invalid');
+          setReferralError(REFERRAL_MESSAGES.invalid);
+          return;
+        }
+
+        let referralCheck: ReferralValidation | null = null;
+        if (normalizedReferral) {
+          referralCheck = await verifyReferralCode(normalizedReferral);
+          if (referralCheck.status !== 'valid') {
+            setIsLoading(false);
+            // Message already surfaced next to the field.
+            return;
+          }
+        }
+
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(),
           password,
@@ -255,13 +440,68 @@ export const AuthPage: React.FC<AuthPageProps> = ({
           }
         }
 
+        // ---- Referral step 7: persist the relationship permanently ----------
+        // Runs only with a live session, so the write carries the new user's
+        // JWT and RLS sees auth.uid(). The database resolves the referrer from
+        // the code and enforces one relationship per user + no self-referral.
+        let referralNote = '';
+        if (data.user?.id && data.session) {
+          // Every new account gets its own stable, unique invite code.
+          try {
+            await ensureReferralCode(data.user.id, { seed: fullName.trim() });
+          } catch (codeErr) {
+            console.warn('[Nexora] Referral code generation failed:', codeErr);
+          }
+
+          if (normalizedReferral) {
+            try {
+              const saved = await createReferralRelationship({
+                referredUserId: data.user.id,
+                code: normalizedReferral,
+                referrerUserId: referralCheck?.referrerUserId ?? null,
+              });
+
+              if (saved.status === 'created') {
+                referralNote = ` Referral code ${normalizedReferral} saved to your account.`;
+                clearReferralContext();
+              } else if (saved.status === 'already_referred') {
+                // First valid referral wins — the original relationship stays.
+                referralNote = ' Your original referral was kept.';
+                clearReferralContext();
+              } else {
+                console.warn(
+                  `[Nexora] Referral relationship not saved (${saved.status}):`,
+                  saved.error
+                );
+                referralNote = ` ${
+                  REFERRAL_MESSAGES[
+                    saved.status === 'self_referral'
+                      ? 'self_referral'
+                      : saved.status === 'inactive'
+                      ? 'inactive'
+                      : saved.status === 'invalid'
+                      ? 'invalid'
+                      : 'unavailable'
+                  ]
+                } Your account was still created.`;
+              }
+            } catch (referralErr) {
+              console.warn('[Nexora] Referral save failed:', referralErr);
+              referralNote = ` ${REFERRAL_MESSAGES.unavailable} Your account was still created.`;
+            }
+          } else {
+            // Normal signup with no referral — drop any stale invite context.
+            clearReferralContext();
+          }
+        }
+
         setIsLoading(false);
         setSuccessMessage(
           data.session
             ? selectedRole === 'salon_owner'
-              ? 'Account created. Welcome! Redirecting to Salon Owner Dashboard.'
-              : 'Account created. Welcome to Nexora Luxury Management.'
-            : 'Account created. Check your email to confirm your account before signing in.'
+              ? `Account created. Welcome! Redirecting to Salon Owner Dashboard.${referralNote}`
+              : `Account created. Welcome to Nexora Luxury Management.${referralNote}`
+            : `Account created. Check your email to confirm your account before signing in.${referralNote}`
         );
         if (data.session) {
           onAuthSuccess({
@@ -398,6 +638,16 @@ export const AuthPage: React.FC<AuthPageProps> = ({
             <span>Sign Up</span>
           </button>
         </nav>
+
+        {/* 2b. Proactive config banner — shown before the user types anything,
+            so an unconfigured deployment is not discovered on submit. */}
+        {!isSupabaseConfigured && (
+          <div className="mb-5">
+            <SupabaseConfigBanner
+              action={authMode === 'login' ? 'sign in' : 'create an account'}
+            />
+          </div>
+        )}
 
         {/* 3. Global Feedback Messages - Distinguish error types */}
         {errorMessage && (
@@ -682,6 +932,101 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                 <p className="text-[12px] text-[#b90064] font-medium mt-1">
                   {fieldErrors.confirmPassword}
                 </p>
+              )}
+            </div>
+          )}
+
+          {/* Sign Up: Referral Code (optional, auto-filled from an invite link) */}
+          {authMode === 'signup' && (
+            <div className="animate-in fade-in slide-in-from-top-2 duration-200">
+              <div className="flex items-center justify-between mb-1.5">
+                <label
+                  htmlFor="signup-referral-code"
+                  className="block text-[13px] font-semibold text-[#1c1b1b]"
+                >
+                  Referral Code{' '}
+                  <span className="font-normal text-[#594047]/70">(optional)</span>
+                </label>
+
+                {referralCode && (
+                  <button
+                    type="button"
+                    id="remove-referral-code-btn"
+                    onClick={handleClearReferralCode}
+                    className="text-[12px] font-semibold text-[#594047] hover:text-[#b90064] transition-colors flex items-center gap-1 cursor-pointer"
+                    title="Remove referral code and sign up without one"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    <span>Remove</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[#594047]/70">
+                  <Gift className="w-4 h-4" />
+                </div>
+                <input
+                  id="signup-referral-code"
+                  type="text"
+                  inputMode="text"
+                  autoComplete="off"
+                  autoCapitalize="characters"
+                  spellCheck={false}
+                  maxLength={24}
+                  value={referralCode}
+                  onChange={(e) => handleReferralChange(e.target.value)}
+                  placeholder="Enter referral code (optional)"
+                  aria-describedby="referral-code-status"
+                  className={`w-full h-[52px] pl-10 pr-11 bg-white/80 focus:bg-white text-[#1c1b1b] placeholder:text-[#594047]/45 rounded-lg text-[14px] font-semibold tracking-wide uppercase border ${
+                    referralError ? 'border-[#b90064] ring-2 ring-[#b90064]/10' : 'border-[#e8e8e8]'
+                  } focus:border-[#b90064] focus:ring-4 focus:ring-[#b90064]/10 transition-all outline-none`}
+                />
+
+                {referralState === 'checking' && (
+                  <Loader2 className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-[#594047]/60" />
+                )}
+                {referralState === 'applied' && (
+                  <CheckCircle2 className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-600" />
+                )}
+              </div>
+
+              <p
+                id="referral-code-status"
+                role={referralError ? 'alert' : 'status'}
+                className={`text-[12px] mt-1 leading-snug ${
+                  referralError
+                    ? 'text-[#b90064] font-medium'
+                    : referralState === 'applied'
+                    ? 'text-emerald-700 font-medium'
+                    : 'text-[#594047]/75'
+                }`}
+              >
+                {referralError ? (
+                  <span id="referral-code-error">{referralError}</span>
+                ) : referralState === 'applied' ? (
+                  <span id="referral-code-applied">
+                    ✓ Referral code applied
+                    {referralFromLink ? ' — added from your invite link.' : '.'}
+                  </span>
+                ) : referralState === 'checking' ? (
+                  'Checking referral code…'
+                ) : referralFromLink ? (
+                  'Referral code added from your invite link.'
+                ) : (
+                  'Optional — leave blank if you do not have one.'
+                )}
+              </p>
+
+              {referralError && (
+                <button
+                  type="button"
+                  id="continue-without-referral-btn"
+                  onClick={handleClearReferralCode}
+                  className="mt-1.5 text-[12px] font-semibold text-[#b90064] hover:underline transition-colors cursor-pointer"
+                >
+                  Continue without referral
+                </button>
               )}
             </div>
           )}
