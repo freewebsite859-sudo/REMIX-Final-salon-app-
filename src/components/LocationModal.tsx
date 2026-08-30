@@ -35,15 +35,26 @@ export const LocationModal: React.FC<LocationModalProps> = ({
   const embedded = isEmbeddedFrame();
 
   /**
-   * Pre-flight check: if the browser already knows location access is denied,
-   * say so up front instead of firing a prompt that cannot succeed. This is
-   * what turns the old catch-all error into an instruction the user can act on.
+   * Reset on every open *and* close so a stale error from a previous visit
+   * (or a visit in a different frame/tab context) never greets the user.
    */
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      setGpsFailure(null);
+      setIsDetectingGps(false);
+      setDetectAttempt(0);
+      return;
+    }
+
     setGpsFailure(null);
     setDetectAttempt(0);
     let cancelled = false;
+
+    /**
+     * Pre-flight check: if the browser already knows location access is denied,
+     * say so up front instead of firing a prompt that cannot succeed. This is
+     * what turns the old catch-all error into an instruction the user can act on.
+     */
 
     void getGeolocationPermissionState().then((state) => {
       if (cancelled || state !== 'denied') return;
@@ -60,10 +71,8 @@ export const LocationModal: React.FC<LocationModalProps> = ({
     setIsDetectingGps(true);
     setDetectAttempt(1);
 
-    const result = await requestDeviceLocation({
-      timeoutMs: 10_000,
-      onAttempt: setDetectAttempt,
-    });
+    // Defaults: 8s high-accuracy pass, then 15s low-accuracy fallback.
+    const result = await requestDeviceLocation({ onAttempt: setDetectAttempt });
 
     setIsDetectingGps(false);
     setDetectAttempt(0);

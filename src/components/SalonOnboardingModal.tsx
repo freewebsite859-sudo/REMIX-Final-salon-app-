@@ -230,7 +230,7 @@ export const SalonOnboardingModal: React.FC<SalonOnboardingModalProps> = ({
     setGpsSuccessMsg(null);
     setGpsErrorMsg(null);
 
-    const result = await requestDeviceLocation({ timeoutMs: 8000 });
+    const result = await requestDeviceLocation();
     setIsDetectingGps(false);
 
     if (result.status === 'ok') {

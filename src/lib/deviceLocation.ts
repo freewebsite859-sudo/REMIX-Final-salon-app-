@@ -54,13 +54,22 @@ export interface DeviceLocationFailure {
 export type DeviceLocationResult = DeviceLocationSuccess | DeviceLocationFailure;
 
 export interface RequestDeviceLocationOptions {
-  /** Per-attempt timeout in ms. The low-accuracy retry gets double this. */
+  /** Timeout for the high-accuracy pass in ms. Default 8_000. */
   timeoutMs?: number;
+  /** Timeout for the low-accuracy fallback pass in ms. Default 15_000. */
+  fallbackTimeoutMs?: number;
   /** Retry once with `enableHighAccuracy: false` on timeout/no-fix. Default true. */
   allowLowAccuracyRetry?: boolean;
   /** Called before each attempt, starting at 1 — lets the UI show progress. */
   onAttempt?: (attempt: number) => void;
 }
+
+/** High-accuracy pass: give GPS 8s before giving up on a precise fix. */
+export const PRECISION_TIMEOUT_MS = 8_000;
+/** Fallback pass: cheaper Wi-Fi/cell triangulation, allowed 15s. */
+export const COARSE_TIMEOUT_MS = 15_000;
+/** Fallback pass may reuse a fix up to 5 minutes old. */
+export const COARSE_MAX_AGE_MS = 300_000;
 
 const CODE_PERMISSION_DENIED = 1;
 const CODE_POSITION_UNAVAILABLE = 2;
@@ -124,7 +133,7 @@ export function describeLocationFailure(
   context: { isEmbedded?: boolean; timeoutMs?: number; detail?: string } = {}
 ): DeviceLocationFailure {
   const isEmbedded = context.isEmbedded ?? isEmbeddedFrame();
-  const seconds = Math.round((context.timeoutMs ?? 10_000) / 1000);
+  const seconds = Math.round((context.timeoutMs ?? PRECISION_TIMEOUT_MS) / 1000);
   const detail = context.detail?.trim() || undefined;
 
   const build = (
@@ -196,7 +205,8 @@ function attempt(options: PositionOptions): Promise<GeolocationPosition> {
 export async function requestDeviceLocation(
   options: RequestDeviceLocationOptions = {}
 ): Promise<DeviceLocationResult> {
-  const timeoutMs = options.timeoutMs ?? 10_000;
+  const timeoutMs = options.timeoutMs ?? PRECISION_TIMEOUT_MS;
+  const fallbackTimeoutMs = options.fallbackTimeoutMs ?? COARSE_TIMEOUT_MS;
   const allowRetry = options.allowLowAccuracyRetry !== false;
   const isEmbedded = isEmbeddedFrame();
 
@@ -233,8 +243,8 @@ export async function requestDeviceLocation(
     return toSuccess(
       await attempt({
         enableHighAccuracy: false,
-        timeout: timeoutMs * 2,
-        maximumAge: 5 * 60_000,
+        timeout: fallbackTimeoutMs,
+        maximumAge: COARSE_MAX_AGE_MS,
       })
     );
   } catch (error) {
@@ -251,7 +261,7 @@ export async function requestDeviceLocation(
 export function classifyGeolocationError(
   error: unknown,
   isEmbedded = isEmbeddedFrame(),
-  timeoutMs = 10_000
+  timeoutMs = PRECISION_TIMEOUT_MS
 ): DeviceLocationFailure {
   const code = errorCodeOf(error);
   const detail = messageOf(error);

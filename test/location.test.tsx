@@ -117,10 +117,15 @@ async function openModal() {
   root = createRoot(container);
   selections = [];
   closed = 0;
+  await render(true);
+}
+
+/** Re-render with a new `isOpen` value — used to prove state resets. */
+async function render(isOpen: boolean) {
   await act(async () => {
     root!.render(
       <LocationModal
-        isOpen
+        isOpen={isOpen}
         onClose={() => {
           closed += 1;
         }}
@@ -239,7 +244,22 @@ async function run() {
     calls[1]?.options?.enableHighAccuracy === false,
     JSON.stringify(calls[1]?.options)
   );
-  check('timeout: message names the timeout', /No GPS fix in \d+s/.test(errorText()), errorText());
+  check(
+    'timeout: retry uses the 15s coarse timeout',
+    calls[1]?.options?.timeout === 15_000,
+    String(calls[1]?.options?.timeout)
+  );
+  check(
+    'timeout: retry accepts a fix up to 5 minutes old',
+    calls[1]?.options?.maximumAge === 300_000,
+    String(calls[1]?.options?.maximumAge)
+  );
+  check(
+    'timeout: precision pass uses the 8s timeout',
+    calls[0]?.options?.timeout === 8_000,
+    String(calls[0]?.options?.timeout)
+  );
+  check('timeout: message names the timeout', /No GPS fix in 8s/.test(errorText()), errorText());
   check('timeout: offers a retry', byId('location-retry-button') !== null);
   check('timeout: no location was invented', selections.length === 0);
   await unmount();
@@ -279,6 +299,15 @@ async function run() {
   );
   check('denied: no "open in new tab" when not embedded', byId('location-open-new-tab-button') === null);
   check('denied: still explains the manual fallback', /select an area below/i.test(errorText()));
+
+  // Re-opening must not show the previous failure — stale state is cleared
+  // on both close and open.
+  await render(false);
+  check('close: error panel unmounted with the modal', byId('location-error') === null);
+  await render(true);
+  await settle();
+  check('reopen: stale error state cleared', byId('location-error') === null, errorText());
+  check('reopen: no new geolocation call without user intent', calls.length === 1, `calls=${calls.length}`);
   await unmount();
 
   // -------------------------------------------------------------------
