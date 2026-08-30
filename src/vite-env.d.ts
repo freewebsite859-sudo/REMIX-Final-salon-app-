@@ -3,12 +3,21 @@
 /**
  * Nexora public frontend configuration.
  * Only browser-safe values — never declare or read a service_role key here.
+ * VITE_ prefix is required for Vite to inject env vars at build time.
  */
 interface ImportMetaEnv {
   readonly VITE_SUPABASE_URL?: string;
   readonly VITE_SUPABASE_ANON_KEY?: string;
   readonly VITE_SUPABASE_STORAGE_KEY?: string;
   readonly VITE_NEXORA_LOCATION_TABLE?: string;
+  readonly VITE_NEXORA_DEMO_MODE?: string;
+  readonly VITE_NEXORA_SALONS_TABLE?: string;
+  readonly VITE_NEXORA_SERVICES_TABLE?: string;
+  readonly VITE_NEXORA_CATEGORIES_TABLE?: string;
+  readonly VITE_NEXORA_PROFESSIONALS_TABLE?: string;
+  readonly MODE?: string;
+  readonly DEV?: boolean;
+  readonly PROD?: boolean;
 }
 
 interface ImportMeta {

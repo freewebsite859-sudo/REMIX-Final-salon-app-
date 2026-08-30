@@ -54,6 +54,8 @@ export function isLoginRoute(path: string = currentPath()): boolean {
  * Loop protection: if we are already on the login route this is a no-op, so a
  * burst of `SIGNED_OUT` / failed-refresh events cannot push a stack of history
  * entries or re-trigger navigation-driven auth checks.
+ *
+ * Also prevents back navigation to protected pages after logout by replacing history.
  */
 export function redirectToLogin(options: { replace?: boolean } = {}): boolean {
   if (typeof window === 'undefined') return false;
@@ -64,10 +66,42 @@ export function redirectToLogin(options: { replace?: boolean } = {}): boolean {
 
   if (replace) {
     window.history.replaceState({ nexoraAuth: 'login' }, '', url);
+    // Push additional entry to prevent back navigation to protected pages
+    // After logout, browser back should not reveal protected content
+    try {
+      window.history.pushState({ nexoraAuth: 'login-block' }, '', url);
+      window.history.replaceState({ nexoraAuth: 'login' }, '', url);
+    } catch {
+      /* ignore history errors */
+    }
   } else {
     window.history.pushState({ nexoraAuth: 'login' }, '', url);
   }
   window.dispatchEvent(new PopStateEvent('popstate'));
+  return true;
+}
+
+/**
+ * Enforce route protection - redirects unauthenticated users to login
+ * and prevents access to protected pages via back navigation
+ */
+export function enforceRouteProtection(isAuthenticated: boolean, requiredRole?: string, userRole?: string | null): boolean {
+  if (typeof window === 'undefined') return false;
+  
+  // If not authenticated and trying to access protected route
+  if (!isAuthenticated && !isAuthRoute()) {
+    redirectToLogin({ replace: true });
+    return false;
+  }
+  
+  // If role-based protection
+  if (isAuthenticated && requiredRole && userRole && userRole !== requiredRole) {
+    // User doesn't have required role - redirect to appropriate home
+    // For now, allow but log warning (in full multi-app setup, would redirect to role-specific dashboard)
+    console.warn(`[Nexora] Role mismatch: required ${requiredRole}, got ${userRole}`);
+    // Don't block, just warn - customer app currently handles both roles
+  }
+  
   return true;
 }
 
