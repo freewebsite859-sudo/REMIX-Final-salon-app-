@@ -16,7 +16,7 @@ interface ExploreTabProps {
 
 export type PriceRangeFilter = 'all' | '1' | '2' | '3';
 export type DistanceFilter = 'all' | '1' | '2' | '5' | '10';
-export type SortOption = 'recommended' | 'price_asc' | 'price_desc' | 'rating' | 'distance';
+export type SortOption = 'recommended' | 'price_asc' | 'price_desc' | 'rating' | 'distance' | 'distance_desc';
 
 export const DISTANCE_TIERS: { id: DistanceFilter; label: string; maxKm: number | null; desc: string; icon: string }[] = [
   { id: 'all', label: 'Anywhere', maxKm: null, desc: 'All distances', icon: 'explore' },
@@ -294,6 +294,11 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
         const distB = getSalonDistanceKm(b);
         return distA - distB;
       }
+      if (sortBy === 'distance_desc') {
+        const distA = getSalonDistanceKm(a);
+        const distB = getSalonDistanceKm(b);
+        return distB - distA;
+      }
       return 0; // Default recommended
     });
 
@@ -535,12 +540,29 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
                   className="bg-transparent text-[11px] font-semibold text-on-surface focus:outline-none cursor-pointer"
                 >
                   <option value="recommended">Recommended</option>
-                  <option value="distance">Nearest Distance</option>
+                  <option value="distance">Distance: Closest First 📍</option>
+                  <option value="distance_desc">Distance: Farthest First</option>
                   <option value="rating">Top Rated (★)</option>
                   <option value="price_asc">Price: Low to High ($ → $$$)</option>
                   <option value="price_desc">Price: High to Low ($$$ → $)</option>
                 </select>
               </div>
+
+              {/* Distance Quick Toggle Button */}
+              <button
+                id="distance-sort-quick-toggle"
+                type="button"
+                onClick={() => setSortBy((prev) => (prev === 'distance' ? 'recommended' : 'distance'))}
+                className={`px-2.5 py-1 rounded-xl text-[11px] font-bold flex items-center gap-1 transition-all border cursor-pointer ${
+                  sortBy === 'distance' || sortBy === 'distance_desc'
+                    ? 'bg-primary text-white border-primary shadow-xs'
+                    : 'bg-surface-container-lowest text-on-surface-variant border-outline-variant/30 hover:bg-surface-container hover:text-on-surface'
+                }`}
+                title="Toggle distance sorting (Closest to Farthest)"
+              >
+                <span className="material-symbols-outlined text-[14px]">near_me</span>
+                <span>{sortBy === 'distance' ? 'Closest First ✓' : sortBy === 'distance_desc' ? 'Farthest First' : 'Sort by Distance'}</span>
+              </button>
 
               {isFiltered && (
                 <button
@@ -845,6 +867,67 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
         id="salon-results-section"
         className="scroll-mt-24 transition-all duration-300"
       >
+        {/* Distance Sorting & Results Summary Toggle Bar */}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 mb-3 bg-surface-container-low border border-outline-variant/40 p-3 rounded-2xl shadow-2xs">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-card-title text-[14px] font-bold text-on-surface">
+              {filteredSalons.length} {filteredSalons.length === 1 ? 'Salon' : 'Salons'} Found
+            </span>
+            {sortBy === 'distance' && (
+              <span className="text-[10px] font-bold bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded-full flex items-center gap-1">
+                <span className="material-symbols-outlined text-[12px]">near_me</span>
+                Closest to Farthest
+              </span>
+            )}
+            {sortBy === 'distance_desc' && (
+              <span className="text-[10px] font-bold bg-surface-container-high text-on-surface border border-outline-variant/40 px-2 py-0.5 rounded-full flex items-center gap-1">
+                <span className="material-symbols-outlined text-[12px]">distance</span>
+                Farthest First
+              </span>
+            )}
+          </div>
+
+          {/* Dedicated Distance Sorting Toggle Buttons */}
+          <div className="flex items-center gap-1 bg-surface-container-lowest border border-outline-variant/30 p-1 rounded-xl shrink-0 w-full sm:w-auto justify-between sm:justify-start">
+            <span className="text-[11px] text-on-surface-variant font-medium px-1.5 flex items-center gap-1">
+              <span className="material-symbols-outlined text-[14px] text-primary">navigation</span>
+              <span>Distance Sort:</span>
+            </span>
+
+            <div className="flex items-center gap-1">
+              <button
+                id="distance-sort-closest-btn"
+                type="button"
+                onClick={() => setSortBy(sortBy === 'distance' ? 'recommended' : 'distance')}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                  sortBy === 'distance'
+                    ? 'bg-primary text-white shadow-2xs'
+                    : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container'
+                }`}
+                title="Order salon results from closest to farthest relative to your location"
+              >
+                <span className="material-symbols-outlined text-[13px]">south</span>
+                <span>Closest First</span>
+              </button>
+
+              <button
+                id="distance-sort-farthest-btn"
+                type="button"
+                onClick={() => setSortBy(sortBy === 'distance_desc' ? 'recommended' : 'distance_desc')}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                  sortBy === 'distance_desc'
+                    ? 'bg-primary text-white shadow-2xs'
+                    : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container'
+                }`}
+                title="Order salon results from farthest to closest"
+              >
+                <span className="material-symbols-outlined text-[13px]">north</span>
+                <span>Farthest First</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
         {/* Active Distance Filter Badge indicator */}
         {selectedDistance !== 'all' && (
           <div className="flex items-center justify-between bg-primary/8 border border-primary/20 rounded-2xl px-3.5 py-2.5 mb-3 text-[12px] text-primary shadow-2xs animate-in fade-in slide-in-from-top-1 duration-200">
