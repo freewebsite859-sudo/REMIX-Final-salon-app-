@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Mail, ArrowLeft, CheckCircle2, Loader2, X } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase';
+import { SupabaseConfigBanner } from '../SupabaseConfigBanner';
 
 interface PasswordResetModalProps {
   isOpen: boolean;
@@ -101,6 +102,13 @@ export const PasswordResetModal: React.FC<PasswordResetModalProps> = ({
         >
           <X className="w-5 h-5" />
         </button>
+
+        {/* Proactive config banner — a reset email cannot be sent without Supabase. */}
+        {!isSupabaseConfigured && (
+          <div className="mb-5">
+            <SupabaseConfigBanner action="reset your password" compact />
+          </div>
+        )}
 
         {isSuccess ? (
           /* Success State */

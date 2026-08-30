@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { CheckCircle2, Eye, EyeOff, Lock, Loader2 } from 'lucide-react';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
+import { SupabaseConfigBanner } from '../SupabaseConfigBanner';
 
 interface PasswordUpdatePageProps {
   onComplete: () => void;
@@ -53,6 +54,13 @@ export const PasswordUpdatePage: React.FC<PasswordUpdatePageProps> = ({ onComple
   return (
     <main className="min-h-screen w-full flex items-center justify-center p-4 bg-[#fcf9f8] font-sans">
       <div className="w-full max-w-[440px] rounded-[24px] p-6 sm:p-8 bg-white shadow-xl border border-[#f0e4e8]">
+        {/* Proactive config banner — a password cannot be updated without Supabase. */}
+        {!isSupabaseConfigured && (
+          <div className="mb-5">
+            <SupabaseConfigBanner action="update your password" compact />
+          </div>
+        )}
+
         {success ? (
           <div className="text-center py-8">
             <CheckCircle2 className="w-14 h-14 mx-auto mb-4 text-[#16804b]" />

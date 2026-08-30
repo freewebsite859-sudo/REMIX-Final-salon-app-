@@ -153,6 +153,21 @@ export interface ReferredFriend {
 
 export type AppUserRole = 'customer' | 'salon_owner';
 
+/** A saved service/home address used for bookings and directions. */
+export interface SavedAddress {
+  id: string;
+  label: string;
+  line1: string;
+  area?: string;
+  city?: string;
+  pincode?: string;
+  isDefault?: boolean;
+  createdAt?: string;
+}
+
+/** Membership tiers. `standard` means no paid membership is active. */
+export type MembershipTier = 'standard' | 'silver' | 'gold' | 'platinum';
+
 export interface UserProfile {
   name: string;
   email: string;
@@ -174,6 +189,11 @@ export interface UserProfile {
   skinConcern?: string;
   favoriteStylist?: string;
   defaultLocality?: string;
+  // Membership
+  membershipTier?: MembershipTier;
+  membershipExpiresAt?: string;
+  // Saved addresses (home/work/service locations)
+  savedAddresses?: SavedAddress[];
   // Referral & Rewards
   referralCode?: string;
   referralCount?: number;

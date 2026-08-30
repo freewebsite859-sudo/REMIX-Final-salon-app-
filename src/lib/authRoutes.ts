@@ -11,6 +11,10 @@
 import { NEXORA_AUTH_STORAGE_KEY } from './supabase';
 
 export const LOGIN_PATH = '/auth/login';
+/** Canonical signup route. Invite links point here so they open Signup, not Home. */
+export const SIGNUP_PATH = '/auth/signup';
+/** Accepted aliases for the same signup screen (short links, external shares). */
+export const SIGNUP_ALIAS_PATHS: readonly string[] = ['/signup', '/register', '/auth/register'];
 
 /**
  * Snapshot, taken at module load (before GoTrue can prune a bad token),
@@ -33,7 +37,13 @@ export function hadPersistedSession(): boolean {
 }
 
 /** Paths that render the unauthenticated shell. */
-const AUTH_PATHS = new Set([LOGIN_PATH, '/auth/signup', '/auth/reset', '/auth/callback']);
+const AUTH_PATHS = new Set([
+  LOGIN_PATH,
+  SIGNUP_PATH,
+  '/auth/reset',
+  '/auth/callback',
+  ...SIGNUP_ALIAS_PATHS,
+]);
 
 export function currentPath(): string {
   if (typeof window === 'undefined') return '/';
@@ -46,6 +56,32 @@ export function isAuthRoute(path: string = currentPath()): boolean {
 
 export function isLoginRoute(path: string = currentPath()): boolean {
   return path === LOGIN_PATH;
+}
+
+/** True for the signup screen, whether reached via the canonical path or an alias. */
+export function isSignupRoute(path: string = currentPath()): boolean {
+  return path === SIGNUP_PATH || SIGNUP_ALIAS_PATHS.includes(path);
+}
+
+/**
+ * Navigate to the signup screen with SPA history (same mechanism as
+ * `redirectToLogin`, so the Supabase client and its session stay alive).
+ * Any referral query string already on the URL is preserved.
+ */
+export function redirectToSignup(options: { replace?: boolean } = {}): boolean {
+  if (typeof window === 'undefined') return false;
+  if (isSignupRoute()) return false;
+
+  const { replace = true } = options;
+  const url = `${SIGNUP_PATH}${window.location.search}`;
+
+  if (replace) {
+    window.history.replaceState({ nexoraAuth: 'signup' }, '', url);
+  } else {
+    window.history.pushState({ nexoraAuth: 'signup' }, '', url);
+  }
+  window.dispatchEvent(new PopStateEvent('popstate'));
+  return true;
 }
 
 /**

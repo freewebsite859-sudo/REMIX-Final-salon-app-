@@ -3,6 +3,7 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import { createNotificationsRouter } from "./server/notifications";
 
 dotenv.config();
 
@@ -10,6 +11,11 @@ const app = express();
 const PORT = 3000;
 
 app.use(express.json({ limit: '32kb' }));
+
+// Notification channel dispatch + provider status webhooks.
+// Mounted BEFORE the generic JSON parser's consumers that need `rawBody`
+// (the router installs its own parser with a verify hook for signatures).
+app.use("/api/notifications", createNotificationsRouter(process.env));
 
 // AI routes spend a server-side provider quota. Keep an abusive client from
 // exhausting the Gemini key; a distributed production deployment should add

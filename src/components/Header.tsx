@@ -22,7 +22,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenNotifications,
   onOpenAuth,
   onOpenSalonOnboarding,
-  hasUnreadNotifications = true,
+  // Driven by the real unread count from the database — no permanent fake dot.
+  hasUnreadNotifications = false,
 }) => {
   return (
     <header className="fixed top-0 w-full z-40 bg-surface/90 backdrop-blur-xl pt-safe shadow-[0_1px_8px_rgba(0,0,0,0.04)] border-b border-outline-variant/30">

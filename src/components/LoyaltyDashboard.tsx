@@ -1159,7 +1159,16 @@ export const LoyaltyDashboard: React.FC<LoyaltyDashboardProps> = ({
               </div>
               <span className="font-bold text-on-surface block text-[12px]">Refer a Friend</span>
               <p className="text-[10px] text-on-surface-variant mt-0.5">
-                Share your promo code <strong>{user.referralCode || 'NEXORA2026'}</strong> with friends.
+                {user.referralCode ? (
+                  <>
+                    Share your promo code <strong>{user.referralCode}</strong> with friends.
+                  </>
+                ) : (
+                  <>
+                    Your invite code is issued by the referral service — open Rewards below to get
+                    it.
+                  </>
+                )}
               </p>
             </div>
             <button

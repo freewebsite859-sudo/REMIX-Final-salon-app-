@@ -9,8 +9,13 @@
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
+    "setup:auth": "node scripts/set-anon-key.mjs",
     "test:nexora": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/nexora.integration.test.tsx",
     "test:catalog": "tsx test/catalog.strategy.test.mts",
+    "test:referral": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/referral.flow.test.tsx",
+    "test:notifications": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/notifications.test.tsx",
+    "test:profile": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/profile.test.tsx",
+    "test:audit": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/audit.test.tsx",
     "test:smoke": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/smoke.render.mts",
     "typecheck": "tsc --noEmit",
     "verify:live": "node scripts/verify-live.mjs"
