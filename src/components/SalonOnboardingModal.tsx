@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Salon, SalonService, Stylist, UserProfile } from '../types';
+import { requestDeviceLocation } from '../lib/deviceLocation';
 import { StaticMapPreview } from './StaticMapPreview';
 
 interface SalonOnboardingModalProps {
@@ -150,6 +151,7 @@ export const SalonOnboardingModal: React.FC<SalonOnboardingModalProps> = ({
   const [longitude, setLongitude] = useState<number>(75.7483);
   const [isDetectingGps, setIsDetectingGps] = useState(false);
   const [gpsSuccessMsg, setGpsSuccessMsg] = useState<string | null>(null);
+  const [gpsErrorMsg, setGpsErrorMsg] = useState<string | null>(null);
 
   // Publish Pipeline Progress States
   const [isPublishing, setIsPublishing] = useState(false);
@@ -223,36 +225,29 @@ export const SalonOnboardingModal: React.FC<SalonOnboardingModalProps> = ({
   ]);
 
   // Handle GPS location detection
-  const handleDetectGPS = () => {
+  const handleDetectGPS = async () => {
     setIsDetectingGps(true);
     setGpsSuccessMsg(null);
+    setGpsErrorMsg(null);
 
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const lat = parseFloat(position.coords.latitude.toFixed(4));
-          const lng = parseFloat(position.coords.longitude.toFixed(4));
-          setLatitude(lat);
-          setLongitude(lng);
-          setIsDetectingGps(false);
-          setGpsSuccessMsg(`GPS Coordinates locked: ${lat}, ${lng}`);
-          setTimeout(() => setGpsSuccessMsg(null), 4000);
-        },
-        () => {
-          // Fallback coordinate
-          setLatitude(26.9015);
-          setLongitude(75.7483);
-          setIsDetectingGps(false);
-          setGpsSuccessMsg('GPS estimated for Jaipur central hub.');
-          setTimeout(() => setGpsSuccessMsg(null), 4000);
-        },
-        { timeout: 8000 }
-      );
-    } else {
-      setIsDetectingGps(false);
-      setGpsSuccessMsg('Geolocation simulated for Jaipur.');
-      setTimeout(() => setGpsSuccessMsg(null), 3000);
+    const result = await requestDeviceLocation();
+    setIsDetectingGps(false);
+
+    if (result.status === 'ok') {
+      const lat = parseFloat(result.latitude.toFixed(4));
+      const lng = parseFloat(result.longitude.toFixed(4));
+      setLatitude(lat);
+      setLongitude(lng);
+      setGpsSuccessMsg(`GPS Coordinates locked: ${lat}, ${lng}`);
+      setTimeout(() => setGpsSuccessMsg(null), 4000);
+      return;
     }
+
+    // Deliberately NO coordinate fallback. A salon listing is real inventory:
+    // dropping a "Jaipur central hub" pin on a failed fix would publish a
+    // wrong location and move the map pin away from the owner's own input.
+    // Keep the current/selected coordinates and explain what to do instead.
+    setGpsErrorMsg(result.message.replace(' Please select an area below.', ' Pick a locality below or drag the map pin.'));
   };
 
   // Quick area selection updates coords
@@ -959,6 +954,18 @@ export const SalonOnboardingModal: React.FC<SalonOnboardingModalProps> = ({
                 <div className="p-2.5 rounded-xl bg-success-emerald/15 text-emerald-800 text-[11px] font-bold flex items-center gap-1.5 border border-emerald-500/30 animate-in fade-in">
                   <span className="material-symbols-outlined text-[16px] text-success-emerald">check_circle</span>
                   <span>{gpsSuccessMsg}</span>
+                </div>
+              )}
+
+              {/* GPS Failure Notice — never silently substitute coordinates */}
+              {gpsErrorMsg && (
+                <div
+                  id="owner-gps-error"
+                  role="alert"
+                  className="p-2.5 rounded-xl bg-error/10 text-error text-[11px] font-semibold flex items-start gap-1.5 border border-error/30 animate-in fade-in"
+                >
+                  <span className="material-symbols-outlined text-[16px]">error_outline</span>
+                  <span>{gpsErrorMsg}</span>
                 </div>
               )}
 

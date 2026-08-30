@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { classifyGeolocationError, isEmbeddedFrame } from '../lib/deviceLocation';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import {
   clearUserLocation,
@@ -169,16 +170,11 @@ export function useLocationSync(options: UseLocationSyncOptions = {}): UseLocati
       },
       (geoError) => {
         if (cancelled) return;
-        const denied =
-          typeof GeolocationPositionError !== 'undefined'
-            ? geoError.code === GeolocationPositionError.PERMISSION_DENIED
-            : geoError.code === 1;
-        setPermissionDenied(denied);
-        setError(
-          denied
-            ? 'Location permission denied. Enable it to share live location.'
-            : geoError.message || 'Unable to determine your location.'
-        );
+        // Same classification the picker uses, so the app tells the user one
+        // consistent story about why live location is not updating.
+        const failure = classifyGeolocationError(geoError, isEmbeddedFrame(), 15_000);
+        setPermissionDenied(failure.code === 'denied' || failure.code === 'blocked');
+        setError(failure.message);
       },
       { enableHighAccuracy: true, timeout: 15_000, maximumAge: 30_000 }
     );

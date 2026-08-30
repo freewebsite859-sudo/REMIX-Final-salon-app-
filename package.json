@@ -11,6 +11,7 @@
     "lint": "tsc --noEmit",
     "setup:auth": "node scripts/set-anon-key.mjs",
     "test:nexora": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/nexora.integration.test.tsx",
+    "test:location": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/location.test.tsx",
     "test:catalog": "tsx test/catalog.strategy.test.mts",
     "test:referral": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/referral.flow.test.tsx",
     "test:notifications": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/notifications.test.tsx",
