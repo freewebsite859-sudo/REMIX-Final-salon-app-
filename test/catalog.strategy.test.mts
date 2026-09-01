@@ -46,6 +46,23 @@ async function run() {
       normalized[0]?.stylists[0]?.name === 'Verified Professional'
   );
 
+  const taggedSalon = {
+    ...realSalon,
+    tags: ['barber shop', 'mens salon'],
+    keywords: ['barbar', 'gents parlour'],
+  };
+  const tagged = normalizeCatalog([taggedSalon], [], [], []);
+  check(
+    'normalizer passes remote tags and keywords through to the search index',
+    tagged[0]?.tags?.join(',') === 'barber shop,mens salon' &&
+      tagged[0]?.keywords?.join(',') === 'barbar,gents parlour'
+  );
+  const untagged = normalizeCatalog([realSalon], [], [], []);
+  check(
+    'salons without tag columns still normalize cleanly',
+    untagged.length === 1 && (untagged[0]?.tags?.length ?? 0) === 0
+  );
+
   const remote = await fetchCatalog(
     clientFor({ salons: [realSalon], services: [], categories: [], professionals: [] })
   );

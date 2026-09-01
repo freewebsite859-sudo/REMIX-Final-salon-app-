@@ -27,7 +27,9 @@ import type { Salon } from '../types';
  */
 
 export const MIN_TOKEN_SCORE = 0.6;
-const SUGGESTION_SCORE = 0.45;
+// High bar for "did you mean": single-edit typos score >= 0.67 while
+// unrelated words of similar length land near 0.5 and must be filtered out.
+const SUGGESTION_SCORE = 0.6;
 
 /** Function words that add noise but never discriminate between salons. */
 const QUERY_STOPWORDS = new Set([
@@ -147,6 +149,12 @@ function buildSalonFields(salon: Salon): SearchField[] {
   const fields: Array<{ weight: number; text: string }> = [
     { weight: 1.0, text: salon.name },
     { weight: 0.92, text: (salon.categories ?? []).join(' ') },
+    // Curated search tags: the exact phrasings users type ('barber shop',
+    // 'mens salon', 'hydra facial') rank just under categories.
+    { weight: 0.9, text: (salon.tags ?? []).join(' ') },
+    // Broad keywords incl. misspellings ('barbar', 'saloon') and local lingo
+    // ('gents parlour') so general queries never come back empty.
+    { weight: 0.85, text: (salon.keywords ?? []).join(' ') },
     { weight: 0.88, text: services.map((srv) => srv.name).join(' ') },
     { weight: 0.75, text: `${salon.location?.area ?? ''} ${salon.location?.city ?? ''}` },
     { weight: 0.65, text: professionalText },

@@ -151,6 +151,44 @@ function run() {
   );
 
   // ---------------------------------------------------------------------
+  // Tags & keywords enrichment (mock catalog broadening)
+  // ---------------------------------------------------------------------
+  check(
+    'every demo salon carries non-empty tags and keywords',
+    DEMO_SALONS.every((s) => (s.tags?.length ?? 0) > 0 && (s.keywords?.length ?? 0) > 0),
+    `${DEMO_SALONS.filter((s) => (s.tags?.length ?? 0) > 0).length}/${DEMO_SALONS.length} tagged, ${
+      DEMO_SALONS.filter((s) => (s.keywords?.length ?? 0) > 0).length
+    }/${DEMO_SALONS.length} keyworded`,
+  );
+
+  const barberShop = searchSalons(DEMO_SALONS, 'barber shop');
+  check(
+    "tag 'barber shop' surfaces the barber salon",
+    barberShop[0]?.salon.name === 'Premium Hair Studio',
+    ids(barberShop.map((r) => r.salon)),
+  );
+
+  const gentsParlour = searchSalons(DEMO_SALONS, 'gents parlour');
+  check(
+    "local-lingo keyword 'gents parlour' finds the men's salon",
+    gentsParlour.some((r) => r.salon.name === 'Premium Hair Studio'),
+    ids(gentsParlour.map((r) => r.salon)),
+  );
+
+  const generalQueries = [
+    'salon near me', 'mens salon', 'male salon', 'gents salon', 'barber shop',
+    'parlour', 'saloon', 'haircut for men', 'facial near me', 'massage near me',
+    'spa near me', 'nails near me', 'manicure near me', 'waxing', 'bridal makeup',
+    'hair spa', 'body massage', 'nail art design', 'couple spa', 'makeup artist',
+  ];
+  const emptyGeneral = generalQueries.filter((q) => searchSalons(DEMO_SALONS, q).length === 0);
+  check(
+    'general queries never return an empty result set',
+    emptyGeneral.length === 0,
+    emptyGeneral.length ? `empty for: ${emptyGeneral.join(', ')}` : `${generalQueries.length}/${generalQueries.length} return results`,
+  );
+
+  // ---------------------------------------------------------------------
   // Summary
   // ---------------------------------------------------------------------
   const failed = results.filter((r) => !r.pass);

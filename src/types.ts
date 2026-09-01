@@ -45,6 +45,18 @@ export interface Salon {
   name: string;
   tagline: string;
   categories: string[];
+  /**
+   * Curated search tags covering common phrasings users actually type
+   * (e.g. 'barber shop', 'mens salon', 'hydra facial'). Optional so remote
+   * catalog rows without tagging still normalize cleanly.
+   */
+  tags?: string[];
+  /**
+   * Broad match keywords including frequent misspellings and local lingo
+   * (e.g. 'barbar', 'saloon', 'gents parlour') so general queries never
+   * return an empty result set. Fed into the fuzzy search index.
+   */
+  keywords?: string[];
   rating: number;
   reviewCount: number;
   distance: string; // e.g. "1.2 km"
