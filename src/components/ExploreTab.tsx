@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Salon, SalonService, Stylist, GroundingChunk } from '../types';
+import { searchSalons, suggestQueryCorrections } from '../lib/fuzzySearch';
 import { ShareSalonModal } from './ShareSalonModal';
 
 interface ExploreTabProps {
@@ -206,6 +207,20 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
     return isNaN(parsed) ? 999 : parsed;
   };
 
+  // ---------------------------------------------------------------------
+  // Fuzzy search: typo-tolerant ("barbar" -> "barber"), multi-word capable
+  // ("beard trim" matches across categories AND service names), ranked by
+  // relevancy. Unknown tokens like "shop" never zero out the results.
+  // ---------------------------------------------------------------------
+  const hasSearchQuery = searchQuery.trim().length > 0;
+
+  const relevanceById = useMemo(() => {
+    if (!hasSearchQuery) return new Map<string, number>();
+    return new Map(searchSalons(salons, searchQuery).map((result) => [result.salon.id, result.score]));
+  }, [salons, searchQuery, hasSearchQuery]);
+
+  const matchesQuery = (salon: Salon): boolean => !hasSearchQuery || relevanceById.has(salon.id);
+
   // Compute salon match counts per price tier for the current category, distance & search filter
   const getCountForTier = (tierId: PriceRangeFilter) => {
     const maxDistKm = DISTANCE_TIERS.find((d) => d.id === selectedDistance)?.maxKm;
@@ -215,18 +230,11 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
         s.services.some((srv) => srv.category === selectedCategory) ||
         s.categories.some((c) => c.toLowerCase().includes(selectedCategory.toLowerCase()));
 
-      const matchesQuery =
-        !searchQuery.trim() ||
-        s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        s.location.area.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        s.services.some((srv) => srv.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        s.categories.some((c) => c.toLowerCase().includes(searchQuery.toLowerCase()));
-
       const distKm = getSalonDistanceKm(s);
       const matchesDistance = maxDistKm === null || distKm <= maxDistKm;
 
-      if (tierId === 'all') return matchesCategory && matchesQuery && matchesDistance;
-      return matchesCategory && matchesQuery && matchesDistance && getPriceTierForSalon(s.priceRange) === tierId;
+      if (tierId === 'all') return matchesCategory && matchesQuery(s) && matchesDistance;
+      return matchesCategory && matchesQuery(s) && matchesDistance && getPriceTierForSalon(s.priceRange) === tierId;
     }).length;
   };
 
@@ -239,20 +247,13 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
         s.services.some((srv) => srv.category === selectedCategory) ||
         s.categories.some((c) => c.toLowerCase().includes(selectedCategory.toLowerCase()));
 
-      const matchesQuery =
-        !searchQuery.trim() ||
-        s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        s.location.area.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        s.services.some((srv) => srv.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        s.categories.some((c) => c.toLowerCase().includes(searchQuery.toLowerCase()));
-
       const salonTier = getPriceTierForSalon(s.priceRange);
       const matchesPrice = selectedPriceRange === 'all' || salonTier === selectedPriceRange;
 
       const distKm = getSalonDistanceKm(s);
       const matchesDist = maxDistKm === null || distKm <= maxDistKm;
 
-      return matchesCategory && matchesQuery && matchesPrice && matchesDist;
+      return matchesCategory && matchesQuery(s) && matchesPrice && matchesDist;
     }).length;
   };
 
@@ -263,13 +264,6 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
         s.services.some((srv) => srv.category === selectedCategory) ||
         s.categories.some((c) => c.toLowerCase().includes(selectedCategory.toLowerCase()));
 
-      const matchesQuery =
-        !searchQuery.trim() ||
-        s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        s.location.area.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        s.services.some((srv) => srv.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        s.categories.some((c) => c.toLowerCase().includes(searchQuery.toLowerCase()));
-
       const salonTier = getPriceTierForSalon(s.priceRange);
       const matchesPrice = selectedPriceRange === 'all' || salonTier === selectedPriceRange;
 
@@ -277,9 +271,15 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
       const maxDistKm = DISTANCE_TIERS.find((d) => d.id === selectedDistance)?.maxKm;
       const matchesDistance = maxDistKm === null || distKm <= maxDistKm;
 
-      return matchesCategory && matchesQuery && matchesPrice && matchesDistance;
+      return matchesCategory && matchesQuery(s) && matchesPrice && matchesDistance;
     })
     .sort((a, b) => {
+      // With an active search, "Recommended" orders by fuzzy relevancy first.
+      if (hasSearchQuery && sortBy === 'recommended') {
+        const relevanceDiff = (relevanceById.get(b.id) ?? 0) - (relevanceById.get(a.id) ?? 0);
+        if (relevanceDiff !== 0) return relevanceDiff;
+        return b.rating - a.rating;
+      }
       if (sortBy === 'price_asc') {
         return getMinStartingPrice(a) - getMinStartingPrice(b);
       }
@@ -301,6 +301,12 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
       }
       return 0; // Default recommended
     });
+
+  // "Did you mean" fallback for queries that matched nothing at all.
+  const searchSuggestions = useMemo(() => {
+    if (!hasSearchQuery || filteredSalons.length > 0) return [];
+    return suggestQueryCorrections(salons, searchQuery);
+  }, [salons, searchQuery, hasSearchQuery, filteredSalons.length]);
 
   const isFiltered =
     selectedCategory !== 'all' ||
@@ -958,6 +964,24 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
                 {selectedDistance !== 'all' ? 'near_me_disabled' : 'filter_alt_off'}
               </span>
             </div>
+            {/* Typo-tolerant fallback: closest catalog terms for the failed query */}
+            {searchSuggestions.length > 0 && (
+              <div className="flex flex-col items-center gap-1.5">
+                <span className="text-[12px] text-on-surface-variant">Did you mean:</span>
+                <div className="flex items-center gap-1.5 flex-wrap justify-center">
+                  {searchSuggestions.map((suggestion) => (
+                    <button
+                      key={suggestion}
+                      type="button"
+                      onClick={() => setSearchQuery(suggestion)}
+                      className="px-3 py-1.5 rounded-full bg-primary/10 border border-primary/25 text-primary text-[12px] font-semibold hover:bg-primary/20 transition-colors cursor-pointer"
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div>
               <h3 className="font-card-title text-[16px] font-bold text-on-surface">
                 {selectedDistance !== 'all' && selectedPriceRange !== 'all'
@@ -973,7 +997,7 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
                   ? `No salons currently match your distance constraint (${DISTANCE_TIERS.find((t) => t.id === selectedDistance)?.label}). Try expanding your distance filter to "Within 5 km" or "Anywhere" to discover more local options.`
                   : selectedPriceRange !== 'all'
                   ? `No salons currently match ${PRICE_TIERS.find((t) => t.id === selectedPriceRange)?.label} (${PRICE_TIERS.find((t) => t.id === selectedPriceRange)?.desc}). Try selecting a different budget tier or clearing your filters.`
-                  : 'No salons match your search query or category filter. Try clearing filters to see all available salons.'}
+                  : 'No salons match your search query or category filter. Try a different spelling, a broader term (e.g. "hair" or "beard"), or clear filters to see all available salons.'}
               </p>
             </div>
             <div className="flex items-center gap-2 mt-2 flex-wrap justify-center">

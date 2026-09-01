@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Salon, SalonService, Stylist, UserProfile, ActiveTab } from '../types';
+import { searchSalons } from '../lib/fuzzySearch';
 import { BottomNav } from './BottomNav';
 
 interface ServiceCategoryScreenProps {
@@ -204,17 +205,19 @@ export const ServiceCategoryScreen: React.FC<ServiceCategoryScreenProps> = ({
     return b.rating - a.rating;
   });
 
+  // Fuzzy search: typo-tolerant ("barbar" -> "barber"), multi-word capable,
+  // ranked by relevancy across name, categories, services and area.
+  const hasSearchQuery = searchQuery.trim().length > 0;
+  const searchResultIds = useMemo(() => {
+    if (!hasSearchQuery) return new Set<string>();
+    return new Set(searchSalons(salons, searchQuery).map((result) => result.salon.id));
+  }, [salons, searchQuery, hasSearchQuery]);
+
   // Filter and sort salons
   const filteredSalons = salons
     .filter((salon) => {
-      // Match query
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const matchesName = salon.name.toLowerCase().includes(q);
-        const matchesCategory = salon.categories.some((c) => c.toLowerCase().includes(q));
-        const matchesArea = salon.location.area.toLowerCase().includes(q);
-        if (!matchesName && !matchesCategory && !matchesArea) return false;
-      }
+      // Match query (fuzzy, typo-tolerant)
+      if (hasSearchQuery && !searchResultIds.has(salon.id)) return false;
 
       // Quick filter pill
       if (selectedFilter === 'Open Now' && !salon.isOpen) return false;
