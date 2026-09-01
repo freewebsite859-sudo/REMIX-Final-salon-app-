@@ -1,7 +1,12 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Salon, Appointment, SalonService, Stylist, UserProfile } from '../types';
 import { AppointmentCountdownBanner, parseAppointmentDateTime } from './AppointmentCountdownBanner';
 import { OfferDetailModal, OfferPackageDetail } from './OfferDetailModal';
+import {
+  QUICK_SEARCH_CATEGORIES,
+  POPULAR_SEARCHES,
+  useDismissOnOutside,
+} from '../lib/searchSuggestions';
 import nexoraPremiumOfferImg from '../assets/images/nexora_premium_offer_1787146222315.jpg';
 import hydraFacialOfferImg from '../assets/images/hydra_facial_offer_1787146241160.jpg';
 import bridalStylingOfferImg from '../assets/images/bridal_styling_offer_1787146272580.jpg';
@@ -193,6 +198,18 @@ export const HomeTab: React.FC<HomeTabProps> = ({
   const [searchInput, setSearchInput] = useState('');
   const [activeSlide, setActiveSlide] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
+
+  // Quick-search dropdown: opens on search focus so users can tap a main
+  // category or popular tag instead of typing, then jump straight to results.
+  const [isQuickSearchOpen, setIsQuickSearchOpen] = useState(false);
+  const closeQuickSearch = useCallback(() => setIsQuickSearchOpen(false), []);
+  const quickSearchWrapperRef = useDismissOnOutside(isQuickSearchOpen, closeQuickSearch);
+
+  const handleApplyQuickSearch = (query: string) => {
+    setIsQuickSearchOpen(false);
+    setSearchInput(query);
+    onSearchSubmit(query);
+  };
   const [selectedOfferModal, setSelectedOfferModal] = useState<OfferPackageDetail | null>(null);
   const [isBannerDismissed, setIsBannerDismissed] = useState<boolean>(() => {
     try {
@@ -388,6 +405,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
 
   const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && searchInput.trim()) {
+      setIsQuickSearchOpen(false);
       if (!recentSearches.includes(searchInput.trim())) {
         setRecentSearches([searchInput.trim(), ...recentSearches.slice(0, 4)]);
       }
@@ -586,7 +604,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
 
       {/* Search Input — 2026 Floating Glass Search */}
       <section className="px-page-margin mb-[22px] relative z-10">
-        <div className="relative group">
+        <div className="relative group" ref={quickSearchWrapperRef}>
           <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none z-10">
             <span className="material-symbols-outlined text-[19px] text-[#b00055] group-focus-within:text-[#b00055] transition-colors">
               search
@@ -595,19 +613,83 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           <input
             type="text"
             value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
+            onChange={(e) => {
+              setSearchInput(e.target.value);
+              setIsQuickSearchOpen(false);
+            }}
+            onFocus={() => setIsQuickSearchOpen(true)}
             onKeyDown={handleSearchKeyDown}
             placeholder="Search salons, services or stylists in Jaipur..."
-            className="w-full h-[48px] pl-11 pr-24 bg-[rgba(255,255,255,0.72)] backdrop-blur-[20px] text-on-surface font-body-md text-[13px] rounded-[18px] border border-[rgba(180,0,80,0.15)] shadow-[0_8px_25px_rgba(0,0,0,0.05)] focus:outline-none focus:border-[rgba(176,0,85,0.40)] focus:ring-4 focus:ring-[rgba(176,0,85,0.08)] focus:shadow-[0_0_18px_rgba(176,0,85,0.15)] transition-all duration-200"
+            aria-expanded={isQuickSearchOpen}
+            aria-haspopup="listbox"
+            aria-controls="home-quick-search-dropdown"
+            className="w-full h-[48px] pl-11 pr-24 bg-[rgba(255,255,255,0.72)] backdrop-blur-[20px] text-on-surface font-body-md text-[13px] rounded-[18px] border border-[rgba(180,0,80,0.15)] shadow-[0_8px_25px_rgba(0,0,0,0.05)] focus:outline-none focus:border-[rgba(176,0,85,0.40)] focus:ring-4 focus:ring-[rgba(176,0,85,0.08)] focus:shadow-[0_0_18px_rgba(176,0,85,0.15)] transition-all duration-200 relative z-20"
           />
           {searchInput && (
             <button
               type="button"
               onClick={() => onSearchSubmit(searchInput)}
-              className="absolute right-2 top-2 px-3.5 py-1.5 bg-[#b00055] text-white text-[11px] font-semibold rounded-[10px] hover:-translate-y-0.5 hover:shadow-[0_6px_16px_rgba(176,0,85,0.20)] active:scale-95 transition-all duration-180 cursor-pointer"
+              className="absolute right-2 top-2 px-3.5 py-1.5 bg-[#b00055] text-white text-[11px] font-semibold rounded-[10px] hover:-translate-y-0.5 hover:shadow-[0_6px_16px_rgba(176,0,85,0.20)] active:scale-95 transition-all duration-180 cursor-pointer z-30"
             >
               Search
             </button>
+          )}
+
+          {/* Quick-search dropdown: main categories + popular tags on focus */}
+          {isQuickSearchOpen && (
+            <div
+              id="home-quick-search-dropdown"
+              role="listbox"
+              aria-label="Quick search suggestions"
+              className="absolute top-[calc(100%+8px)] left-0 right-0 z-40 bg-white/95 backdrop-blur-[24px] rounded-[18px] border border-[rgba(180,0,80,0.12)] shadow-[0_18px_45px_rgba(0,0,0,0.14)] p-3 flex flex-col gap-2.5 animate-in fade-in slide-in-from-top-1 duration-150"
+            >
+              <div className="flex items-center gap-1 text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">
+                <span className="material-symbols-outlined text-[14px] text-[#b00055]">bolt</span>
+                <span>Quick Searches · Tap to Search</span>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                {QUICK_SEARCH_CATEGORIES.map((cat) => (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    role="option"
+                    aria-selected="false"
+                    onClick={() => handleApplyQuickSearch(cat.query)}
+                    className="group flex items-center gap-3 px-2.5 py-2 rounded-xl border border-transparent hover:border-primary/15 hover:bg-primary/5 transition-all cursor-pointer text-left"
+                  >
+                    <span className={`w-8 h-8 rounded-[10px] border flex items-center justify-center shrink-0 ${cat.tint}`}>
+                      <span className="material-symbols-outlined text-[17px]">{cat.icon}</span>
+                    </span>
+                    <span className="flex-1 text-[13px] font-semibold text-on-surface group-hover:text-primary transition-colors">
+                      {cat.label}
+                    </span>
+                    <span className="material-symbols-outlined text-[15px] text-on-surface-variant/50 group-hover:text-primary transition-colors">
+                      search
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="border-t border-outline-variant/30 pt-2.5 flex flex-col gap-2">
+                <div className="flex items-center gap-1 text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">
+                  <span className="material-symbols-outlined text-[14px] text-[#b00055]">trending_up</span>
+                  <span>Popular Searches</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {POPULAR_SEARCHES.map((term) => (
+                    <button
+                      key={term}
+                      type="button"
+                      onClick={() => handleApplyQuickSearch(term)}
+                      className="px-3 py-1.5 rounded-full bg-surface-container-lowest border border-outline-variant/40 text-on-surface text-[11px] font-medium hover:border-primary/30 hover:text-primary hover:-translate-y-0.5 transition-all cursor-pointer capitalize"
+                    >
+                      {term}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
           )}
         </div>
       </section>

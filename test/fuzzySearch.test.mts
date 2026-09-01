@@ -126,6 +126,31 @@ function run() {
   );
 
   // ---------------------------------------------------------------------
+  // Quick-search dropdown queries (src/lib/searchSuggestions.ts) — every
+  // click-to-search option must return relevant salons from the engine.
+  // ---------------------------------------------------------------------
+  const quickExpectations: Array<[string, string]> = [
+    ['barber men grooming', 'Premium Hair Studio'],
+    ['hair cut styling', 'Scissors & Shears Salon'],
+    ['hydra facial skin', 'Luxe Beauty Lounge'],
+    ['beard trim shave', 'Premium Hair Studio'],
+    ['spa nails', 'The Nail Artistry & Polish Bar'],
+  ];
+  for (const [query, expectedSalon] of quickExpectations) {
+    const quickResults = searchSalons(DEMO_SALONS, query);
+    check(
+      `quick category "${query}" finds ${expectedSalon}`,
+      quickResults.some((r) => r.salon.name === expectedSalon),
+      ids(quickResults.map((r) => r.salon)),
+    );
+  }
+  const popularTerms = ['haircut', 'beard trim', 'hydra facial', 'spa', 'nails art', 'keratin', 'detan', 'bridal'];
+  check(
+    'every popular-search tag returns at least one salon',
+    popularTerms.every((term) => searchSalons(DEMO_SALONS, term).length > 0),
+  );
+
+  // ---------------------------------------------------------------------
   // Summary
   // ---------------------------------------------------------------------
   const failed = results.filter((r) => !r.pass);
