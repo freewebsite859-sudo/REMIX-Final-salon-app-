@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { UserProfile, Appointment, SavedAddress, MembershipTier } from '../types';
-import { ReferralFeatureSection } from './ReferralFeatureSection';
+import { UserProfile, Appointment, SavedAddress } from '../types';
 import { PaymentOverviewDashboard } from './PaymentOverviewDashboard';
 import { PaymentHistorySection } from './PaymentHistorySection';
 import { ProfileMenu } from './ProfileMenu';
@@ -19,7 +18,6 @@ interface ProfileTabProps {
   user: UserProfile;
   appointments?: Appointment[];
   onUpdateUser: (updated: UserProfile) => void;
-  onOpenAIAdvisor: () => void;
   onNavigateToBooking?: () => void;
   onViewAppointments?: () => void;
   /** Opens the saved salons/services screen (Profile menu → Favourites). */
@@ -175,7 +173,6 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
   user,
   appointments = [],
   onUpdateUser,
-  onOpenAIAdvisor,
   onNavigateToBooking,
   onViewAppointments,
   onViewFavourites,
@@ -505,7 +502,6 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
   const appointmentReminders = user.appointmentReminders ?? true;
   const promotionalOffers = user.promotionalOffers ?? true;
   const whatsappAlerts = user.whatsappAlerts ?? true;
-  const aiAdvisorAlerts = user.aiAdvisorAlerts ?? true;
 
   /** UI toggle → database preference row(s). */
   const persistPreference = (
@@ -571,7 +567,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
   };
 
   const handleToggleGranularSetting = (
-    key: 'appointmentReminders' | 'promotionalOffers' | 'whatsappAlerts' | 'aiAdvisorAlerts'
+    key: 'appointmentReminders' | 'promotionalOffers' | 'whatsappAlerts'
   ) => {
     const nextVal = !user[key];
     triggerSettingsSave();
@@ -580,8 +576,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
       [key]: nextVal,
     });
 
-    // Persist the database-backed preferences. `aiAdvisorAlerts` is an
-    // in-product AI setting with no external channel, so it stays local.
+    // Keep the stored preference row in sync with the toggle.
     if (key === 'appointmentReminders') persistPreference('all', 'booking_reminder', nextVal);
     if (key === 'promotionalOffers') persistPreference('all', 'offer', nextVal);
     if (key === 'whatsappAlerts') persistPreference('whatsapp', 'all', nextVal);
@@ -650,28 +645,6 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
     !MEN_AVATARS.some((a) => a.url === user.avatar) &&
     !WOMEN_AVATARS.some((a) => a.url === user.avatar);
 
-  // Reward balance. Derived only from recorded data — no assumed defaults, so a
-  // new account shows a real 0 rather than a fabricated credit.
-  const completedReferrals =
-    user.referredFriends?.filter((f) => f.status === 'completed').length ?? 0;
-  const totalEarned = user.referralEarnings ?? completedReferrals * 150;
-  const claimedDiscounts = user.claimedDiscounts ?? 0;
-  const availableWalletBalance = Math.max(0, totalEarned - claimedDiscounts);
-
-  // Membership. The badge reflects stored state; `standard` means no paid
-  // membership is active, and an expired date is reported as expired.
-  const membershipTier: MembershipTier = user.membershipTier || 'standard';
-  const membershipExpiry = user.membershipExpiresAt ? new Date(user.membershipExpiresAt) : null;
-  const membershipActive =
-    membershipTier !== 'standard' &&
-    Boolean(membershipExpiry && !Number.isNaN(membershipExpiry.getTime()) && membershipExpiry.getTime() > Date.now());
-  const membershipLabel =
-    membershipTier === 'standard'
-      ? 'Standard Member'
-      : `${membershipTier.charAt(0).toUpperCase()}${membershipTier.slice(1)} Member`;
-  const membershipDaysLeft = membershipExpiry
-    ? Math.ceil((membershipExpiry.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-    : null;
 
   return (
     <div className="flex flex-col w-full pb-28 max-w-4xl mx-auto px-page-margin pt-2">
@@ -712,18 +685,9 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
             </div>
 
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="font-card-title text-[22px] font-extrabold truncate">
-                  {user.name || 'Your Name'}
-                </h2>
-                <span
-                  id="profile-membership-badge"
-                  data-active={membershipActive ? 'true' : 'false'}
-                  className="text-[10px] bg-white/20 px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider backdrop-blur-xs border border-white/30"
-                >
-                  {membershipActive ? membershipLabel : 'Standard Member'}
-                </span>
-              </div>
+              <h2 className="font-card-title text-[22px] font-extrabold truncate">
+                {user.name || 'Your Name'}
+              </h2>
               <p className="text-[12px] opacity-90">{user.email || 'No email on file'}</p>
               <div className="flex items-center gap-2 text-[12px] opacity-85 mt-0.5 flex-wrap">
                 <span>{user.phone || 'No mobile number added'}</span>
@@ -750,34 +714,8 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
             </div>
           </div>
 
-          {/* AI Style Quiz Quick Button */}
-          <button
-            type="button"
-            onClick={onOpenAIAdvisor}
-            className="px-4 py-2 bg-white text-primary font-bold rounded-2xl text-[12px] shadow-sm hover:bg-surface-container transition-all flex items-center gap-1.5 self-stretch sm:self-auto justify-center cursor-pointer"
-          >
-            <span className="material-symbols-outlined text-[16px] text-nexora-pink">auto_awesome</span>
-            <span>AI Advisor</span>
-          </button>
         </div>
 
-        {/* Loyalty Points & Rewards Balance Strip */}
-        <div className="mt-4 pt-3 border-t border-white/20 flex items-center justify-between relative z-10 text-[13px] flex-wrap gap-2">
-          <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-[20px] text-amber-300 fill-1">stars</span>
-            <span id="profile-reward-points">
-              Nexora Beauty Club: <strong>{user.loyaltyPoints ?? 0} Reward Points</strong>
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span
-              id="profile-reward-balance"
-              className="text-[11px] bg-white text-primary px-3 py-1 rounded-full font-extrabold shadow-xs"
-            >
-              ₹{availableWalletBalance} Reward Balance
-            </span>
-          </div>
-        </div>
       </div>
 
       {/* ========================================================================= */}
@@ -791,9 +729,6 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
         onPersonalInformation={() => scrollToSection('section-personal-details')}
         onMyBookings={() => onViewAppointments?.()}
         onFavourites={() => onViewFavourites?.()}
-        onReferral={() => scrollToSection('section-rewards')}
-        onMembership={() => scrollToSection('section-membership')}
-        onRewards={() => scrollToSection('section-rewards')}
         onNotifications={() => onOpenNotifications?.()}
         onAddresses={() => scrollToSection('section-addresses')}
         onSupport={() => scrollToSection('section-support')}
@@ -1253,74 +1188,6 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
       </div>
 
       {/* ========================================================================= */}
-      {/* 2b. MEMBERSHIP                                                            */}
-      {/* ========================================================================= */}
-      <div
-        id="section-membership"
-        className="bg-surface-container-low border border-outline-variant/50 rounded-2xl p-4 sm:p-5 shadow-xs mb-4"
-      >
-        <div className="flex items-center justify-between mb-3 border-b border-outline-variant/30 pb-2.5">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-amber-500/15 text-amber-700 flex items-center justify-center">
-              <span className="material-symbols-outlined text-[20px]">card_membership</span>
-            </div>
-            <div>
-              <h3 className="font-card-title text-[16px] font-bold text-on-surface">Membership</h3>
-              <p className="text-[11px] text-on-surface-variant">Your tier, benefits and renewal date</p>
-            </div>
-          </div>
-          <span
-            id="membership-tier-pill"
-            className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${
-              membershipActive
-                ? 'bg-amber-500/15 text-amber-800 border-amber-500/30'
-                : 'bg-surface-container text-on-surface-variant border-outline-variant/40'
-            }`}
-          >
-            {membershipActive ? membershipLabel : 'Standard'}
-          </span>
-        </div>
-
-        {membershipActive ? (
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-            <div>
-              <p className="text-[13px] font-bold text-on-surface">
-                {membershipLabel} is active
-              </p>
-              <p className="text-[11px] text-on-surface-variant mt-0.5">
-                {membershipDaysLeft !== null && membershipDaysLeft > 0
-                  ? `Renews on ${membershipExpiry?.toLocaleDateString('en-IN', {
-                      day: 'numeric',
-                      month: 'short',
-                      year: 'numeric',
-                    })} — ${membershipDaysLeft} day${membershipDaysLeft === 1 ? '' : 's'} left.`
-                  : 'Renewal date recorded.'}
-              </p>
-            </div>
-            <span className="text-[11px] font-semibold text-amber-800 bg-amber-500/10 border border-amber-500/30 px-3 py-1.5 rounded-xl">
-              Priority booking & member rates
-            </span>
-          </div>
-        ) : membershipTier !== 'standard' && membershipDaysLeft !== null && membershipDaysLeft <= 0 ? (
-          <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-[12px] text-rose-800">
-            Your {membershipLabel} membership expired on{' '}
-            {membershipExpiry?.toLocaleDateString('en-IN', {
-              day: 'numeric',
-              month: 'short',
-              year: 'numeric',
-            })}
-            . Renew to keep member rates and priority booking.
-          </div>
-        ) : (
-          <p className="text-[12px] text-on-surface-variant leading-relaxed">
-            You are on the Standard plan — every booking still earns reward points. Paid tiers add
-            member rates and priority booking; ask at any partner salon or contact Support to
-            upgrade.
-          </p>
-        )}
-      </div>
-
-      {/* ========================================================================= */}
       {/* 2c. ADDRESSES                                                             */}
       {/* ========================================================================= */}
       <div
@@ -1441,15 +1308,6 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
           <span>Save Address</span>
         </button>
       </div>
-
-      {/* ========================================================================= */}
-      {/* 3. REWARDS & REFERRAL CLUB SECTION                                        */}
-      {/* ========================================================================= */}
-      <ReferralFeatureSection
-        user={user}
-        onUpdateUser={onUpdateUser}
-        showToast={showToast}
-      />
 
       {/* ========================================================================= */}
       {/* 4. PAYMENT OVERVIEW & SPENDING TRENDS (D3.JS LIVE ANALYTICS)              */}
@@ -1597,25 +1455,6 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
                 className="rounded text-primary focus:ring-primary w-4 h-4 cursor-pointer"
               />
             </div>
-
-            {/* 4. AI Style Insights */}
-            <div className="flex items-center justify-between text-[12px] p-2.5 rounded-xl bg-surface-container-lowest/80 border border-outline-variant/20">
-              <div className="flex items-center gap-2.5">
-                <span className="material-symbols-outlined text-[18px] text-[#b00055]">auto_awesome</span>
-                <div>
-                  <span className="text-on-surface font-semibold block">AI Style Advisor Insights</span>
-                  <span className="text-[10px] text-on-surface-variant">
-                    Seasonal hair care recommendations & curated stylist tips
-                  </span>
-                </div>
-              </div>
-              <input
-                type="checkbox"
-                checked={aiAdvisorAlerts}
-                onChange={() => handleToggleGranularSetting('aiAdvisorAlerts')}
-                className="rounded text-primary focus:ring-primary w-4 h-4 cursor-pointer"
-              />
-            </div>
           </div>
         )}
 
@@ -1711,8 +1550,6 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
                 `Name: ${user.name || '-'}`,
                 `Email: ${user.email || '-'}`,
                 `Mobile: ${user.phone || '-'}`,
-                `Member since: ${user.membershipExpiresAt ? 'see membership' : 'Standard plan'}`,
-                `Reward points: ${user.loyaltyPoints ?? 0}`,
               ].join('\n');
               const write = navigator.clipboard?.writeText(details);
               if (write && typeof write.then === 'function') {
@@ -1909,8 +1746,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
             </div>
 
             <p className="text-[12px] text-on-surface-variant leading-relaxed">
-              Permanently deletes all saved salon favorites, booking history, reward points (₹{user.loyaltyPoints}),
-              and personalized AI hair profiles.
+              Permanently deletes your saved salons, booking history, addresses and profile details.
             </p>
 
             {deleteError && (
@@ -1958,8 +1794,7 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
 
       {/* App Version Footer */}
       <div className="text-center py-6 text-on-surface-variant text-[11px] flex flex-col gap-1">
-        <p className="font-semibold text-on-surface">Nexora SalonOS · Enterprise v2.5</p>
-        <p>Grounded in Google Maps & Gemini 3.7 Beauty Intelligence</p>
+        <p className="font-semibold text-on-surface">Nexora SalonOS v2.5</p>
       </div>
 
       {/* Privacy Policy / Terms of Service */}

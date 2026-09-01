@@ -9,7 +9,6 @@ interface HeaderProps {
   onOpenProfile: () => void;
   onOpenNotifications: () => void;
   onOpenAuth?: () => void;
-  onOpenSalonOnboarding?: () => void;
   hasUnreadNotifications?: boolean;
 }
 
@@ -21,7 +20,6 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenProfile,
   onOpenNotifications,
   onOpenAuth,
-  onOpenSalonOnboarding,
   // Driven by the real unread count from the database — no permanent fake dot.
   hasUnreadNotifications = false,
 }) => {
@@ -60,21 +58,7 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Action Controls */}
         <div className="flex items-center gap-2">
-          {/* Partner / List Salon Button */}
-          {onOpenSalonOnboarding && (
-            <button
-              type="button"
-              id="header-list-salon-btn"
-              onClick={onOpenSalonOnboarding}
-              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface-container text-on-surface hover:text-primary hover:bg-primary/10 border border-outline-variant/40 text-[12px] font-bold transition-all cursor-pointer shadow-2xs"
-              title="Partner Onboarding: Register Your Salon"
-            >
-              <span className="material-symbols-outlined text-[16px] text-primary">add_business</span>
-              <span>List Salon</span>
-            </button>
-          )}
-
-          {/* 1. Show Sign In / Register Button ONLY when Logged Out (isAuthenticated === false) */}
+          {/* Show Sign In / Register Button ONLY when Logged Out (isAuthenticated === false) */}
           {!isAuthenticated && onOpenAuth && (
             <button
               type="button"

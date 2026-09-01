@@ -243,17 +243,6 @@ export const AppointmentsTab: React.FC<AppointmentsTabProps> = ({
 
                   {apt.status === 'completed' && (
                     <div className="w-full flex flex-col gap-3">
-                      {/* Loyalty Rewards Credit Badge */}
-                      <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-between text-[11px]">
-                        <div className="flex items-center gap-1.5 text-emerald-800 dark:text-emerald-300 font-semibold">
-                          <span className="material-symbols-outlined text-[16px] text-success-emerald">stars</span>
-                          <span>Loyalty Reward Credited</span>
-                        </div>
-                        <span className="font-bold text-emerald-800 dark:text-emerald-200">
-                          +{Math.round((apt.totalPrice || 500) * 0.1)} pts (₹{Math.round((apt.totalPrice || 500) * 0.05)} discount)
-                        </span>
-                      </div>
-
                       {reviewSubmittedId === apt.id ? (
                         <div className="p-2.5 bg-success-emerald/10 text-success-emerald rounded-lg text-[12px] font-semibold flex items-center gap-1.5">
                           <span className="material-symbols-outlined text-[16px]">check_circle</span>

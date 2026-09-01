@@ -537,7 +537,7 @@ export { DEFAULT_PREFERENCES };
  */
 export function resolveNotificationTarget(
   notification: AppNotification
-): { tab: 'appointments' | 'saved' | 'profile' | 'home' | 'explore'; section?: string; id?: string } | null {
+): { tab: 'appointments' | 'saved' | 'profile' | 'home'; section?: string; id?: string } | null {
   const route = notification.payload?.route ?? NOTIFICATION_META[notification.type].route;
   switch (route) {
     case 'appointments':
@@ -546,9 +546,8 @@ export function resolveNotificationTarget(
     case 'rewards':
     case 'referrals':
     case 'membership':
-      return { tab: 'profile', section: 'section-rewards' };
     case 'offers':
-      return { tab: 'explore', id: notification.payload?.offerId };
+      return { tab: 'profile' };
     case 'support':
       return { tab: 'profile', section: 'section-app-settings' };
     case 'profile':

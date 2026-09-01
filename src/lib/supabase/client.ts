@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { createLocalDemoClient } from './localDemo';
 
 /**
  * Nexora universal Supabase client (Customer App).
@@ -143,7 +144,24 @@ const hasValidUrl = Boolean(
 );
 const hasAnonKey = Boolean(supabaseAnonKey && supabaseAnonKey.length > 20);
 
-export const isSupabaseConfigured = Boolean(hasValidUrl && hasAnonKey && !isPrivilegedKey);
+export const isRealSupabaseConfigured = Boolean(hasValidUrl && hasAnonKey && !isPrivilegedKey);
+
+/**
+ * When no live project is configured the app does NOT disable auth — it falls
+ * back to a local demo client (see localDemo.ts) so the whole sign-up →
+ * search → book → confirmation flow runs on-device. Browsers only; a Node
+ * context with no localStorage keeps the classic "unconfigured" behavior.
+ */
+const canUseLocalDemo =
+  !isRealSupabaseConfigured &&
+  typeof window !== 'undefined' &&
+  typeof localStorage !== 'undefined';
+
+/** True when auth/data operations have a working client (live OR demo). */
+export const isSupabaseConfigured = isRealSupabaseConfigured || canUseLocalDemo;
+
+/** True only when running on the local demo client (no live Supabase). */
+export const isLocalDemoMode = canUseLocalDemo;
 
 /**
  * Safe diagnostics — reports whether config exists without ever printing the full key.
@@ -160,6 +178,14 @@ function logConfigDiagnostics(): void {
     isDev = getEnvVar('MODE') === 'development' || getEnvVar('DEV') === 'true';
   }
   
+  if (isLocalDemoMode) {
+    console.info(
+      '[Nexora] Local demo mode — accounts, bookings and notifications stay in this browser. ' +
+        'Add VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY to .env for live cloud auth.'
+    );
+    return;
+  }
+
   if (!isSupabaseConfigured) {
     console.warn(
       '[Nexora] Supabase not configured — live authentication unavailable. ' +
@@ -217,6 +243,9 @@ const globalRef = globalThis as typeof globalThis & {
 };
 
 function createNexoraClient(): SupabaseClient | null {
+  if (isLocalDemoMode) {
+    return createLocalDemoClient(NEXORA_AUTH_STORAGE_KEY) as unknown as SupabaseClient;
+  }
   if (!isSupabaseConfigured) return null;
 
   return createClient(NEXORA_SUPABASE_URL, supabaseAnonKey, {

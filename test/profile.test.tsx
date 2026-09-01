@@ -6,11 +6,11 @@
  *
  * Verified guarantees
  * -------------------
- *   1. Profile Overview shows photo, full name, email, mobile, membership
- *      badge and reward balance — driven by stored data only
+ *   1. Profile Overview shows photo, full name, email, mobile — driven by
+ *      stored data only (membership/rewards/referrals were removed)
  *   2. no fabricated values: no placeholder phone/locality, no hardcoded
  *      "VIP Club Member", no assumed referral counts or reward credits
- *   3. the membership badge is honest about active vs expired vs standard
+ *   3. the profile screen contains no membership, rewards or referral UI
  *   4. the Profile Menu lists exactly the 13 specified items, in order
  *   5. every menu item performs a real action (navigate, open panel, open
  *      document, scroll to its own section)
@@ -266,7 +266,7 @@ const Harness: React.FC<HarnessProps> = ({
   );
   return (
     <AuthProvider>
-      <ProfileTab user={user} onUpdateUser={update} onOpenAIAdvisor={() => {}} {...handlers} />
+      <ProfileTab user={user} onUpdateUser={update} {...handlers} />
     </AuthProvider>
   );
 };
@@ -294,15 +294,9 @@ console.log('\n--- TEST A: Profile Overview ---');
   check('A5 overview shows the email', bodyText().includes('ananya@example.com'));
   check('A6 overview shows the mobile number', bodyText().includes('+91 90000 11111'));
 
-  // 5. membership badge — no paid tier stored, so it must read Standard
-  const badge = byId('profile-membership-badge');
-  check('A7 membership badge renders', Boolean(badge));
-  check('A8 badge is Standard when no paid tier is stored', text('profile-membership-badge').trim() === 'Standard Member', text('profile-membership-badge'));
-  check('A9 badge is flagged inactive for a standard account', badge?.getAttribute('data-active') === 'false');
-
-  // 6. reward balance
-  check('A10 reward points shown from stored loyaltyPoints', text('profile-reward-points').includes('1250 Reward Points'), text('profile-reward-points'));
-  check('A11 reward balance = earned - claimed', text('profile-reward-balance').includes('₹300 Reward Balance'), text('profile-reward-balance'));
+  // Membership badges and reward strips were removed from the profile screen.
+  check('A7 no membership badge in the simplified hero', !byId('profile-membership-badge'));
+  check('A8 no reward points strip', !byId('profile-reward-points'));
 
   await unmount();
 }
@@ -323,8 +317,8 @@ console.log('\n--- TEST B: no invented data ---');
   check('B2 no invented locality', !bodyText().includes('Mansarovar'));
   check('B3 no hardcoded VIP Club Member badge', !bodyText().includes('VIP Club Member'));
   check('B4 empty phone shows an honest empty state', bodyText().includes('No mobile number added'));
-  check('B5 a zero-reward account shows a real ₹0 balance', text('profile-reward-balance').includes('₹0 Reward Balance'), text('profile-reward-balance'));
-  check('B6 no fabricated 3-referred-friends credit', !text('profile-reward-balance').includes('₹450'), text('profile-reward-balance'));
+  check('B5 no reward balance strip is rendered anymore', !byId('profile-reward-balance'));
+  check('B6 no referral section is rendered anymore', !byId('section-rewards'));
   check('B7 source no longer contains the old fake defaults', !html.includes('referredFriends.length ?? 3'));
 
   // The phone input may keep a placeholder, but it must not be a value.
@@ -335,34 +329,6 @@ console.log('\n--- TEST B: no invented data ---');
 }
 
 // ===========================================================================
-// TEST C — membership honesty: active, expired and standard
-// ===========================================================================
-console.log('\n--- TEST C: membership badge ---');
-{
-  const future = new Date(Date.now() + 20 * 24 * 3600 * 1000).toISOString();
-  const past = new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString();
-
-  latestSaved = null;
-  await mount(<Harness initial={makeUser({ membershipTier: 'gold', membershipExpiresAt: future })} />);
-  check('C1 active gold membership shows Gold Member', text('profile-membership-badge').trim() === 'Gold Member', text('profile-membership-badge'));
-  check('C2 active membership flagged data-active=true', byId('profile-membership-badge')?.getAttribute('data-active') === 'true');
-  check('C3 membership section reports days left', text('section-membership').includes('day'), text('section-membership').slice(0, 120));
-  check('C4 membership pill shows the tier', text('membership-tier-pill').trim() === 'Gold Member', text('membership-tier-pill'));
-  await unmount();
-
-  latestSaved = null;
-  await mount(<Harness initial={makeUser({ membershipTier: 'platinum', membershipExpiresAt: past })} />);
-  check('C5 expired membership is NOT shown as active', byId('profile-membership-badge')?.getAttribute('data-active') === 'false');
-  check('C6 hero badge falls back to Standard when expired', text('profile-membership-badge').trim() === 'Standard Member', text('profile-membership-badge'));
-  check('C7 membership section says it expired', text('section-membership').toLowerCase().includes('expired'), text('section-membership').slice(0, 160));
-  await unmount();
-
-  latestSaved = null;
-  await mount(<Harness initial={makeUser()} />);
-  check('C8 standard account shows the upgrade explainer, not a fake tier', text('section-membership').toLowerCase().includes('standard plan'), text('section-membership').slice(0, 120));
-  await unmount();
-}
-
 // ===========================================================================
 // TEST D — Profile Menu: exactly the 13 specified items, in order
 // ===========================================================================
@@ -372,9 +338,6 @@ console.log('\n--- TEST D: profile menu contract ---');
     'Personal Information',
     'My Bookings',
     'Favourites',
-    'Referral',
-    'Membership',
-    'Rewards',
     'Notifications',
     'Addresses',
     'Support',
@@ -390,7 +353,7 @@ console.log('\n--- TEST D: profile menu contract ---');
   const buttons = Array.from(document.querySelectorAll('#profile-menu button'));
   const labels = buttons.map(menuLabel);
 
-  check('D1 menu renders exactly 13 items', buttons.length === 13, `found ${buttons.length}: ${labels.join(' | ')}`);
+  check('D1 menu renders exactly 10 items', buttons.length === 10, `found ${buttons.length}: ${labels.join(' | ')}`);
   REQUIRED.forEach((label, i) => {
     check(`D2.${i + 1} item ${i + 1} is "${label}"`, labels[i] === label, `got "${labels[i] ?? '<none>'}"`);
   });
@@ -404,9 +367,6 @@ console.log('\n--- TEST D: profile menu contract ---');
       onPersonalInformation={noop('personal')}
       onMyBookings={noop('bookings')}
       onFavourites={noop('favourites')}
-      onReferral={noop('referral')}
-      onMembership={noop('membership')}
-      onRewards={noop('rewards')}
       onNotifications={noop('notifications')}
       onAddresses={noop('addresses')}
       onSupport={noop('support')}
@@ -421,9 +381,6 @@ console.log('\n--- TEST D: profile menu contract ---');
     'profile-menu-personal-information',
     'profile-menu-my-bookings',
     'profile-menu-favourites',
-    'profile-menu-referral',
-    'profile-menu-membership',
-    'profile-menu-rewards',
     'profile-menu-notifications',
     'profile-menu-addresses',
     'profile-menu-support',
@@ -435,8 +392,8 @@ console.log('\n--- TEST D: profile menu contract ---');
   for (const id of ids) check(`D3 ${id} exists`, Boolean(byId(id)));
   for (const id of ids) await click(byId(id));
   check(
-    'D4 all 13 menu callbacks fired',
-    fired.length === 13,
+    'D4 all 10 menu callbacks fired',
+    fired.length === 10,
     fired.join(',')
   );
 
@@ -453,9 +410,6 @@ console.log('\n--- TEST D: profile menu contract ---');
       onPersonalInformation={noop('personal')}
       onMyBookings={noop('bookings')}
       onFavourites={noop('favourites')}
-      onReferral={noop('referral')}
-      onMembership={noop('membership')}
-      onRewards={noop('rewards')}
       onNotifications={noop('notifications')}
       onAddresses={noop('addresses')}
       onSupport={noop('support')}
@@ -506,9 +460,6 @@ console.log('\n--- TEST E: menu actions ---');
   // Section targets must actually exist in the DOM, so scrolling is real.
   const scrollTargets: [string, string][] = [
     ['profile-menu-personal-information', 'section-personal-details'],
-    ['profile-menu-membership', 'section-membership'],
-    ['profile-menu-referral', 'section-rewards'],
-    ['profile-menu-rewards', 'section-rewards'],
     ['profile-menu-addresses', 'section-addresses'],
     ['profile-menu-support', 'section-support'],
     ['profile-menu-app-settings', 'section-app-settings'],
@@ -683,7 +634,7 @@ console.log('\n--- TEST I: legal modal ---');
 
   await mount(<ProfileLegalModal document="terms" onClose={() => (closes += 1)} />);
   check('I6 terms container id', Boolean(byId('legal-modal-terms')));
-  check('I7 terms state the first-valid-referral rule', bodyText().includes('first valid referral stands'));
+  check('I7 terms have no rewards/referral promises', !bodyText().includes('first valid referral stands') && bodyText().includes('Acceptable use'));
   await unmount();
 }
 
@@ -720,8 +671,8 @@ console.log('\n--- TEST J: App integration ---');
 
   check('J2 profile menu renders inside the app', Boolean(byId('profile-menu')));
   check('J3 hero card renders inside the app', Boolean(byId('profile-hero-card')));
-  check('J4 all 13 menu items render inside the app', document.querySelectorAll('#profile-menu button').length === 13, String(document.querySelectorAll('#profile-menu button').length));
-  check('J5 membership section is part of the app profile', Boolean(byId('section-membership')));
+  check('J4 all 10 menu items render inside the app', document.querySelectorAll('#profile-menu button').length === 10, String(document.querySelectorAll('#profile-menu button').length));
+  check('J5 membership/rewards sections are gone from the app profile', !byId('section-membership') && !byId('section-rewards'));
   check('J6 addresses section is part of the app profile', Boolean(byId('section-addresses')));
   check('J7 support section is part of the app profile', Boolean(byId('section-support')));
   check('J8 personal-information fields are part of the app profile', Boolean(byId('input-profile-gender-preference')) && Boolean(byId('input-profile-preferred-location')));

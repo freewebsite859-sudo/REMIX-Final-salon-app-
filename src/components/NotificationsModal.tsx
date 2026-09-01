@@ -249,7 +249,7 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
             <p className="text-[11px] max-w-[260px] leading-snug">
               {filter === 'unread'
                 ? 'You are all caught up.'
-                : 'Booking updates, rewards, referrals and offers will appear here.'}
+                : 'Updates about your bookings will appear here.'}
             </p>
           </div>
         )}
