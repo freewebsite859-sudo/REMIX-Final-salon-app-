@@ -1,5 +1,5 @@
 import React from 'react';
-import { isSupabaseConfigured, getSupabaseConfigStatus } from '../lib/supabase';
+import { isSupabaseConfigured, isLocalDemoMode, getSupabaseConfigStatus } from '../lib/supabase';
 
 interface SupabaseConfigBannerProps {
   /** What the user is trying to do, e.g. "sign in" or "reset your password". */
@@ -22,6 +22,33 @@ export const SupabaseConfigBanner: React.FC<SupabaseConfigBannerProps> = ({
   action = 'continue',
   compact = false,
 }) => {
+  // Local demo mode is a working configuration, not a fault — say so plainly
+  // instead of the red "you cannot sign in" alert.
+  if (isLocalDemoMode) {
+    return (
+      <div
+        id="supabase-config-banner"
+        data-reason="demo-mode"
+        className={`rounded-2xl border border-sky-500/30 bg-sky-500/10 text-sky-900 ${
+          compact ? 'p-3' : 'p-4'
+        }`}
+      >
+        <div className="flex items-start gap-2.5">
+          <span className="material-symbols-outlined text-[20px] shrink-0 mt-0.5">bolt</span>
+          <div className="min-w-0">
+            <p className="text-[13px] font-bold leading-snug">
+              Demo mode is on — sign up &amp; sign in work right here
+            </p>
+            <p className="text-[11px] leading-relaxed mt-1">
+              Accounts, bookings and notifications stay in this browser only. For live cloud sync, add your
+              Supabase URL and anon key to .env and restart the app — no code changes needed.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (isSupabaseConfigured) return null;
 
   const status = getSupabaseConfigStatus();

@@ -23,7 +23,7 @@ const PRIVACY_SECTIONS: LegalSection[] = [
   {
     heading: 'Why we collect it',
     body:
-      'To create and secure your account, confirm and remind you about appointments, process payments, apply rewards and referrals, and personalise salon recommendations. Location data is used only to sort and distance-match salons.',
+      'To create and secure your account, confirm and remind you about appointments, and process payments. Location data is used only to sort and distance-match salons.',
   },
   {
     heading: 'Where it is stored',
@@ -69,11 +69,6 @@ const TERMS_SECTIONS: LegalSection[] = [
       'You can cancel or request a reschedule from My Bookings. Whether a cancellation is free depends on the salon’s policy and how much notice you give.',
   },
   {
-    heading: 'Rewards, referrals and membership',
-    body:
-      'Reward points and referral benefits are credited when the qualifying action is recorded in our database — not when a link is merely opened. One referral relationship is stored per account and the first valid referral stands. Membership benefits apply only while the membership is active.',
-  },
-  {
     heading: 'Acceptable use',
     body:
       'Do not misuse the service, attempt to access other users’ data, or submit false bookings. We may suspend an account that does so.',
@@ -89,9 +84,8 @@ const TERMS_SECTIONS: LegalSection[] = [
  * Privacy Policy / Terms viewer.
  *
  * The copy describes what this application actually does (Supabase storage,
- * RLS-scoped rows, provider-confirmed WhatsApp delivery, first-valid-referral
- * rule). It makes no claims about certifications or guarantees the product
- * does not have.
+ * RLS-scoped rows, provider-confirmed WhatsApp delivery). It makes no claims
+ * about certifications or guarantees the product does not have.
  */
 export const ProfileLegalModal: React.FC<ProfileLegalModalProps> = ({
   document,

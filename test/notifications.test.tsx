@@ -363,7 +363,7 @@ async function run() {
   );
 
   // =========================================================================
-  // 3. Open related screen (deep link) — reward → Profile rewards section
+  // 3. Open related screen (deep link) — reward → Profile tab
   // =========================================================================
   await act(async () => {
     const rewardRow = Array.from(document.querySelectorAll('[role="button"]')).find((el) =>
@@ -374,8 +374,8 @@ async function run() {
   });
   check('notification click closes the centre', !byId('notifications-modal-container'));
   check(
-    'reward notification deep-links to the profile rewards section',
-    bodyText().includes('Refer a Friend & Rewards Club'),
+    'reward notification lands on the profile screen',
+    Boolean(byId('profile-hero-card')),
     bodyText().slice(0, 80)
   );
 

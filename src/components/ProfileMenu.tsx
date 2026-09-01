@@ -8,9 +8,6 @@ export interface ProfileMenuProps {
   onPersonalInformation: () => void;
   onMyBookings: () => void;
   onFavourites: () => void;
-  onReferral: () => void;
-  onMembership: () => void;
-  onRewards: () => void;
   onNotifications: () => void;
   onAddresses: () => void;
   onSupport: () => void;
@@ -50,9 +47,6 @@ export const ProfileMenu: React.FC<ProfileMenuProps> = ({
   onPersonalInformation,
   onMyBookings,
   onFavourites,
-  onReferral,
-  onMembership,
-  onRewards,
   onNotifications,
   onAddresses,
   onSupport,
@@ -62,9 +56,8 @@ export const ProfileMenu: React.FC<ProfileMenuProps> = ({
   onLogout,
 }) => {
   // Groups are ordered so the rendered menu matches the product spec exactly:
-  // Personal Information, My Bookings, Favourites, Referral, Membership,
-  // Rewards, Notifications, Addresses, Support, App Settings, Privacy Policy,
-  // Terms, Logout. Group headings never re-order these items.
+  // Personal Information, My Bookings, Favourites, Notifications, Addresses,
+  // Support, App Settings, Privacy Policy, Terms, Logout.
   const groups: MenuGroup[] = [
     {
       title: 'Account',
@@ -95,34 +88,13 @@ export const ProfileMenu: React.FC<ProfileMenuProps> = ({
       ],
     },
     {
-      title: 'Programme',
+      title: 'Stay updated',
       items: [
-        {
-          key: 'referral',
-          label: 'Referral',
-          icon: 'redeem',
-          description: 'Invite friends and track your invites',
-          action: onReferral,
-        },
-        {
-          key: 'membership',
-          label: 'Membership',
-          icon: 'card_membership',
-          description: 'Tier, benefits and renewal date',
-          action: onMembership,
-        },
-        {
-          key: 'rewards',
-          label: 'Rewards',
-          icon: 'loyalty',
-          description: 'Points balance and redeemable credit',
-          action: onRewards,
-        },
         {
           key: 'notifications',
           label: 'Notifications',
           icon: 'notifications',
-          description: 'Booking, reward and offer updates',
+          description: 'Booking updates and salon confirmations',
           action: onNotifications,
           badge: unreadNotifications,
         },

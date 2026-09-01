@@ -66,7 +66,7 @@ export function isSignupRoute(path: string = currentPath()): boolean {
 /**
  * Navigate to the signup screen with SPA history (same mechanism as
  * `redirectToLogin`, so the Supabase client and its session stay alive).
- * Any referral query string already on the URL is preserved.
+ * The existing query string is preserved.
  */
 export function redirectToSignup(options: { replace?: boolean } = {}): boolean {
   if (typeof window === 'undefined') return false;

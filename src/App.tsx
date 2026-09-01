@@ -4,17 +4,13 @@ import { useCatalog } from './hooks/useCatalog';
 import { Header } from './components/Header';
 import { BottomNav } from './components/BottomNav';
 import { HomeTab } from './components/HomeTab';
-import { ExploreTab } from './components/ExploreTab';
 import { AppointmentsTab } from './components/AppointmentsTab';
 import { SavedTab } from './components/SavedTab';
 import { ProfileTab } from './components/ProfileTab';
 import { LocationModal } from './components/LocationModal';
 import { BookingModal } from './components/BookingModal';
 import { SalonDetailModal } from './components/SalonDetailModal';
-import { AIAdvisorModal } from './components/AIAdvisorModal';
-import { QuickNearestModal } from './components/QuickNearestModal';
 import { NotificationsModal } from './components/NotificationsModal';
-import { ServiceCategoryScreen } from './components/ServiceCategoryScreen';
 import { ChooseProfessionalScreen } from './components/ChooseProfessionalScreen';
 import { BookingSummaryModal } from './components/BookingSummaryModal';
 import { AuthPage } from './components/auth/AuthPage';
@@ -26,14 +22,6 @@ import { clearUserLocation, syncUserLocation } from './lib/locationService';
 import { isAppointmentUpcoming } from './lib/appointments';
 import { currentPath, isAuthRoute, isSignupRoute, redirectToApp, redirectToLogin } from './lib/authRoutes';
 import { fetchUserProfile } from './lib/profileService';
-import {
-  clearReferralContext,
-  finalizePendingReferral,
-  getStoredReferralCode,
-  getStoredReferralContext,
-  readReferralCodeFromUrl,
-  redirectReferralEntryToSignup,
-} from './lib/referralService';
 import {
   listNotifications,
   resolveNotificationTarget,
@@ -238,9 +226,6 @@ export default function App() {
   const [savedServices, setSavedServices] = useState<SavedServiceRef[]>([]);
   const hydratedUserIdRef = useRef<string | null>(null);
   
-  // Dedicated Category & Service Screen
-  const [selectedCategoryScreen, setSelectedCategoryScreen] = useState<string | null>(null);
-
   // Dedicated Choose Professional Screen
   const [chooseProfessionalData, setChooseProfessionalData] = useState<{
     salon?: Salon | null;
@@ -261,22 +246,12 @@ export default function App() {
 
   // Modals state
   const [showAuthScreen, setShowAuthScreen] = useState<boolean>(() => isAuthRoute());
-  // Referral entry state: an invite link opens Signup (not Home) with its code
-  // pre-filled. The code itself lives in the temporary referral context and in
-  // the database after signup — never only in this component state.
   const [authInitialMode, setAuthInitialMode] = useState<'login' | 'signup'>(() =>
     isSignupRoute() ? 'signup' : 'login'
-  );
-  const [referralEntryCode, setReferralEntryCode] = useState<string | null>(() =>
-    readReferralCodeFromUrl() ?? (typeof window !== 'undefined' ? getStoredReferralCode() : null)
   );
   const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
   const [isSalonDetailModalOpen, setIsSalonDetailModalOpen] = useState(false);
-  const [isAIAdvisorModalOpen, setIsAIAdvisorModalOpen] = useState(false);
-  const [aiAdvisorInitialTab, setAiAdvisorInitialTab] = useState<'quiz' | 'chat' | 'sentiment'>('quiz');
-  const [aiAdvisorInitialSalonId, setAiAdvisorInitialSalonId] = useState<string | undefined>(undefined);
-  const [isQuickNearestModalOpen, setIsQuickNearestModalOpen] = useState(false);
   const [isNotificationsModalOpen, setIsNotificationsModalOpen] = useState(false);
 
   // ---------------------------------------------------------------------------
@@ -335,7 +310,6 @@ export default function App() {
       const target = resolveNotificationTarget(notification);
       if (!target) return;
       setChooseProfessionalData(null);
-      setSelectedCategoryScreen(null);
       setIsNotificationsModalOpen(false);
       setActiveTab(target.tab);
       // Scroll to the section the notification refers to, once it is mounted.
@@ -357,7 +331,6 @@ export default function App() {
   const [selectedServiceForBooking, setSelectedServiceForBooking] = useState<SalonService | null>(null);
   const [selectedServicesForBooking, setSelectedServicesForBooking] = useState<SalonService[] | null>(null);
   const [selectedStylistForBooking, setSelectedStylistForBooking] = useState<Stylist | null>(null);
-  const [exploreQuery, setExploreQuery] = useState<string>('');
 
   // Active upcoming appointment for reminder banner. A stale `confirmed` row
   // must not be presented as an upcoming visit after a reload.
@@ -402,61 +375,6 @@ export default function App() {
       }
     }
   }, [session, isAuthLoading, activeTab]);
-
-  // ---------------------------------------------------------------------------
-  // REFERRAL ENTRY
-  // An invite link (`?ref=CODE` on ANY route, including `/`) must open the
-  // Signup screen with the code pre-filled — never the generic homepage. The
-  // code is captured into the temporary referral context BEFORE the URL is
-  // rewritten, so it survives the redirect, a page refresh, and a detour to
-  // Login and back.
-  // ---------------------------------------------------------------------------
-  useEffect(() => {
-    // Wait for session restore so a signed-in user is never pushed to signup.
-    if (isSupabaseConfigured && isAuthLoading) return;
-    if (session?.user) return;
-
-    const codeInUrl = readReferralCodeFromUrl();
-    const navigated = redirectReferralEntryToSignup();
-    if (!codeInUrl && !navigated) return;
-
-    const code = codeInUrl ?? getStoredReferralCode();
-    if (code) setReferralEntryCode(code);
-    setAuthInitialMode('signup');
-    setShowAuthScreen(true);
-  }, [isAuthLoading, session?.user]);
-
-  // ---------------------------------------------------------------------------
-  // REFERRAL CATCH-UP
-  // If the Supabase project requires email confirmation, signup returns no
-  // session, so the relationship is written as soon as the confirmed session
-  // appears. Accounts older than the pending window are ignored, which keeps an
-  // existing user signing in later from being silently re-attributed.
-  // ---------------------------------------------------------------------------
-  useEffect(() => {
-    const sessionUser = session?.user;
-    const uid = sessionUser?.id;
-    if (!uid || !isSupabaseConfigured) return;
-    const context = getStoredReferralContext();
-    if (!context?.code) return;
-
-    let cancelled = false;
-    void (async () => {
-      const result = await finalizePendingReferral({
-        userId: uid,
-        code: context.code,
-        capturedAt: context.capturedAt,
-        accountCreatedAt: sessionUser?.created_at ?? null,
-      });
-      if (cancelled || !result) return;
-      // Keep the context only while the backend could not accept it yet.
-      if (result.status !== 'unavailable') clearReferralContext();
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [session?.user]);
 
   // Load only this authenticated user's UI profile and local drafts. These
   // values are deliberately namespaced by the authoritative Supabase user id;
@@ -629,15 +547,6 @@ export default function App() {
   }, [user, userId]);
 
   // Handlers
-  const handleOpenAIAdvisor = (
-    tab: 'quiz' | 'chat' | 'sentiment' = 'quiz',
-    salonId?: string
-  ) => {
-    setAiAdvisorInitialTab(tab);
-    setAiAdvisorInitialSalonId(salonId);
-    setIsAIAdvisorModalOpen(true);
-  };
-
   const handleOpenSalonDetails = (salon: Salon) => {
     setSelectedSalonForDetail(salon);
     setIsSalonDetailModalOpen(true);
@@ -688,9 +597,7 @@ export default function App() {
   const handleViewAppointments = () => {
     setIsBookingModalOpen(false);
     setIsBookingSummaryModalOpen(false);
-    setIsQuickNearestModalOpen(false);
     setChooseProfessionalData(null);
-    setSelectedCategoryScreen(null);
     setActiveTab('appointments');
   };
 
@@ -708,16 +615,6 @@ export default function App() {
       }
       return [...prev, { salonId, serviceId }];
     });
-  };
-
-  const handleSearchSubmit = (query: string) => {
-    setExploreQuery(query);
-    setSelectedCategoryScreen(null);
-    setActiveTab('explore');
-  };
-
-  const handleSelectCategory = (category: string) => {
-    setSelectedCategoryScreen(category);
   };
 
   const handleCancelAppointment = (id: string) => {
@@ -816,7 +713,6 @@ export default function App() {
     return (
       <AuthPage
         initialMode={authInitialMode}
-        initialReferralCode={referralEntryCode}
         onAuthSuccess={(authData) => {
           setUser((prev) => ({
             ...prev,
@@ -825,8 +721,6 @@ export default function App() {
             phone: authData.phone || prev.phone,
             role: authData.role || prev.role || 'customer',
           }));
-          // The invite has been consumed: the database now owns the referral.
-          setReferralEntryCode(null);
           setAuthInitialMode('login');
           // AuthPage calls this after Supabase accepts the credentials; the
           // provider's session remains the authority for authenticated UI.
@@ -863,7 +757,6 @@ export default function App() {
           onOpenNotifications={() => setIsNotificationsModalOpen(true)}
           onOpenProfile={() => {
             setChooseProfessionalData(null);
-            setSelectedCategoryScreen(null);
             if (isAuthenticated) {
               setActiveTab('profile');
             } else {
@@ -872,7 +765,6 @@ export default function App() {
           }}
           onSelectTab={(tab) => {
             setChooseProfessionalData(null);
-            setSelectedCategoryScreen(null);
             if (tab === 'profile' && !isAuthenticated) {
               setShowAuthScreen(true);
             } else {
@@ -905,42 +797,6 @@ export default function App() {
             setIsBookingSummaryModalOpen(true);
           }}
         />
-      ) : selectedCategoryScreen ? (
-        <ServiceCategoryScreen
-          user={user}
-          categoryTitle={selectedCategoryScreen}
-          currentLocation={currentLocation}
-          salons={salons}
-          savedSalonIds={savedSalonIds}
-          activeAppointmentsCount={appointments.filter((a) => a.status === 'confirmed').length}
-          onBack={() => setSelectedCategoryScreen(null)}
-          onOpenLocation={() => setIsLocationModalOpen(true)}
-          onOpenNotifications={() => setIsNotificationsModalOpen(true)}
-          onOpenProfile={() => {
-            setSelectedCategoryScreen(null);
-            if (isAuthenticated) {
-              setActiveTab('profile');
-            } else {
-              setShowAuthScreen(true);
-            }
-          }}
-          onSelectTab={(tab) => {
-            setSelectedCategoryScreen(null);
-            if (tab === 'profile' && !isAuthenticated) {
-              setShowAuthScreen(true);
-            } else {
-              setActiveTab(tab);
-            }
-          }}
-          onToggleSaveSalon={handleToggleSaveSalon}
-          onOpenSalonDetails={handleOpenSalonDetails}
-          onBookService={(salon, service, stylist) => {
-            handleOpenBooking(salon, service, stylist);
-          }}
-          onChooseProfessional={(salon, service, services) => {
-            setChooseProfessionalData({ salon, service, services });
-          }}
-        />
       ) : (
         <>
           {/* Fixed Header */}
@@ -967,33 +823,15 @@ export default function App() {
               <HomeTab
                 user={user}
                 salons={salons}
+                currentLocation={currentLocation}
                 upcomingAppointment={upcomingAppointment}
                 savedSalonIds={savedSalonIds}
-                savedServicesCount={savedServices.length}
                 onOpenSalonDetails={handleOpenSalonDetails}
                 onBookSalon={handleOpenBooking}
                 onOpenAppointmentDetails={(apt) => {
                   setActiveTab('appointments');
                 }}
                 onToggleSaveSalon={handleToggleSaveSalon}
-                onOpenQuickNearest={() => setIsQuickNearestModalOpen(true)}
-                onOpenAIAdvisor={() => setIsAIAdvisorModalOpen(true)}
-                onSelectCategory={handleSelectCategory}
-                onSearchSubmit={handleSearchSubmit}
-                onSelectSavedTab={() => setActiveTab('saved')}
-              />
-            )}
-
-            {activeTab === 'explore' && (
-              <ExploreTab
-                salons={salons}
-                currentLocation={currentLocation}
-                savedSalonIds={savedSalonIds}
-                initialSearchQuery={exploreQuery}
-                onOpenSalonDetails={handleOpenSalonDetails}
-                onBookSalon={handleOpenBooking}
-                onToggleSaveSalon={handleToggleSaveSalon}
-                onOpenAIAdvisor={() => setIsAIAdvisorModalOpen(true)}
               />
             )}
 
@@ -1027,8 +865,7 @@ export default function App() {
                 user={user}
                 appointments={appointments}
                 onUpdateUser={setUser}
-                onOpenAIAdvisor={() => setIsAIAdvisorModalOpen(true)}
-                onNavigateToBooking={() => setActiveTab('explore')}
+                onNavigateToBooking={() => setActiveTab('home')}
                 onViewAppointments={handleViewAppointments}
                 onViewFavourites={() => setActiveTab('saved')}
                 onOpenNotifications={() => setIsNotificationsModalOpen(true)}
@@ -1044,7 +881,6 @@ export default function App() {
           <BottomNav
             activeTab={activeTab}
             onSelectTab={(tab) => {
-              setSelectedCategoryScreen(null);
               if (tab === 'profile' && !isAuthenticated) {
                 setShowAuthScreen(true);
               } else {
@@ -1118,8 +954,7 @@ export default function App() {
         }}
         onChangeSalon={() => {
           setIsBookingSummaryModalOpen(false);
-          setSelectedCategoryScreen(null);
-          setActiveTab('explore');
+          setActiveTab('home');
         }}
         onChangeServices={() => {
           if (!bookingSummaryDraft || !bookingSummaryDraft.salon) return;
@@ -1163,53 +998,10 @@ export default function App() {
             : []
         }
         onToggleSaveService={handleToggleSaveService}
-        onOpenAIAdvisorSentiment={(salon) => {
-          handleOpenAIAdvisor('sentiment', salon.id);
-        }}
         onBookService={(salon, srv, st) => {
           setIsSalonDetailModalOpen(false);
           handleOpenBooking(salon, srv, st);
         }}
-      />
-
-      <AIAdvisorModal
-        isOpen={isAIAdvisorModalOpen}
-        onClose={() => setIsAIAdvisorModalOpen(false)}
-        user={user}
-        onUpdateUser={setUser}
-        currentLocation={currentLocation}
-        salons={salons}
-        initialTab={aiAdvisorInitialTab}
-        initialSalonId={aiAdvisorInitialSalonId}
-        onSelectSalon={(s) => {
-          setIsAIAdvisorModalOpen(false);
-          handleOpenSalonDetails(s);
-        }}
-        onSelectSalonByName={(name) => {
-          const found = salons.find((s) => s.name.toLowerCase().includes(name.toLowerCase()));
-          if (found) {
-            setIsAIAdvisorModalOpen(false);
-            handleOpenSalonDetails(found);
-          }
-        }}
-        onBookService={(s, srv) => {
-          setIsAIAdvisorModalOpen(false);
-          handleOpenBooking(s, srv);
-        }}
-      />
-
-      <QuickNearestModal
-        isOpen={isQuickNearestModalOpen}
-        onClose={() => setIsQuickNearestModalOpen(false)}
-        salons={salons}
-        currentLocation={currentLocation}
-        onBookingUnavailable={() => {
-          if (!isSupabaseConfigured || !userId) {
-            setIsQuickNearestModalOpen(false);
-            setShowAuthScreen(true);
-          }
-        }}
-        onViewAppointments={handleViewAppointments}
       />
 
       <NotificationsModal

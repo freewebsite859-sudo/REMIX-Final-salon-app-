@@ -1,10 +1,7 @@
 {
   "name": "Remix Nexora SalonOS",
-  "description": "Smart salon discovery, beauty treatment booking, and modern luxury authentication & workspace management platform for Nexora Luxury Management.",
+  "description": "Salon discovery and beauty treatment booking for Nexora Luxury Management.",
   "requestFramePermissions": [
     "geolocation"
-  ],
-  "majorCapabilities": [
-    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]
 }

@@ -119,35 +119,7 @@ export interface Appointment {
   salonLongitude?: number;
 }
 
-export interface GroundingChunk {
-  maps?: {
-    uri?: string;
-    title?: string;
-    placeAnswerSources?: {
-      reviewSnippets?: {
-        snippet?: string;
-      }[];
-    };
-  };
-  web?: {
-    uri?: string;
-    title?: string;
-  };
-}
-
-export interface AISalonRecommendation {
-  summary: string;
-  recommendations: {
-    salonName: string;
-    service: string;
-    highlight: string;
-    approxPrice: string;
-    mapsUrl?: string;
-  }[];
-  groundingSources: GroundingChunk[];
-}
-
-export type ActiveTab = 'home' | 'explore' | 'appointments' | 'saved' | 'profile';
+export type ActiveTab = 'home' | 'appointments' | 'saved' | 'profile';
 
 export interface SavedServiceRef {
   salonId: string;
@@ -219,7 +191,6 @@ export interface UserProfile {
   appointmentReminders?: boolean;
   promotionalOffers?: boolean;
   whatsappAlerts?: boolean;
-  aiAdvisorAlerts?: boolean;
   appTheme?: 'light' | 'dark' | 'system';
 }
 
@@ -280,7 +251,6 @@ export interface AIStyleQuizResult {
   recommendedCutsAndStyles: string[];
   recommendedServices: RecommendedServiceMatch[];
   homeCareTips: string[];
-  groundingSources?: GroundingChunk[];
 }
 
 export interface LoyaltyReward {

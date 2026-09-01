@@ -1,8 +1,6 @@
 import React, { useState } from 'react';
 import { Salon, SalonService, Stylist, Review } from '../types';
 import { StaticMapPreview } from './StaticMapPreview';
-import { SalonPhotoGallery } from './SalonPhotoGallery';
-import { ShareSalonModal } from './ShareSalonModal';
 
 interface SalonDetailModalProps {
   salon: Salon | null;
@@ -11,16 +9,14 @@ interface SalonDetailModalProps {
   onBookService: (salon: Salon, service?: SalonService, stylist?: Stylist) => void;
   isSaved?: boolean;
   onToggleSave?: (salonId: string) => void;
-  onShareSalon?: (salon: Salon) => void;
   onAddReview?: (salonId: string, review: Review) => void;
-  initialTab?: 'services' | 'gallery' | 'reviews' | 'about';
+  initialTab?: 'services' | 'reviews' | 'about';
   userLocation?: string;
   savedServiceIds?: string[];
   onToggleSaveService?: (salonId: string, serviceId: string) => void;
-  onOpenAIAdvisorSentiment?: (salon: Salon) => void;
 }
 
-type ModalTab = 'services' | 'gallery' | 'reviews' | 'about';
+type ModalTab = 'services' | 'reviews' | 'about';
 
 export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
   salon,
@@ -29,13 +25,11 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
   onBookService,
   isSaved = false,
   onToggleSave,
-  onShareSalon,
   onAddReview,
   initialTab = 'services',
   userLocation = '',
   savedServiceIds = [],
   onToggleSaveService,
-  onOpenAIAdvisorSentiment,
 }) => {
   const [activeTab, setActiveTab] = useState<ModalTab>(initialTab);
   const [activeCategory, setActiveCategory] = useState<string>('all');
@@ -56,7 +50,6 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
   const [helpfulVotes, setHelpfulVotes] = useState<Record<string, number>>({});
   const [userVoted, setUserVoted] = useState<Record<string, boolean>>({});
   const [submitSuccessMessage, setSubmitSuccessMessage] = useState<string | null>(null);
-  const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
 
   if (!isOpen || !salon) return null;
 
@@ -200,33 +193,6 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
               <span className="material-symbols-outlined text-[20px]">arrow_back</span>
             </button>
             <div className="flex items-center gap-2">
-              <button
-                id="salon-modal-view-gallery-btn"
-                onClick={() => setActiveTab('gallery')}
-                className="px-3 py-1 bg-black/60 hover:bg-black/80 text-white rounded-full text-[11px] font-semibold backdrop-blur-md flex items-center gap-1.5 transition-colors border border-white/20 shadow-xs"
-                title="Open Photo Gallery Carousel"
-              >
-                <span className="material-symbols-outlined text-[15px]">photo_library</span>
-                <span>Gallery ({(salon.photoGallery?.length || images.length)})</span>
-              </button>
-
-              <button
-                id="salon-modal-share-btn"
-                type="button"
-                onClick={() => {
-                  if (onShareSalon) {
-                    onShareSalon(salon);
-                  } else {
-                    setIsShareModalOpen(true);
-                  }
-                }}
-                className="w-9 h-9 rounded-full bg-black/50 text-white hover:bg-black/70 backdrop-blur-md flex items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95 shadow-sm cursor-pointer border border-white/10"
-                title="Share Salon"
-                aria-label="Share salon"
-              >
-                <span className="material-symbols-outlined text-[20px]">share</span>
-              </button>
-
               {onToggleSave && (
                 <button
                   id="salon-modal-fav-btn"
@@ -373,24 +339,6 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
             </button>
 
             <button
-              id="salon-tab-gallery"
-              onClick={() => setActiveTab('gallery')}
-              className={`flex-1 min-w-[90px] py-2 px-2.5 rounded-xl text-[12px] sm:text-[13px] font-semibold flex items-center justify-center gap-1.5 transition-all ${
-                activeTab === 'gallery'
-                  ? 'bg-primary text-white shadow-xs'
-                  : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container'
-              }`}
-            >
-              <span className="material-symbols-outlined text-[16px]">photo_library</span>
-              <span>Gallery</span>
-              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
-                activeTab === 'gallery' ? 'bg-white/20 text-white' : 'bg-primary/10 text-primary font-bold'
-              }`}>
-                {salon.photoGallery?.length || images.length}
-              </span>
-            </button>
-
-            <button
               id="salon-tab-reviews"
               onClick={() => setActiveTab('reviews')}
               className={`flex-1 min-w-[90px] py-2 px-2.5 rounded-xl text-[12px] sm:text-[13px] font-semibold flex items-center justify-center gap-1.5 transition-all ${
@@ -438,59 +386,6 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
                   <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded font-mono font-bold">NEXORA20</span>
                 </div>
               )}
-
-              {/* Photo Showcase Carousel Teaser */}
-              <div className="p-3.5 rounded-2xl bg-surface-container-low border border-outline-variant/40 flex flex-col gap-2.5">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5">
-                    <span className="material-symbols-outlined text-[18px] text-nexora-pink">auto_awesome</span>
-                    <h3 className="font-section-heading text-[13px] font-bold text-on-surface">
-                      Interior Ambience & Treatment Looks
-                    </h3>
-                  </div>
-                  <button
-                    onClick={() => setActiveTab('gallery')}
-                    className="text-[11px] font-bold text-primary hover:text-nexora-pink transition-colors flex items-center gap-0.5"
-                  >
-                    <span>View All ({salon.photoGallery?.length || images.length})</span>
-                    <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
-                  </button>
-                </div>
-
-                {/* Horizontal thumbnail scroll */}
-                <div className="flex gap-2.5 overflow-x-auto no-scrollbar pb-1">
-                  {(salon.photoGallery && salon.photoGallery.length > 0
-                    ? salon.photoGallery
-                    : images.map((img, idx) => ({
-                        id: `p-thumb-${idx}`,
-                        url: img,
-                        title: idx === 0 ? 'Main Salon Ambience' : `Interior View ${idx + 1}`,
-                        category: idx % 2 === 0 ? 'interior' : 'hair',
-                        tag: idx % 2 === 0 ? 'Ambience' : 'Treatment',
-                      }))
-                  ).slice(0, 5).map((photo) => (
-                    <button
-                      key={photo.id}
-                      onClick={() => setActiveTab('gallery')}
-                      className="group relative w-32 h-24 rounded-xl overflow-hidden shrink-0 border border-outline-variant/30 text-left hover:scale-[1.02] transition-transform"
-                    >
-                      <img
-                        src={photo.url}
-                        alt={photo.title}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                      />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex flex-col justify-end p-2">
-                        <span className="text-[9px] font-bold uppercase tracking-wider text-white/80 line-clamp-1">
-                          {photo.tag || photo.category}
-                        </span>
-                        <span className="text-[10px] font-semibold text-white line-clamp-1 leading-tight">
-                          {photo.title}
-                        </span>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
 
               {/* Services Catalog */}
               <div>
@@ -577,21 +472,6 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
                 </div>
               </div>
             </>
-          )}
-
-          {/* ======================= TAB 2: PHOTO GALLERY CAROUSEL ======================= */}
-          {activeTab === 'gallery' && (
-            <SalonPhotoGallery
-              salon={salon}
-              onBookTreatment={(treatmentName) => {
-                const matchedService = salon.services.find(
-                  (s) =>
-                    s.name.toLowerCase().includes(treatmentName.toLowerCase()) ||
-                    treatmentName.toLowerCase().includes(s.name.toLowerCase())
-                ) || salon.services[0];
-                onBookService(salon, matchedService);
-              }}
-            />
           )}
 
           {/* ======================= TAB 3: REVIEWS & RATINGS ======================= */}
@@ -691,81 +571,6 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
                       4.9 <span className="material-symbols-outlined text-[13px] text-warning-amber fill-1">star</span>
                     </span>
                   </div>
-                </div>
-              </div>
-
-              {/* AI ADVISOR SENTIMENT SUMMARY HIGHLIGHT CARD */}
-              <div 
-                id="ai-sentiment-summary-banner"
-                className="p-4 rounded-2xl bg-gradient-to-br from-[#b00055]/10 via-primary/5 to-surface-container-lowest border border-[#b00055]/30 flex flex-col gap-3 shadow-xs"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-lg bg-[#b00055] text-white flex items-center justify-center shadow-xs">
-                      <span className="material-symbols-outlined text-[18px]">insights</span>
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[13px] font-bold text-on-surface">AI Review Sentiment Summary</span>
-                        <span className="text-[9px] font-extrabold bg-[#b00055] text-white px-1.5 py-0.2 rounded-full uppercase">
-                          Gemini 3.7
-                        </span>
-                      </div>
-                      <span className="text-[11px] text-success-emerald font-semibold flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-success-emerald inline-block" />
-                        96% Positive Sentiment Consensus
-                      </span>
-                    </div>
-                  </div>
-
-                  {onOpenAIAdvisorSentiment && (
-                    <button
-                      type="button"
-                      onClick={() => onOpenAIAdvisorSentiment(salon)}
-                      className="px-3 py-1.5 bg-[#b00055] text-white text-[11px] font-bold rounded-xl hover:opacity-90 transition-all flex items-center gap-1 cursor-pointer shadow-xs"
-                    >
-                      <span>Deep Dive</span>
-                      <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
-                    </button>
-                  )}
-                </div>
-
-                {/* Top Positive Highlights Pills */}
-                <div className="flex flex-col gap-1.5">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">
-                    What verified customers love:
-                  </span>
-                  <div className="flex flex-wrap gap-1.5">
-                    <span className="px-2.5 py-1 bg-success-emerald/10 text-success-emerald rounded-lg text-[11px] font-bold border border-success-emerald/20 flex items-center gap-1">
-                      <span className="material-symbols-outlined text-[13px]">thumb_up</span>
-                      Master Haircut & Layering (92%)
-                    </span>
-                    <span className="px-2.5 py-1 bg-success-emerald/10 text-success-emerald rounded-lg text-[11px] font-bold border border-success-emerald/20 flex items-center gap-1">
-                      <span className="material-symbols-outlined text-[13px]">sanitizer</span>
-                      Pristine Sanitized Tools (95%)
-                    </span>
-                    <span className="px-2.5 py-1 bg-success-emerald/10 text-success-emerald rounded-lg text-[11px] font-bold border border-success-emerald/20 flex items-center gap-1">
-                      <span className="material-symbols-outlined text-[13px]">local_cafe</span>
-                      Espresso & VIP Lounge (85%)
-                    </span>
-                  </div>
-                </div>
-
-                {/* Constructive / Tip Pill */}
-                <div className="p-2.5 rounded-xl bg-surface-container-highest/60 border border-outline-variant/30 text-[11px] flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5 text-on-surface-variant">
-                    <span className="material-symbols-outlined text-[15px] text-warning-amber">tips_and_updates</span>
-                    <span><strong>AI Pro-Tip:</strong> Weekend slots fill quickly. Book weekday mornings for zero waiting.</span>
-                  </div>
-                  {onOpenAIAdvisorSentiment && (
-                    <button
-                      type="button"
-                      onClick={() => onOpenAIAdvisorSentiment(salon)}
-                      className="text-[11px] text-[#b00055] font-bold hover:underline shrink-0 cursor-pointer"
-                    >
-                      View All Themes
-                    </button>
-                  )}
                 </div>
               </div>
 
@@ -1187,12 +992,6 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
         </div>
       </div>
 
-      {/* Share Salon Modal Fallback / Internal */}
-      <ShareSalonModal
-        isOpen={isShareModalOpen}
-        onClose={() => setIsShareModalOpen(false)}
-        salon={salon}
-      />
     </div>
   );
 };
