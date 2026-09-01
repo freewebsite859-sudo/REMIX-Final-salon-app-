@@ -13,6 +13,8 @@
     "test:nexora": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/nexora.integration.test.tsx",
     "test:location": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/location.test.tsx",
     "test:catalog": "tsx test/catalog.strategy.test.mts",
+    "test:search": "tsx test/fuzzySearch.test.mts",
+    "test:suggestions": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/search.suggestions.test.tsx",
     "test:referral": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/referral.flow.test.tsx",
     "test:notifications": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/notifications.test.tsx",
     "test:profile": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/profile.test.tsx",

@@ -1,5 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Salon, SalonService, Stylist, GroundingChunk } from '../types';
+import { searchSalons, suggestQueryCorrections } from '../lib/fuzzySearch';
+import {
+  QUICK_SEARCH_CATEGORIES,
+  POPULAR_SEARCHES,
+  useDismissOnOutside,
+} from '../lib/searchSuggestions';
 import { ShareSalonModal } from './ShareSalonModal';
 
 interface ExploreTabProps {
@@ -91,6 +97,18 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
   // Recent searches are ephemeral UI state. Do not persist them in a shared
   // origin where the next account could inherit another user's activity.
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
+
+  // Quick-search dropdown: opens on search focus so users can tap a main
+  // category or a popular tag instead of typing (typo-proof entry points).
+  const [isQuickSearchOpen, setIsQuickSearchOpen] = useState(false);
+  const closeQuickSearch = useCallback(() => setIsQuickSearchOpen(false), []);
+  const quickSearchWrapperRef = useDismissOnOutside(isQuickSearchOpen, closeQuickSearch);
+
+  const handleApplyQuickSearch = (query: string) => {
+    setSearchQuery(query);
+    setIsQuickSearchOpen(false);
+  };
+
 
   const addRecentSearch = (query: string) => {
     const trimmed = query.trim();
@@ -206,6 +224,20 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
     return isNaN(parsed) ? 999 : parsed;
   };
 
+  // ---------------------------------------------------------------------
+  // Fuzzy search: typo-tolerant ("barbar" -> "barber"), multi-word capable
+  // ("beard trim" matches across categories AND service names), ranked by
+  // relevancy. Unknown tokens like "shop" never zero out the results.
+  // ---------------------------------------------------------------------
+  const hasSearchQuery = searchQuery.trim().length > 0;
+
+  const relevanceById = useMemo(() => {
+    if (!hasSearchQuery) return new Map<string, number>();
+    return new Map(searchSalons(salons, searchQuery).map((result) => [result.salon.id, result.score]));
+  }, [salons, searchQuery, hasSearchQuery]);
+
+  const matchesQuery = (salon: Salon): boolean => !hasSearchQuery || relevanceById.has(salon.id);
+
   // Compute salon match counts per price tier for the current category, distance & search filter
   const getCountForTier = (tierId: PriceRangeFilter) => {
     const maxDistKm = DISTANCE_TIERS.find((d) => d.id === selectedDistance)?.maxKm;
@@ -215,18 +247,11 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
         s.services.some((srv) => srv.category === selectedCategory) ||
         s.categories.some((c) => c.toLowerCase().includes(selectedCategory.toLowerCase()));
 
-      const matchesQuery =
-        !searchQuery.trim() ||
-        s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        s.location.area.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        s.services.some((srv) => srv.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        s.categories.some((c) => c.toLowerCase().includes(searchQuery.toLowerCase()));
-
       const distKm = getSalonDistanceKm(s);
       const matchesDistance = maxDistKm === null || distKm <= maxDistKm;
 
-      if (tierId === 'all') return matchesCategory && matchesQuery && matchesDistance;
-      return matchesCategory && matchesQuery && matchesDistance && getPriceTierForSalon(s.priceRange) === tierId;
+      if (tierId === 'all') return matchesCategory && matchesQuery(s) && matchesDistance;
+      return matchesCategory && matchesQuery(s) && matchesDistance && getPriceTierForSalon(s.priceRange) === tierId;
     }).length;
   };
 
@@ -239,20 +264,13 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
         s.services.some((srv) => srv.category === selectedCategory) ||
         s.categories.some((c) => c.toLowerCase().includes(selectedCategory.toLowerCase()));
 
-      const matchesQuery =
-        !searchQuery.trim() ||
-        s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        s.location.area.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        s.services.some((srv) => srv.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        s.categories.some((c) => c.toLowerCase().includes(searchQuery.toLowerCase()));
-
       const salonTier = getPriceTierForSalon(s.priceRange);
       const matchesPrice = selectedPriceRange === 'all' || salonTier === selectedPriceRange;
 
       const distKm = getSalonDistanceKm(s);
       const matchesDist = maxDistKm === null || distKm <= maxDistKm;
 
-      return matchesCategory && matchesQuery && matchesPrice && matchesDist;
+      return matchesCategory && matchesQuery(s) && matchesPrice && matchesDist;
     }).length;
   };
 
@@ -263,13 +281,6 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
         s.services.some((srv) => srv.category === selectedCategory) ||
         s.categories.some((c) => c.toLowerCase().includes(selectedCategory.toLowerCase()));
 
-      const matchesQuery =
-        !searchQuery.trim() ||
-        s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        s.location.area.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        s.services.some((srv) => srv.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        s.categories.some((c) => c.toLowerCase().includes(searchQuery.toLowerCase()));
-
       const salonTier = getPriceTierForSalon(s.priceRange);
       const matchesPrice = selectedPriceRange === 'all' || salonTier === selectedPriceRange;
 
@@ -277,9 +288,15 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
       const maxDistKm = DISTANCE_TIERS.find((d) => d.id === selectedDistance)?.maxKm;
       const matchesDistance = maxDistKm === null || distKm <= maxDistKm;
 
-      return matchesCategory && matchesQuery && matchesPrice && matchesDistance;
+      return matchesCategory && matchesQuery(s) && matchesPrice && matchesDistance;
     })
     .sort((a, b) => {
+      // With an active search, "Recommended" orders by fuzzy relevancy first.
+      if (hasSearchQuery && sortBy === 'recommended') {
+        const relevanceDiff = (relevanceById.get(b.id) ?? 0) - (relevanceById.get(a.id) ?? 0);
+        if (relevanceDiff !== 0) return relevanceDiff;
+        return b.rating - a.rating;
+      }
       if (sortBy === 'price_asc') {
         return getMinStartingPrice(a) - getMinStartingPrice(b);
       }
@@ -302,6 +319,12 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
       return 0; // Default recommended
     });
 
+  // "Did you mean" fallback for queries that matched nothing at all.
+  const searchSuggestions = useMemo(() => {
+    if (!hasSearchQuery || filteredSalons.length > 0) return [];
+    return suggestQueryCorrections(salons, searchQuery);
+  }, [salons, searchQuery, hasSearchQuery, filteredSalons.length]);
+
   const isFiltered =
     selectedCategory !== 'all' ||
     selectedPriceRange !== 'all' ||
@@ -321,22 +344,34 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
       {/* Top Search & Filter Bar */}
       <div className="flex flex-col gap-3 mb-4">
         <div className="flex gap-2">
-          <div className="relative flex-1">
-            <span className="material-symbols-outlined absolute left-3.5 top-3 text-[#b00055] text-[19px]">
+          <div className="relative flex-1" ref={quickSearchWrapperRef}>
+            <span className="material-symbols-outlined absolute left-3.5 top-3 text-[#b00055] text-[19px] z-10">
               search
             </span>
             <input
               type="text"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setIsQuickSearchOpen(false);
+              }}
+              onFocus={() => setIsQuickSearchOpen(true)}
               onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  setIsQuickSearchOpen(false);
+                  return;
+                }
                 if (e.key === 'Enter') {
+                  setIsQuickSearchOpen(false);
                   if (searchQuery.trim()) addRecentSearch(searchQuery);
                   handlePerformGroundedSearch();
                 }
               }}
               placeholder="Search salons, services or Google Maps place..."
-              className="w-full h-11 pl-10 pr-9 bg-white/72 backdrop-blur-[20px] text-on-surface rounded-[18px] text-[13px] border border-[rgba(180,0,80,0.10)] shadow-[0_8px_25px_rgba(0,0,0,0.05)] focus:outline-none focus:border-[rgba(176,0,85,0.35)] focus:ring-4 focus:ring-[rgba(176,0,85,0.06)] transition-all duration-200"
+              aria-expanded={isQuickSearchOpen}
+              aria-haspopup="listbox"
+              aria-controls="quick-search-dropdown"
+              className="w-full h-11 pl-10 pr-9 bg-white/72 backdrop-blur-[20px] text-on-surface rounded-[18px] text-[13px] border border-[rgba(180,0,80,0.10)] shadow-[0_8px_25px_rgba(0,0,0,0.05)] focus:outline-none focus:border-[rgba(176,0,85,0.35)] focus:ring-4 focus:ring-[rgba(176,0,85,0.06)] transition-all duration-200 relative z-20"
             />
             {searchQuery && (
               <button
@@ -346,10 +381,67 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
                   setGroundedSummary(null);
                   setGroundingChunks([]);
                 }}
-                className="absolute right-3 top-3 text-on-surface-variant hover:text-[#b00055] transition-colors"
+                className="absolute right-3 top-3 text-on-surface-variant hover:text-[#b00055] transition-colors z-30"
               >
                 <span className="material-symbols-outlined text-[18px]">close</span>
               </button>
+            )}
+
+            {/* Quick-search dropdown: main categories + popular tags on focus */}
+            {isQuickSearchOpen && (
+              <div
+                id="quick-search-dropdown"
+                role="listbox"
+                aria-label="Quick search suggestions"
+                className="absolute top-[calc(100%+8px)] left-0 right-0 z-40 bg-white/95 backdrop-blur-[24px] rounded-[18px] border border-[rgba(180,0,80,0.12)] shadow-[0_18px_45px_rgba(0,0,0,0.14)] p-3 flex flex-col gap-2.5 animate-in fade-in slide-in-from-top-1 duration-150"
+              >
+                <div className="flex items-center gap-1 text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">
+                  <span className="material-symbols-outlined text-[14px] text-[#b00055]">bolt</span>
+                  <span>Quick Searches · Tap to Search</span>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  {QUICK_SEARCH_CATEGORIES.map((cat) => (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      role="option"
+                      aria-selected="false"
+                      onClick={() => handleApplyQuickSearch(cat.query)}
+                      className="group flex items-center gap-3 px-2.5 py-2 rounded-xl border border-transparent hover:border-primary/15 hover:bg-primary/5 transition-all cursor-pointer text-left"
+                    >
+                      <span className={`w-8 h-8 rounded-[10px] border flex items-center justify-center shrink-0 ${cat.tint}`}>
+                        <span className="material-symbols-outlined text-[17px]">{cat.icon}</span>
+                      </span>
+                      <span className="flex-1 text-[13px] font-semibold text-on-surface group-hover:text-primary transition-colors">
+                        {cat.label}
+                      </span>
+                      <span className="material-symbols-outlined text-[15px] text-on-surface-variant/50 group-hover:text-primary transition-colors">
+                        search
+                      </span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="border-t border-outline-variant/30 pt-2.5 flex flex-col gap-2">
+                  <div className="flex items-center gap-1 text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">
+                    <span className="material-symbols-outlined text-[14px] text-[#b00055]">trending_up</span>
+                    <span>Popular Searches</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {POPULAR_SEARCHES.map((term) => (
+                      <button
+                        key={term}
+                        type="button"
+                        onClick={() => handleApplyQuickSearch(term)}
+                        className="px-3 py-1.5 rounded-full bg-surface-container-lowest border border-outline-variant/40 text-on-surface text-[11px] font-medium hover:border-primary/30 hover:text-primary hover:-translate-y-0.5 transition-all cursor-pointer capitalize"
+                      >
+                        {term}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
             )}
           </div>
         </div>
@@ -958,6 +1050,24 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
                 {selectedDistance !== 'all' ? 'near_me_disabled' : 'filter_alt_off'}
               </span>
             </div>
+            {/* Typo-tolerant fallback: closest catalog terms for the failed query */}
+            {searchSuggestions.length > 0 && (
+              <div className="flex flex-col items-center gap-1.5">
+                <span className="text-[12px] text-on-surface-variant">Did you mean:</span>
+                <div className="flex items-center gap-1.5 flex-wrap justify-center">
+                  {searchSuggestions.map((suggestion) => (
+                    <button
+                      key={suggestion}
+                      type="button"
+                      onClick={() => setSearchQuery(suggestion)}
+                      className="px-3 py-1.5 rounded-full bg-primary/10 border border-primary/25 text-primary text-[12px] font-semibold hover:bg-primary/20 transition-colors cursor-pointer"
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div>
               <h3 className="font-card-title text-[16px] font-bold text-on-surface">
                 {selectedDistance !== 'all' && selectedPriceRange !== 'all'
@@ -973,7 +1083,7 @@ export const ExploreTab: React.FC<ExploreTabProps> = ({
                   ? `No salons currently match your distance constraint (${DISTANCE_TIERS.find((t) => t.id === selectedDistance)?.label}). Try expanding your distance filter to "Within 5 km" or "Anywhere" to discover more local options.`
                   : selectedPriceRange !== 'all'
                   ? `No salons currently match ${PRICE_TIERS.find((t) => t.id === selectedPriceRange)?.label} (${PRICE_TIERS.find((t) => t.id === selectedPriceRange)?.desc}). Try selecting a different budget tier or clearing your filters.`
-                  : 'No salons match your search query or category filter. Try clearing filters to see all available salons.'}
+                  : 'No salons match your search query or category filter. Try a different spelling, a broader term (e.g. "hair" or "beard"), or clear filters to see all available salons.'}
               </p>
             </div>
             <div className="flex items-center gap-2 mt-2 flex-wrap justify-center">

@@ -49,6 +49,9 @@ export interface SalonDbRow {
   phone?: string | null;
   gender?: Salon['gender'] | string | null;
   categories?: string[] | string | null;
+  // Optional search enrichment columns (mirrored from Salon interface)
+  tags?: string[] | string | null;
+  keywords?: string[] | string | null;
   // Embedded relations (optional, when using joined queries)
   services?: ServiceDbRow[] | null;
   professionals?: ProfessionalDbRow[] | null;
@@ -348,6 +351,8 @@ export function normalizeCatalog(
       name,
       tagline: asTrimmedString(row.tagline ?? row.description, ''),
       categories,
+      tags: asStringArrayFromMixed(row.tags),
+      keywords: asStringArrayFromMixed(row.keywords),
       rating: asNumber(row.rating) ?? 0,
       reviewCount: asNumber(row.review_count) ?? reviews.length,
       distance: distanceLabel || (distanceKm !== null ? `${distanceKm} km` : ''),
