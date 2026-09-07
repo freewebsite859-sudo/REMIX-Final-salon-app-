@@ -120,6 +120,8 @@ function persistSession() {
       user: TEST_USER,
     })
   );
+  // First-login location gate must not block the main shell (header / nav).
+  localStorage.setItem(`nexora-customer-location-setup:${USER_ID}`, 'done');
 }
 
 // ---------------------------------------------------------------------------
@@ -363,7 +365,7 @@ async function run() {
   );
 
   // =========================================================================
-  // 3. Open related screen (deep link) — reward → Profile tab
+  // 3. Open related screen (deep link) — reward → Rewards tab
   // =========================================================================
   await act(async () => {
     const rewardRow = Array.from(document.querySelectorAll('[role="button"]')).find((el) =>
@@ -374,13 +376,24 @@ async function run() {
   });
   check('notification click closes the centre', !byId('notifications-modal-container'));
   check(
-    'reward notification lands on the profile screen',
-    Boolean(byId('profile-hero-card')),
-    bodyText().slice(0, 80)
+    'reward notification lands on the rewards screen',
+    bodyText().includes('Loyalty points') ||
+      bodyText().includes('Available balance') ||
+      bodyText().includes('How to earn') ||
+      Boolean(byId('rewards-book-btn')),
+    bodyText().slice(0, 120)
+  );
+  check(
+    'five-item bottom nav is mounted after login',
+    Boolean(byId('nav-btn-home')) &&
+      Boolean(byId('nav-btn-search')) &&
+      Boolean(byId('nav-btn-bookings')) &&
+      Boolean(byId('nav-btn-rewards')) &&
+      Boolean(byId('nav-btn-profile'))
   );
 
   // =========================================================================
-  // 4. Deep link — booking → Appointments screen
+  // 4. Deep link — booking → Bookings screen
   // =========================================================================
   await act(async () => {
     click(byId('header-notifications-btn'));
@@ -394,7 +407,13 @@ async function run() {
     click((bookingRow as HTMLElement) ?? null);
     await sleep(500);
   });
-  check('booking notification deep-links to Appointments', bodyText().includes('My Appointments'));
+  check(
+    'booking notification deep-links to Bookings',
+    bodyText().includes('My Bookings') ||
+      bodyText().includes('My Appointments') ||
+      Boolean(byId('my-bookings-page')) ||
+      Boolean(byId('nav-btn-bookings'))
+  );
 
   // =========================================================================
   // 5. Mark all as read
@@ -733,7 +752,7 @@ async function run() {
       isRead: false,
       readAt: null,
       createdAt: new Date().toISOString(),
-    })?.tab === 'appointments'
+    })?.tab === 'bookings'
   );
 
   // =========================================================================

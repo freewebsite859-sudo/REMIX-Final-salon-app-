@@ -537,13 +537,18 @@ export { DEFAULT_PREFERENCES };
  */
 export function resolveNotificationTarget(
   notification: AppNotification
-): { tab: 'appointments' | 'saved' | 'profile' | 'home'; section?: string; id?: string } | null {
+): {
+  tab: 'home' | 'search' | 'bookings' | 'rewards' | 'profile' | 'saved';
+  section?: string;
+  id?: string;
+} | null {
   const route = notification.payload?.route ?? NOTIFICATION_META[notification.type].route;
   switch (route) {
     case 'appointments':
     case 'booking':
-      return { tab: 'appointments', id: notification.payload?.appointmentId };
+      return { tab: 'bookings', id: notification.payload?.appointmentId };
     case 'rewards':
+      return { tab: 'rewards' };
     case 'referrals':
     case 'membership':
     case 'offers':

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Salon, SalonService, Stylist, Appointment } from '../types';
+import { BookingConfirmationPage } from './BookingConfirmationPage';
 
 interface BookingModalProps {
   salon: Salon | null;
@@ -145,80 +146,14 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         className="w-full max-w-lg bg-surface rounded-t-3xl sm:rounded-2xl p-5 sm:p-6 shadow-2xl border border-outline-variant/30 max-h-[92vh] overflow-y-auto"
       >
         {isSuccess && confirmedBooking ? (
-          /* Confirmation Success Screen */
-          <div className="text-center py-4 animate-in zoom-in-95 duration-200">
-            <div className="w-16 h-16 bg-success-emerald/10 text-success-emerald rounded-full flex items-center justify-center mx-auto mb-3 ring-8 ring-success-emerald/5">
-              <span className="material-symbols-outlined text-[36px]">check_circle</span>
-            </div>
-            <h2 className="font-hero-heading text-[22px] font-bold text-on-surface mb-1">
-              Appointment Confirmed!
-            </h2>
-            <p className="text-body-md text-on-surface-variant mb-4">
-              Your appointment at <strong className="text-on-surface">{confirmedBooking.salonName}</strong> has been scheduled.
-            </p>
-
-            {/* Ticket Card */}
-            <div className="bg-surface-container-low border border-outline-variant rounded-2xl p-4 text-left mb-5 shadow-sm relative overflow-hidden">
-              <div className="flex justify-between items-start border-b border-outline-variant/50 pb-3 mb-3">
-                <div>
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-nexora-pink bg-surface-container px-2 py-0.5 rounded">
-                    Confirmed Pass
-                  </span>
-                  <h4 className="font-card-title text-[16px] text-on-surface mt-1">{confirmedBooking.salonName}</h4>
-                  <p className="text-[12px] text-on-surface-variant">{confirmedBooking.salonAddress}</p>
-                </div>
-                <div className="text-right">
-                  <span className="text-[10px] text-on-surface-variant uppercase">Booking Ref</span>
-                  <p className="font-mono font-bold text-nexora-pink text-[14px]">{confirmedBooking.bookingRef}</p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 text-[13px] mb-3">
-                <div>
-                  <span className="text-on-surface-variant text-[11px] block">Date & Time</span>
-                  <span className="font-semibold text-on-surface">
-                    {confirmedBooking.date === todayStr ? 'Today' : confirmedBooking.date} · {confirmedBooking.time}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-on-surface-variant text-[11px] block">Stylist</span>
-                  <span className="font-semibold text-on-surface">
-                    {confirmedBooking.stylist ? confirmedBooking.stylist.name : 'Any Available'}
-                  </span>
-                </div>
-              </div>
-
-              <div className="border-t border-outline-variant/50 pt-2 flex justify-between items-center text-[13px]">
-                <span className="text-on-surface-variant">Services ({confirmedBooking.services.length})</span>
-                <span className="font-bold text-primary text-[15px]">₹{confirmedBooking.totalPrice}</span>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-2.5">
-              {confirmedBooking.mapsUrl && (
-                <a
-                  href={confirmedBooking.mapsUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="w-full py-2.5 px-4 bg-surface-container border border-outline-variant rounded-xl text-nexora-pink font-button-text flex items-center justify-center gap-2 hover:bg-surface-container-high transition-colors"
-                >
-                  <span className="material-symbols-outlined text-[18px]">directions</span>
-                  <span>View Route on Google Maps</span>
-                </a>
-              )}
-              <button
-                onClick={() => {
-                  if (onViewAppointments) {
-                    onViewAppointments();
-                  } else {
-                    onClose();
-                  }
-                }}
-                className="w-full py-3 bg-primary text-white font-button-text rounded-xl hover:bg-nexora-pink transition-colors shadow-md"
-              >
-                Done & View Appointments
-              </button>
-            </div>
+          <div className="animate-in zoom-in-95 duration-200 -mx-1">
+            <BookingConfirmationPage
+              appointment={confirmedBooking}
+              justBooked
+              embedded
+              onClose={onClose}
+              onViewAppointments={onViewAppointments}
+            />
           </div>
         ) : (
           /* Booking Form */

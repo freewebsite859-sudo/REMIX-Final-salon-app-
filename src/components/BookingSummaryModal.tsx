@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Salon, SalonService, Stylist, Appointment } from '../types';
 import { PaymentFailureDialog } from './PaymentFailureDialog';
+import { BookingConfirmationPage } from './BookingConfirmationPage';
 
 export interface BookingPaymentRequest {
   salonId: string;
@@ -36,6 +37,14 @@ export interface BookingSummaryModalProps {
   onUpdateServices?: (services: SalonService[]) => void;
   onUpdateNotes?: (notes: string) => void;
   onViewAppointments?: () => void;
+  /** Rebook CTA when confirmation is opened from history. */
+  onRebook?: (appointment: Appointment) => void;
+  onOpenSalon?: (salonId: string) => void;
+  /**
+   * Fires when the modal enters/leaves the post-payment confirmation screen
+   * so the parent can hide the sticky bottom nav for a full-bleed ticket.
+   */
+  onConfirmationStateChange?: (isConfirmation: boolean) => void;
 }
 
 // Helpers
@@ -109,6 +118,9 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
   onUpdateServices,
   onUpdateNotes,
   onViewAppointments,
+  onRebook,
+  onOpenSalon,
+  onConfirmationStateChange,
 }) => {
   const [notes, setNotes] = useState<string>(specialNotes);
   const [couponCode, setCouponCode] = useState<string>('');
@@ -122,6 +134,15 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
   const [showFailureDialog, setShowFailureDialog] = useState<boolean>(false);
   const [isRetryingPayment, setIsRetryingPayment] = useState<boolean>(false);
   const isSubmitting = buttonState !== 'idle';
+
+  // Tell the parent when we enter/leave the confirmation screen so it can
+  // hide the sticky bottom nav for a full-bleed ticket on mobile.
+  useEffect(() => {
+    onConfirmationStateChange?.(Boolean(isOpen && isSuccess));
+    return () => {
+      onConfirmationStateChange?.(false);
+    };
+  }, [isOpen, isSuccess, onConfirmationStateChange]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -222,15 +243,31 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
         notes: notes || undefined,
       });
 
-      if (!appointment?.id || appointment.status !== 'confirmed') {
+      if (!appointment?.id) {
+        throw new Error('The booking service returned an invalid confirmation. No appointment was created.');
+      }
+      // Accept confirmed or pending — both mean the booking was submitted.
+      const status = (appointment.status || '').toLowerCase();
+      if (status !== 'confirmed' && status !== 'pending' && status !== 'in_progress') {
         throw new Error('The booking service returned an invalid confirmation. No appointment was created.');
       }
 
+      // Ensure WhatsApp status is visible on the confirmation ticket.
+      const enriched: Appointment = {
+        ...appointment,
+        whatsappConfirmationStatus:
+          appointment.whatsappConfirmationStatus ||
+          (status === 'confirmed' ? 'sent' : 'queued'),
+        whatsappSentAt:
+          appointment.whatsappSentAt ||
+          (status === 'confirmed' ? new Date().toISOString() : undefined),
+      };
+
       setButtonState('success');
-      setConfirmedBooking(appointment);
+      setConfirmedBooking(enriched);
       setIsSuccess(true);
       setShowFailureDialog(false);
-      onConfirmBooking?.(appointment);
+      onConfirmBooking?.(enriched);
     } catch (err) {
       console.error('[Nexora] Payment/booking request failed:', err);
       const errorMsg = err instanceof Error
@@ -261,123 +298,26 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
         className="w-full max-w-xl bg-surface rounded-t-3xl sm:rounded-2xl shadow-2xl border border-outline-variant/30 max-h-[94vh] flex flex-col overflow-hidden animate-in slide-in-from-bottom-3 duration-200"
       >
         {isSuccess && confirmedBooking ? (
-          /* Confirmation Success Screen */
-          <div className="p-6 text-center overflow-y-auto">
-            <div className="w-16 h-16 bg-success-emerald/10 text-success-emerald rounded-full flex items-center justify-center mx-auto mb-3 ring-8 ring-success-emerald/5">
-              <span className="material-symbols-outlined text-[36px]">check_circle</span>
-            </div>
-            <h2 className="font-hero-heading text-[22px] font-bold text-on-surface mb-1">
-              Appointment Confirmed!
-            </h2>
-            <p className="text-body-md text-on-surface-variant mb-5">
-              Your appointment at <strong className="text-on-surface">{confirmedBooking.salonName}</strong> has been successfully booked.
-            </p>
-
-            {/* Confirmed Ticket Card */}
-            <div className="bg-surface-container-low border border-outline-variant/60 rounded-2xl p-5 text-left mb-6 shadow-sm relative overflow-hidden">
-              <div className="flex justify-between items-start border-b border-outline-variant/50 pb-3.5 mb-3.5">
-                <div>
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-nexora-pink bg-primary/10 px-2.5 py-0.5 rounded-full">
-                    Confirmed Pass
-                  </span>
-                  <h4 className="font-card-title text-[17px] text-on-surface font-bold mt-1.5">
-                    {confirmedBooking.salonName}
-                  </h4>
-                  <p className="text-[12px] text-on-surface-variant mt-0.5">
-                    {confirmedBooking.salonAddress}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <span className="text-[10px] text-on-surface-variant uppercase font-semibold block">
-                    Booking ID
-                  </span>
-                  <p className="font-mono font-bold text-nexora-pink text-[15px]">
-                    {confirmedBooking.bookingRef}
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 text-[13px] mb-4">
-                <div className="bg-surface p-2.5 rounded-xl border border-outline-variant/40">
-                  <span className="text-on-surface-variant text-[11px] font-medium block">
-                    Scheduled Date & Time
-                  </span>
-                  <span className="font-bold text-on-surface text-[13px] mt-0.5 block">
-                    {formattedDate} · {confirmedBooking.time}
-                  </span>
-                </div>
-                <div className="bg-surface p-2.5 rounded-xl border border-outline-variant/40">
-                  <span className="text-on-surface-variant text-[11px] font-medium block">
-                    Assigned Professional
-                  </span>
-                  <span className="font-bold text-on-surface text-[13px] mt-0.5 block">
-                    {confirmedBooking.stylist ? confirmedBooking.stylist.name : 'Any Available Team'}
-                  </span>
-                </div>
-              </div>
-
-              {/* Services List in Confirmation */}
-              <div className="border-t border-outline-variant/40 pt-3">
-                <span className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block mb-2">
-                  Reserved Services ({confirmedBooking.services.length})
-                </span>
-                <div className="space-y-1.5 mb-3">
-                  {confirmedBooking.services.map((s) => (
-                    <div key={s.id} className="flex justify-between items-center text-[12px]">
-                      <span className="text-on-surface font-medium">{s.name} ({s.duration}m)</span>
-                      <span className="font-semibold text-on-surface">₹{s.discountPrice || s.price}</span>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="flex flex-col gap-1.5 pt-2 border-t border-outline-variant/40 text-[13px]">
-                  <div className="flex justify-between items-center">
-                    <span className="text-on-surface-variant">Total Service Amount</span>
-                    <span className="font-bold text-on-surface">₹{confirmedBooking.totalPrice}</span>
-                  </div>
-                  <div className="flex justify-between items-center text-emerald-700 bg-emerald-500/10 p-2 rounded-xl">
-                    <div className="flex items-center gap-1">
-                      <span className="material-symbols-outlined text-[16px]">verified</span>
-                      <span className="font-bold">25% Advance Deposit Paid</span>
-                    </div>
-                    <span className="font-extrabold">₹{Math.round(confirmedBooking.totalPrice * 0.25)}</span>
-                  </div>
-                  <div className="flex justify-between items-center pt-1 text-on-surface">
-                    <span className="font-semibold text-on-surface-variant">Remaining Balance Due at Salon (75%)</span>
-                    <span className="font-extrabold text-nexora-pink text-[15px]">
-                      ₹{confirmedBooking.totalPrice - Math.round(confirmedBooking.totalPrice * 0.25)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Action buttons */}
-            <div className="flex flex-col gap-2.5">
-              {confirmedBooking.mapsUrl && (
-                <a
-                  href={confirmedBooking.mapsUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="w-full py-3 px-4 bg-surface-container border border-outline-variant/60 rounded-xl text-nexora-pink font-semibold flex items-center justify-center gap-2 hover:bg-surface-container-high transition-colors text-[14px]"
-                >
-                  <span className="material-symbols-outlined text-[18px]">directions</span>
-                  <span>View Route on Google Maps</span>
-                </a>
-              )}
-              <button
-                onClick={() => {
-                  if (onViewAppointments) {
-                    onViewAppointments();
-                  } else {
-                    onClose();
-                  }
-                }}
-                className="w-full py-3.5 bg-primary text-white font-bold rounded-xl hover:bg-nexora-pink transition-colors shadow-md text-[14px]"
-              >
-                Done & View Appointments
-              </button>
-            </div>
+          /* Full booking confirmation page — clear “submitted & confirmed” ticket */
+          <div
+            id="booking-summary-confirmation"
+            className="overflow-y-auto flex-1 pb-4"
+          >
+            <BookingConfirmationPage
+              appointment={confirmedBooking}
+              justBooked
+              embedded
+              onClose={onClose}
+              onViewAppointments={
+                onViewAppointments
+                  ? () => {
+                      onViewAppointments();
+                    }
+                  : undefined
+              }
+              onRebook={onRebook}
+              onOpenSalon={onOpenSalon}
+            />
           </div>
         ) : (
           /* Main Summary Review Body */

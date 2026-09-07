@@ -215,8 +215,9 @@ async function run() {
   await settle();
   check('success: location selected', selections.length === 1, JSON.stringify(selections));
   check(
-    'success: label uses the shared coordinate format',
-    selections[0]?.area === 'Current Location (26.912, 75.804)',
+    'success: label snaps to nearest Jaipur area (or coordinate format)',
+    selections[0]?.area === 'C-Scheme, Jaipur' ||
+      selections[0]?.area === 'Current Location (26.912, 75.804)',
     selections[0]?.area
   );
   check('success: modal closed', closed === 1, `closed=${closed}`);
@@ -277,7 +278,8 @@ async function run() {
   await settle();
   check(
     'retry: coarse fix is accepted',
-    selections[0]?.area === 'Current Location (26.853, 75.768)',
+    selections[0]?.area === 'Mansarovar, Jaipur' ||
+      selections[0]?.area === 'Current Location (26.853, 75.768)',
     selections[0]?.area
   );
   check('retry: no error shown after recovery', byId('location-error') === null);

@@ -16,6 +16,12 @@
     "test:notifications": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/notifications.test.tsx",
     "test:profile": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/profile.test.tsx",
     "test:smoke": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/smoke.render.mts",
+    "test:customer-routes": "tsx test/customerRoutes.test.mts",
+    "test:first-login-location": "tsx test/firstLoginLocation.test.mts",
+    "test:salon-search": "tsx test/salonSearch.test.mts",
+    "test:booking-status": "tsx test/bookingStatus.test.mts",
+    "test:my-bookings": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/myBookings.test.tsx",
+    "test:booking-detail": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/bookingDetail.test.tsx",
     "typecheck": "tsc --noEmit",
     "verify:live": "node scripts/verify-live.mjs"
   },

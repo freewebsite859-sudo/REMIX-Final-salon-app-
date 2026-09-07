@@ -17,6 +17,11 @@ import {
 interface ProfileTabProps {
   user: UserProfile;
   appointments?: Appointment[];
+  /**
+   * Optional section focus driven by a customer route, e.g.
+   * `/customer/settings` → `'settings'`, `/customer/rewards` → `'rewards'`.
+   */
+  activeSection?: 'settings' | 'rewards' | 'membership' | 'referral' | 'reviews';
   onUpdateUser: (updated: UserProfile) => void;
   onNavigateToBooking?: () => void;
   onViewAppointments?: () => void;
@@ -24,6 +29,11 @@ interface ProfileTabProps {
   onViewFavourites?: () => void;
   /** Opens the notification centre (Profile menu → Notifications). */
   onOpenNotifications?: () => void;
+  onOpenSettings?: () => void;
+  onOpenRewards?: () => void;
+  onOpenMembership?: () => void;
+  onOpenReferral?: () => void;
+  onOpenReviews?: () => void;
   /** Real unread count, used for the Notifications menu badge. */
   unreadNotifications?: number;
   /** Real saved salons+services count, used for the Favourites menu badge. */
@@ -172,11 +182,17 @@ const SUPPORT_EMAIL =
 export const ProfileTab: React.FC<ProfileTabProps> = ({
   user,
   appointments = [],
+  activeSection,
   onUpdateUser,
   onNavigateToBooking,
   onViewAppointments,
   onViewFavourites,
   onOpenNotifications,
+  onOpenSettings,
+  onOpenRewards,
+  onOpenMembership,
+  onOpenReferral,
+  onOpenReviews,
   unreadNotifications = 0,
   favouritesCount = 0,
   onLogout,
@@ -244,6 +260,28 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
     setPreferredLocation(user.defaultLocality || '');
     if (user.gender) setGenderRole(user.gender);
   }, [user]);
+
+  // Deep-link from /customer/settings|rewards|membership|referral|reviews
+  useEffect(() => {
+    if (!activeSection) return;
+    const sectionId =
+      activeSection === 'settings'
+        ? 'section-app-settings'
+        : activeSection === 'rewards'
+          ? 'section-payment-overview'
+          : activeSection === 'membership'
+            ? 'profile-hero-card'
+            : activeSection === 'referral'
+              ? 'section-support'
+              : activeSection === 'reviews'
+                ? 'section-payment-overview'
+                : null;
+    if (!sectionId) return;
+    const timer = window.setTimeout(() => {
+      document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [activeSection]);
 
   // Profile Completeness Calculation
   const completeness = useMemo(() => {
@@ -731,8 +769,14 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
         onFavourites={() => onViewFavourites?.()}
         onNotifications={() => onOpenNotifications?.()}
         onAddresses={() => scrollToSection('section-addresses')}
-        onSupport={() => scrollToSection('section-support')}
-        onAppSettings={() => scrollToSection('section-app-settings')}
+        onSupport={() => {
+          onOpenReferral?.();
+          scrollToSection('section-support');
+        }}
+        onAppSettings={() => {
+          onOpenSettings?.();
+          scrollToSection('section-app-settings');
+        }}
         onPrivacyPolicy={() => setLegalDocument('privacy')}
         onTerms={() => setLegalDocument('terms')}
         onLogout={() => setShowLogoutConfirm(true)}

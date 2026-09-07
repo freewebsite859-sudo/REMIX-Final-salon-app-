@@ -7,12 +7,30 @@ import {
   type DeviceLocationFailure,
 } from '../lib/deviceLocation';
 import { formatCoordsLabel } from '../lib/locationService';
+import {
+  JAIPUR_AREA_CHIPS,
+  formatAreaLabel,
+  nearestJaipurArea,
+} from '../lib/jaipurAreas';
+
+/** Optional structured metadata passed with a location pick. */
+export interface LocationSelectionMeta {
+  area?: string;
+  city?: string;
+  pincode?: string;
+  source?: 'gps' | 'manual' | 'chip';
+}
 
 interface LocationModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentLocation: string;
-  onSelectLocation: (area: string, lat?: number, lng?: number) => void;
+  onSelectLocation: (
+    area: string,
+    lat?: number,
+    lng?: number,
+    meta?: LocationSelectionMeta
+  ) => void;
   /** True while Nexora live-location sync is streaming for a signed-in user. */
   isLiveSyncActive?: boolean;
   /** True when the background live sync cannot run because access was denied/blocked. */
@@ -78,11 +96,22 @@ export const LocationModal: React.FC<LocationModalProps> = ({
     setDetectAttempt(0);
 
     if (result.status === 'ok') {
-      onSelectLocation(
-        formatCoordsLabel(result.latitude, result.longitude),
-        result.latitude,
-        result.longitude
-      );
+      const nearest = nearestJaipurArea(result.latitude, result.longitude);
+      if (nearest) {
+        onSelectLocation(formatAreaLabel(nearest), result.latitude, result.longitude, {
+          area: nearest.area,
+          city: nearest.city,
+          pincode: nearest.pincode,
+          source: 'gps',
+        });
+      } else {
+        onSelectLocation(
+          formatCoordsLabel(result.latitude, result.longitude),
+          result.latitude,
+          result.longitude,
+          { source: 'gps', city: 'Jaipur', area: 'Current location' }
+        );
+      }
       onClose();
       return;
     }
@@ -100,21 +129,16 @@ export const LocationModal: React.FC<LocationModalProps> = ({
 
   if (!isOpen) return null;
 
-  const popularAreas = [
-    { name: 'Mansarovar, Jaipur', lat: 26.8533, lng: 75.7681 },
-    { name: 'Vaishali Nagar, Jaipur', lat: 26.9075, lng: 75.7423 },
-    { name: 'Malviya Nagar, Jaipur', lat: 26.8529, lng: 75.8055 },
-    { name: 'C-Scheme, Jaipur', lat: 26.9124, lng: 75.8035 },
-    { name: 'Raja Park, Jaipur', lat: 26.8967, lng: 75.8304 },
-    { name: 'Tonk Road, Jaipur', lat: 26.8628, lng: 75.8000 },
-    { name: 'Civil Lines, Jaipur', lat: 26.9080, lng: 75.7878 },
-    { name: 'Jagatpura, Jaipur', lat: 26.8202, lng: 75.8576 },
-  ];
+  const popularAreas = JAIPUR_AREA_CHIPS;
 
   const handleCustomSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (customInput.trim()) {
-      onSelectLocation(customInput.trim());
+      onSelectLocation(customInput.trim(), undefined, undefined, {
+        source: 'manual',
+        area: customInput.trim(),
+        city: 'Jaipur',
+      });
       setCustomInput('');
       onClose();
     }
@@ -266,14 +290,23 @@ export const LocationModal: React.FC<LocationModalProps> = ({
         <h3 className="font-metadata text-[12px] font-semibold uppercase tracking-wider text-on-surface-variant mb-2.5">
           Popular Localities in Jaipur
         </h3>
-        <div className="grid grid-cols-2 gap-2">
+        <div id="jaipur-area-chips" className="grid grid-cols-2 gap-2">
           {popularAreas.map((area) => {
-            const isSelected = currentLocation.includes(area.name.split(',')[0]);
+            const label = formatAreaLabel(area);
+            const isSelected =
+              currentLocation.includes(area.name) || currentLocation.includes(area.area);
             return (
               <button
                 key={area.name}
+                type="button"
+                id={`location-chip-${area.name.toLowerCase().replace(/\s+/g, '-')}`}
                 onClick={() => {
-                  onSelectLocation(area.name, area.lat, area.lng);
+                  onSelectLocation(label, area.latitude, area.longitude, {
+                    area: area.area,
+                    city: area.city,
+                    pincode: area.pincode,
+                    source: 'chip',
+                  });
                   onClose();
                 }}
                 className={`p-3 rounded-xl text-left border transition-all flex flex-col justify-between ${
@@ -286,10 +319,11 @@ export const LocationModal: React.FC<LocationModalProps> = ({
                   <span className={`material-symbols-outlined text-[16px] ${isSelected ? 'text-white' : 'text-nexora-pink'}`}>
                     location_on
                   </span>
-                  <span className="text-[13px] truncate font-medium">{area.name.split(',')[0]}</span>
+                  <span className="text-[13px] truncate font-medium">{area.name}</span>
                 </div>
                 <span className={`text-[10px] ${isSelected ? 'text-white/80' : 'text-on-surface-variant'}`}>
-                  Jaipur
+                  {area.city}
+                  {area.pincode ? ` · ${area.pincode}` : ''}
                 </span>
               </button>
             );

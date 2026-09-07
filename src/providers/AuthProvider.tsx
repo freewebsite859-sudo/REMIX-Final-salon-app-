@@ -237,9 +237,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Clear any remaining local storage that might hold stale session data
       // The storage key is managed by Supabase, but we ensure no protected state remains
       try {
-        // Prevent back navigation to protected pages by replacing history
+        // Prevent back navigation to protected pages by replacing history.
+        // Prefer the customer login surface.
         if (typeof window !== 'undefined') {
-          window.history.replaceState(null, '', '/auth/login');
+          window.history.replaceState(null, '', '/customer/login');
         }
       } catch {
         /* ignore history errors */
