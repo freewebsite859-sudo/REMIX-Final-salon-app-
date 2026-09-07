@@ -655,6 +655,7 @@ console.log('\n--- TEST J: App integration ---');
       user: TEST_USER,
     })
   );
+  localStorage.setItem(`nexora-customer-location-setup:${TEST_USER.id}`, 'done');
 
   await mount(
     <AuthProvider>
