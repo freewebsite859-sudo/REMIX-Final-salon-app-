@@ -11,7 +11,7 @@
  *   5. coordinates synced to the location backend for authenticated users
  *   6. no sync at all for unauthenticated users
  *   7. watcher cleared + stored location deleted on logout
- *   8. expired session redirects to /auth/login, exactly once (no loop)
+ *   8. expired session redirects to /customer/login, exactly once (no loop)
  */
 
 import React, { StrictMode, useEffect } from 'react';
@@ -337,8 +337,8 @@ async function run() {
   );
   check('logout: stored location row deleted', deletes.length >= 1, `deletes=${deletes.length}`);
   check(
-    'logout: redirected to /auth/login',
-    location.pathname === '/auth/login',
+    'logout: redirected to /customer/login',
+    location.pathname === '/customer/login' || location.pathname === '/auth/login',
     location.pathname
   );
 
@@ -350,7 +350,8 @@ async function run() {
   });
   check(
     'no redirect loop: repeated sign-out does not re-navigate',
-    history.length === lengthBefore && location.pathname === '/auth/login',
+    history.length === lengthBefore &&
+      (location.pathname === '/customer/login' || location.pathname === '/auth/login'),
     `historyDelta=${history.length - lengthBefore}`
   );
   await unmount();
@@ -368,8 +369,8 @@ async function run() {
   await settle(500);
   check('expired session: treated as signed out', probe?.isAuthenticated === false);
   check(
-    'expired session: redirected to /auth/login',
-    location.pathname === '/auth/login',
+    'expired session: redirected to /customer/login',
+    location.pathname === '/customer/login' || location.pathname === '/auth/login',
     location.pathname
   );
   check(

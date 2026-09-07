@@ -6,15 +6,36 @@
  * full page load. That keeps the Supabase client, its in-memory session and
  * the PKCE verifier alive across the transition — a hard `location.href`
  * assignment during a token refresh is exactly what causes redirect loops.
+ *
+ * Customer-facing destinations live under `/customer/*` (see
+ * `customerRoutes.ts`). Legacy `/auth/*` paths remain valid aliases so
+ * existing password-reset links and tests keep working.
  */
 
 import { NEXORA_AUTH_STORAGE_KEY } from './supabase';
+import {
+  CUSTOMER_HOME,
+  CUSTOMER_LOGIN,
+  CUSTOMER_SIGNUP,
+  isCustomerAuthPath,
+  isCustomerLoginPath,
+  isCustomerPath,
+  isCustomerSignupPath,
+  redirectToCustomerHome,
+  redirectToCustomerLogin as customerRedirectToLogin,
+  redirectToCustomerSignup as customerRedirectToSignup,
+} from './customerRoutes';
 
 export const LOGIN_PATH = '/auth/login';
 /** Canonical signup route. Invite links point here so they open Signup, not Home. */
 export const SIGNUP_PATH = '/auth/signup';
 /** Accepted aliases for the same signup screen (short links, external shares). */
-export const SIGNUP_ALIAS_PATHS: readonly string[] = ['/signup', '/register', '/auth/register'];
+export const SIGNUP_ALIAS_PATHS: readonly string[] = [
+  '/signup',
+  '/register',
+  '/auth/register',
+  CUSTOMER_SIGNUP,
+];
 
 /**
  * Snapshot, taken at module load (before GoTrue can prune a bad token),
@@ -42,6 +63,8 @@ const AUTH_PATHS = new Set([
   SIGNUP_PATH,
   '/auth/reset',
   '/auth/callback',
+  CUSTOMER_LOGIN,
+  CUSTOMER_SIGNUP,
   ...SIGNUP_ALIAS_PATHS,
 ]);
 
@@ -51,26 +74,38 @@ export function currentPath(): string {
 }
 
 export function isAuthRoute(path: string = currentPath()): boolean {
-  return AUTH_PATHS.has(path);
+  return AUTH_PATHS.has(path) || isCustomerAuthPath(path);
 }
 
 export function isLoginRoute(path: string = currentPath()): boolean {
-  return path === LOGIN_PATH;
+  return path === LOGIN_PATH || isCustomerLoginPath(path);
 }
 
 /** True for the signup screen, whether reached via the canonical path or an alias. */
 export function isSignupRoute(path: string = currentPath()): boolean {
-  return path === SIGNUP_PATH || SIGNUP_ALIAS_PATHS.includes(path);
+  return (
+    path === SIGNUP_PATH ||
+    SIGNUP_ALIAS_PATHS.includes(path) ||
+    isCustomerSignupPath(path)
+  );
 }
 
 /**
  * Navigate to the signup screen with SPA history (same mechanism as
  * `redirectToLogin`, so the Supabase client and its session stay alive).
  * The existing query string is preserved.
+ *
+ * Prefers the customer namespace (`/customer/signup`) when the user is
+ * already under `/customer/*`; otherwise keeps the legacy `/auth/signup`.
  */
 export function redirectToSignup(options: { replace?: boolean } = {}): boolean {
   if (typeof window === 'undefined') return false;
   if (isSignupRoute()) return false;
+
+  // Prefer customer signup when already browsing the customer app.
+  if (isCustomerPath() || currentPath() === '/' || currentPath() === '') {
+    return customerRedirectToSignup(options);
+  }
 
   const { replace = true } = options;
   const url = `${SIGNUP_PATH}${window.location.search}`;
@@ -85,51 +120,62 @@ export function redirectToSignup(options: { replace?: boolean } = {}): boolean {
 }
 
 /**
- * Navigate to `/auth/login` exactly once.
+ * Navigate to login exactly once.
  *
- * Loop protection: if we are already on the login route this is a no-op, so a
+ * Loop protection: if we are already on a login route this is a no-op, so a
  * burst of `SIGNED_OUT` / failed-refresh events cannot push a stack of history
  * entries or re-trigger navigation-driven auth checks.
  *
- * Also prevents back navigation to protected pages after logout by replacing history.
+ * Customer destinations use `/customer/login`; legacy callers and password
+ * recovery still accept `/auth/login`.
  */
-export function redirectToLogin(options: { replace?: boolean } = {}): boolean {
+export function redirectToLogin(options: { replace?: boolean; returnTo?: string } = {}): boolean {
   if (typeof window === 'undefined') return false;
   if (isLoginRoute()) return false;
 
-  const { replace = true } = options;
-  const url = `${LOGIN_PATH}${window.location.search}`;
-
-  if (replace) {
-    window.history.replaceState({ nexoraAuth: 'login' }, '', url);
-    // Push additional entry to prevent back navigation to protected pages
-    // After logout, browser back should not reveal protected content
-    try {
-      window.history.pushState({ nexoraAuth: 'login-block' }, '', url);
+  // Default to the customer login path — that is the product-facing surface.
+  // Password-reset recovery stays on /auth/* via PasswordUpdatePage.
+  if (currentPath() === '/auth/reset' || currentPath() === '/auth/callback') {
+    const { replace = true } = options;
+    const url = `${LOGIN_PATH}${window.location.search}`;
+    if (replace) {
       window.history.replaceState({ nexoraAuth: 'login' }, '', url);
-    } catch {
-      /* ignore history errors */
+      try {
+        window.history.pushState({ nexoraAuth: 'login-block' }, '', url);
+        window.history.replaceState({ nexoraAuth: 'login' }, '', url);
+      } catch {
+        /* ignore history errors */
+      }
+    } else {
+      window.history.pushState({ nexoraAuth: 'login' }, '', url);
     }
-  } else {
-    window.history.pushState({ nexoraAuth: 'login' }, '', url);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    return true;
   }
-  window.dispatchEvent(new PopStateEvent('popstate'));
-  return true;
+
+  return customerRedirectToLogin({
+    replace: options.replace ?? true,
+    returnTo: options.returnTo,
+  });
 }
 
 /**
  * Enforce route protection - redirects unauthenticated users to login
  * and prevents access to protected pages via back navigation
  */
-export function enforceRouteProtection(isAuthenticated: boolean, requiredRole?: string, userRole?: string | null): boolean {
+export function enforceRouteProtection(
+  isAuthenticated: boolean,
+  requiredRole?: string,
+  userRole?: string | null
+): boolean {
   if (typeof window === 'undefined') return false;
-  
+
   // If not authenticated and trying to access protected route
   if (!isAuthenticated && !isAuthRoute()) {
     redirectToLogin({ replace: true });
     return false;
   }
-  
+
   // If role-based protection
   if (isAuthenticated && requiredRole && userRole && userRole !== requiredRole) {
     // User doesn't have required role - redirect to appropriate home
@@ -137,18 +183,25 @@ export function enforceRouteProtection(isAuthenticated: boolean, requiredRole?: 
     console.warn(`[Nexora] Role mismatch: required ${requiredRole}, got ${userRole}`);
     // Don't block, just warn - customer app currently handles both roles
   }
-  
+
   return true;
 }
 
-/** Return to the application root after a successful sign-in. */
+/**
+ * Return to the customer application after a successful sign-in.
+ * Lands on `/customer/home` (or a stashed return path such as a book URL).
+ */
 export function redirectToApp(): boolean {
   if (typeof window === 'undefined') return false;
-  if (!isAuthRoute()) return false;
 
-  window.history.replaceState({ nexoraAuth: 'app' }, '', '/');
-  window.dispatchEvent(new PopStateEvent('popstate'));
-  return true;
+  // Always prefer the customer home namespace after auth.
+  // If we are already on a non-auth customer page, leave it alone.
+  const path = currentPath();
+  if (isCustomerPath(path) && !isAuthRoute(path) && path !== '/customer' && path !== '/customer/') {
+    return false;
+  }
+
+  return redirectToCustomerHome({ replace: true });
 }
 
 /**
@@ -179,3 +232,6 @@ export function cleanAuthParamsFromUrl(): void {
     window.history.replaceState(window.history.state, '', url.toString());
   }
 }
+
+// Re-export customer home constant so callers can deep-link without a second import.
+export { CUSTOMER_HOME, CUSTOMER_LOGIN, CUSTOMER_SIGNUP };

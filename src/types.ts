@@ -85,6 +85,34 @@ export interface Salon {
   gender: 'unisex' | 'women' | 'men';
 }
 
+/**
+ * Booking lifecycle status shown across confirmation, appointments list,
+ * and notifications.
+ *
+ *   pending   — submitted, awaiting salon/owner lock-in
+ *   confirmed — slot locked; customer should attend
+ *   completed — visit finished
+ *   cancelled — cancelled by customer or salon
+ *   no_show   — customer missed the appointment
+ *
+ * Legacy `in_progress` values are normalized to `confirmed` on read.
+ */
+export type BookingStatus =
+  | 'pending'
+  | 'confirmed'
+  | 'completed'
+  | 'cancelled'
+  | 'no_show'
+  /** @deprecated Prefer `confirmed`. Kept for older stored rows. */
+  | 'in_progress';
+
+/** Delivery state of the WhatsApp confirmation message. */
+export type WhatsAppConfirmationStatus =
+  | 'sent'
+  | 'queued'
+  | 'not_sent'
+  | 'failed';
+
 export interface Appointment {
   id: string;
   salonId: string;
@@ -96,7 +124,7 @@ export interface Appointment {
   stylist?: Stylist;
   date: string; // YYYY-MM-DD
   time: string; // e.g. "5:30 PM"
-  status: 'confirmed' | 'in_progress' | 'completed' | 'cancelled';
+  status: BookingStatus;
   totalPrice: number;
   advancePaid?: number; // 25% advance amount paid online
   remainingAmount?: number; // 75% balance payable at salon
@@ -117,9 +145,22 @@ export interface Appointment {
   /** Canonical salon coordinates copied from the backend booking record. */
   salonLatitude?: number;
   salonLongitude?: number;
+  /** WhatsApp booking-confirmation delivery state. */
+  whatsappConfirmationStatus?: WhatsAppConfirmationStatus;
+  /** ISO timestamp when the WhatsApp confirmation was sent. */
+  whatsappSentAt?: string;
+  /** True when this booking was opened from history (enables Rebook CTA). */
+  rebookFromHistory?: boolean;
 }
 
-export type ActiveTab = 'home' | 'appointments' | 'saved' | 'profile';
+/**
+ * Primary customer bottom-nav destinations (post-login sticky bar):
+ * Home · Search · Bookings · Rewards · Profile
+ *
+ * `saved` is retained for the Favourites screen (reachable from Profile) and
+ * is not a bottom-nav item.
+ */
+export type ActiveTab = 'home' | 'search' | 'bookings' | 'rewards' | 'profile' | 'saved';
 
 export interface SavedServiceRef {
   salonId: string;

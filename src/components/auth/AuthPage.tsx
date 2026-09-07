@@ -20,6 +20,11 @@ import { SupabaseConfigBanner } from '../SupabaseConfigBanner';
 import { supabase, isSupabaseConfigured, getSupabaseConfigStatus } from '../../lib/supabase';
 import { upsertUserProfile, fetchUserProfile, type UserRole } from '../../lib/profileService';
 import { UserProfile } from '../../types';
+import {
+  CUSTOMER_LOGIN,
+  CUSTOMER_SIGNUP,
+  navigateCustomer,
+} from '../../lib/customerRoutes';
 
 interface AuthPageProps {
   onAuthSuccess: (user: Partial<UserProfile> & { role?: UserRole }) => void;
@@ -72,13 +77,17 @@ export const AuthPage: React.FC<AuthPageProps> = ({
     if (initialMode === 'signup') setAuthMode('signup');
   }, [initialMode]);
 
-  // Clear errors when switching modes
+  // Clear errors when switching modes and keep the customer URL in sync
+  // (`/customer/login` ↔ `/customer/signup`).
   const handleSwitchMode = (mode: 'login' | 'signup') => {
     setAuthMode(mode);
     setErrorMessage(null);
     setErrorType(null);
     setSuccessMessage(null);
     setFieldErrors({});
+    navigateCustomer(mode === 'signup' ? CUSTOMER_SIGNUP : CUSTOMER_LOGIN, {
+      replace: true,
+    });
   };
 
   // Form validation helper

@@ -78,10 +78,11 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
           onNotificationsChanged?.();
         }
       }
+      // Parent deep-links AND closes the panel. Do not call onClose() here —
+      // that would race a "dismiss → home" handler against the deep-link target.
       onSelectNotification?.(notification);
-      onClose();
     },
-    [onClose, onNotificationsChanged, onSelectNotification, onShowToast, userId]
+    [onNotificationsChanged, onSelectNotification, onShowToast, userId]
   );
 
   const handleToggleRead = useCallback(
