@@ -278,7 +278,10 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
                 : null;
     if (!sectionId) return;
     const timer = window.setTimeout(() => {
-      document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const el = document.getElementById(sectionId);
+      if (el && typeof el.scrollIntoView === 'function') {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
     }, 80);
     return () => window.clearTimeout(timer);
   }, [activeSection]);
@@ -445,7 +448,9 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
   const scrollToSection = (id: string) => {
     const el = document.getElementById(id);
     if (!el) return;
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   };
 
   // 4. Gender / Role Switcher (Men / Women)
@@ -684,8 +689,33 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
     !WOMEN_AVATARS.some((a) => a.url === user.avatar);
 
 
+  // User's effective referral code
+  const referralCode = useMemo(() => {
+    if (user.referralCode) return user.referralCode;
+    const clean = (user.name || 'USER').replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 6) || 'NXUSER';
+    return `NEXORA-${clean}78`;
+  }, [user.referralCode, user.name]);
+
+  // Derived user city & area
+  const userCity = user.city || 'Jaipur';
+  const userArea = user.locationArea || user.defaultLocality || 'Mansarovar';
+  const membershipLevelName =
+    user.membershipTier === 'platinum'
+      ? 'Platinum VIP'
+      : user.membershipTier === 'gold'
+        ? 'Gold Member'
+        : user.membershipTier === 'silver'
+          ? 'Silver Member'
+          : 'Standard Member';
+
+  const totalBookingsCount = appointments.filter((a) => a.status !== 'cancelled').length;
+
   return (
-    <div className="flex flex-col w-full pb-28 max-w-4xl mx-auto px-page-margin pt-2">
+    <div
+      id="customer-profile-page"
+      data-route="/customer/profile"
+      className="flex flex-col w-full pb-28 max-w-4xl mx-auto px-page-margin pt-2"
+    >
       {/* ========================================================================= */}
       {/* GLOBAL AUTO-SAVE & FEEDBACK TOAST                                         */}
       {/* ========================================================================= */}
@@ -707,10 +737,14 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
       >
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 relative z-10">
           <div className="flex items-center gap-4">
-            <div className="relative group cursor-pointer" onClick={() => fileInputRef.current?.click()}>
+            <div
+              id="profile-avatar"
+              className="relative group cursor-pointer"
+              onClick={() => fileInputRef.current?.click()}
+            >
               <img
                 src={user.avatar || (genderRole === 'men' ? MEN_AVATARS[0].url : WOMEN_AVATARS[0].url)}
-                alt={user.name}
+                alt={user.name || 'Customer Avatar'}
                 className="w-20 h-20 rounded-full object-cover ring-4 ring-white/50 shadow-md transition-all group-hover:opacity-90"
               />
               <button
@@ -723,12 +757,25 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
             </div>
 
             <div className="flex-1 min-w-0">
-              <h2 className="font-card-title text-[22px] font-extrabold truncate">
-                {user.name || 'Your Name'}
-              </h2>
-              <p className="text-[12px] opacity-90">{user.email || 'No email on file'}</p>
-              <div className="flex items-center gap-2 text-[12px] opacity-85 mt-0.5 flex-wrap">
-                <span>{user.phone || 'No mobile number added'}</span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 id="profile-fullname" className="font-card-title text-[22px] font-extrabold truncate">
+                  {user.name || 'Your Name'}
+                </h2>
+                <span
+                  id="profile-membership-level"
+                  className="px-2.5 py-0.5 bg-white/20 rounded-full font-extrabold text-[11px] uppercase tracking-wide flex items-center gap-1"
+                >
+                  <span className="material-symbols-outlined text-[13px]">workspace_premium</span>
+                  <span>{membershipLevelName}</span>
+                </span>
+              </div>
+
+              <p id="profile-email" className="text-[12px] opacity-90 mt-0.5">
+                {user.email || 'No email on file'}
+              </p>
+
+              <div className="flex items-center gap-2 text-[12px] opacity-85 mt-1 flex-wrap">
+                <span id="profile-mobile">{user.phone || 'No mobile number added'}</span>
                 {ageInfo && (
                   <>
                     <span>·</span>
@@ -738,9 +785,14 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
                 {(user.defaultLocality || user.locationArea) && (
                   <>
                     <span>·</span>
-                    <span>
-                      {user.defaultLocality || user.locationArea}
-                      {user.city ? `, ${user.city}` : ''}
+                    <span id="profile-location">
+                      <span id="profile-area">{user.defaultLocality || user.locationArea}</span>
+                      {user.city && (
+                        <>
+                          {', '}
+                          <span id="profile-city">{user.city}</span>
+                        </>
+                      )}
                     </span>
                   </>
                 )}
@@ -752,9 +804,212 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
             </div>
           </div>
 
+          {/* Edit Profile Button */}
+          <button
+            type="button"
+            id="edit-profile-btn"
+            onClick={() => {
+              scrollToSection('section-personal-details');
+              document.getElementById('input-profile-fullname')?.focus();
+            }}
+            className="self-end sm:self-center px-3.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 border border-white/30 text-white text-[12px] font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+          >
+            <span className="material-symbols-outlined text-[16px]">edit</span>
+            <span>Edit Profile</span>
+          </button>
         </div>
 
+        {/* Profile Metrics Strip */}
+        <div className="mt-4 pt-3.5 border-t border-white/20 grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+          <div className="bg-white/10 rounded-xl p-2.5">
+            <span className="opacity-80 block text-[10px] uppercase font-bold">Reward Points</span>
+            <span id="profile-reward-points-value" className="font-extrabold text-[15px] tabular-nums">
+              {Number(user.loyaltyPoints || 0).toLocaleString('en-IN')} pts
+            </span>
+          </div>
+
+          <div className="bg-white/10 rounded-xl p-2.5">
+            <span className="opacity-80 block text-[10px] uppercase font-bold">Total Bookings</span>
+            <span id="profile-total-bookings" className="font-extrabold text-[15px] tabular-nums">
+              {totalBookingsCount} bookings
+            </span>
+          </div>
+
+          <div className="bg-white/10 rounded-xl p-2.5">
+            <span className="opacity-80 block text-[10px] uppercase font-bold">Favourite Salons</span>
+            <span id="profile-favourite-salons" className="font-extrabold text-[15px] tabular-nums">
+              {favouritesCount} saved
+            </span>
+          </div>
+
+          <div className="bg-white/10 rounded-xl p-2.5">
+            <span className="opacity-80 block text-[10px] uppercase font-bold">Referral Code</span>
+            <button
+              type="button"
+              id="profile-referral-code"
+              onClick={() => {
+                if (navigator.clipboard) {
+                  navigator.clipboard.writeText(referralCode);
+                  showToast(`Referral code ${referralCode} copied!`);
+                }
+              }}
+              className="font-extrabold font-mono text-[13px] text-amber-200 hover:text-white flex items-center gap-1 cursor-pointer truncate"
+              title="Click to copy referral code"
+            >
+              <span className="truncate">{referralCode}</span>
+              <span className="material-symbols-outlined text-[13px]">content_copy</span>
+            </button>
+          </div>
+        </div>
       </div>
+
+      {/* ========================================================================= */}
+      {/* QUICK LINKS GRID (THE 9 REQUIRED QUICK LINKS)                             */}
+      {/* ========================================================================= */}
+      <section
+        id="section-quick-links"
+        className="bg-surface-container-low border border-outline-variant/50 rounded-2xl p-4 sm:p-5 shadow-xs mb-4"
+      >
+        <div className="flex items-center gap-2 mb-3 pb-2.5 border-b border-outline-variant/30">
+          <div className="w-8 h-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+            <span className="material-symbols-outlined text-[20px]">bolt</span>
+          </div>
+          <div>
+            <h3 className="font-card-title text-[16px] font-bold text-on-surface">Quick Links</h3>
+            <p className="text-[11px] text-on-surface-variant">Instant access to bookings, wallet, tiers & settings</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-3 gap-2.5">
+          {/* 1. My Bookings */}
+          <button
+            type="button"
+            id="quicklink-my-bookings"
+            onClick={() => onViewAppointments?.()}
+            className="p-3 rounded-2xl bg-surface-container-lowest border border-outline-variant/30 hover:border-primary/40 hover:bg-surface-container transition-all flex flex-col items-center text-center gap-1.5 cursor-pointer group"
+          >
+            <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center group-hover:scale-105 transition-transform">
+              <span className="material-symbols-outlined text-[20px]">event_note</span>
+            </div>
+            <span className="text-[12px] font-bold text-on-surface truncate max-w-full">My Bookings</span>
+            <span className="text-[10px] text-on-surface-variant">{totalBookingsCount} active/past</span>
+          </button>
+
+          {/* 2. Rewards */}
+          <button
+            type="button"
+            id="quicklink-rewards"
+            onClick={() => onOpenRewards?.()}
+            className="p-3 rounded-2xl bg-surface-container-lowest border border-outline-variant/30 hover:border-primary/40 hover:bg-surface-container transition-all flex flex-col items-center text-center gap-1.5 cursor-pointer group"
+          >
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-800 flex items-center justify-center group-hover:scale-105 transition-transform">
+              <span className="material-symbols-outlined text-[20px]">stars</span>
+            </div>
+            <span className="text-[12px] font-bold text-on-surface truncate max-w-full">Rewards</span>
+            <span className="text-[10px] text-on-surface-variant">{Number(user.loyaltyPoints || 0)} pts</span>
+          </button>
+
+          {/* 3. Membership */}
+          <button
+            type="button"
+            id="quicklink-membership"
+            onClick={() => onOpenMembership?.()}
+            className="p-3 rounded-2xl bg-surface-container-lowest border border-outline-variant/30 hover:border-primary/40 hover:bg-surface-container transition-all flex flex-col items-center text-center gap-1.5 cursor-pointer group"
+          >
+            <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-800 flex items-center justify-center group-hover:scale-105 transition-transform">
+              <span className="material-symbols-outlined text-[20px]">card_membership</span>
+            </div>
+            <span className="text-[12px] font-bold text-on-surface truncate max-w-full">Membership</span>
+            <span className="text-[10px] text-on-surface-variant truncate max-w-full">{membershipLevelName}</span>
+          </button>
+
+          {/* 4. Favourites */}
+          <button
+            type="button"
+            id="quicklink-favourites"
+            onClick={() => onViewFavourites?.()}
+            className="p-3 rounded-2xl bg-surface-container-lowest border border-outline-variant/30 hover:border-primary/40 hover:bg-surface-container transition-all flex flex-col items-center text-center gap-1.5 cursor-pointer group"
+          >
+            <div className="w-10 h-10 rounded-xl bg-rose-500/10 text-rose-700 flex items-center justify-center group-hover:scale-105 transition-transform">
+              <span className="material-symbols-outlined text-[20px]">favorite</span>
+            </div>
+            <span className="text-[12px] font-bold text-on-surface truncate max-w-full">Favourites</span>
+            <span className="text-[10px] text-on-surface-variant">{favouritesCount} saved</span>
+          </button>
+
+          {/* 5. Reviews */}
+          <button
+            type="button"
+            id="quicklink-reviews"
+            onClick={() => onOpenReviews?.()}
+            className="p-3 rounded-2xl bg-surface-container-lowest border border-outline-variant/30 hover:border-primary/40 hover:bg-surface-container transition-all flex flex-col items-center text-center gap-1.5 cursor-pointer group"
+          >
+            <div className="w-10 h-10 rounded-xl bg-indigo-500/10 text-indigo-700 flex items-center justify-center group-hover:scale-105 transition-transform">
+              <span className="material-symbols-outlined text-[20px]">rate_review</span>
+            </div>
+            <span className="text-[12px] font-bold text-on-surface truncate max-w-full">Reviews</span>
+            <span className="text-[10px] text-on-surface-variant">My Feedback</span>
+          </button>
+
+          {/* 6. Referral */}
+          <button
+            type="button"
+            id="quicklink-referral"
+            onClick={() => onOpenReferral?.()}
+            className="p-3 rounded-2xl bg-surface-container-lowest border border-outline-variant/30 hover:border-primary/40 hover:bg-surface-container transition-all flex flex-col items-center text-center gap-1.5 cursor-pointer group"
+          >
+            <div className="w-10 h-10 rounded-xl bg-[#b00055]/10 text-[#b00055] flex items-center justify-center group-hover:scale-105 transition-transform">
+              <span className="material-symbols-outlined text-[20px]">group_add</span>
+            </div>
+            <span className="text-[12px] font-bold text-on-surface truncate max-w-full">Referral</span>
+            <span className="text-[10px] text-on-surface-variant">Earn 150 pts</span>
+          </button>
+
+          {/* 7. Settings */}
+          <button
+            type="button"
+            id="quicklink-settings"
+            onClick={() => {
+              onOpenSettings ? onOpenSettings() : scrollToSection('section-app-settings');
+            }}
+            className="p-3 rounded-2xl bg-surface-container-lowest border border-outline-variant/30 hover:border-primary/40 hover:bg-surface-container transition-all flex flex-col items-center text-center gap-1.5 cursor-pointer group"
+          >
+            <div className="w-10 h-10 rounded-xl bg-slate-500/10 text-slate-700 flex items-center justify-center group-hover:scale-105 transition-transform">
+              <span className="material-symbols-outlined text-[20px]">settings</span>
+            </div>
+            <span className="text-[12px] font-bold text-on-surface truncate max-w-full">Settings</span>
+            <span className="text-[10px] text-on-surface-variant">Theme & Alerts</span>
+          </button>
+
+          {/* 8. Help & Support */}
+          <button
+            type="button"
+            id="quicklink-help-support"
+            onClick={() => scrollToSection('section-support')}
+            className="p-3 rounded-2xl bg-surface-container-lowest border border-outline-variant/30 hover:border-primary/40 hover:bg-surface-container transition-all flex flex-col items-center text-center gap-1.5 cursor-pointer group"
+          >
+            <div className="w-10 h-10 rounded-xl bg-cyan-500/10 text-cyan-800 flex items-center justify-center group-hover:scale-105 transition-transform">
+              <span className="material-symbols-outlined text-[20px]">support_agent</span>
+            </div>
+            <span className="text-[12px] font-bold text-on-surface truncate max-w-full">Help & Support</span>
+            <span className="text-[10px] text-on-surface-variant">Care Team</span>
+          </button>
+
+          {/* 9. Logout */}
+          <button
+            type="button"
+            id="quicklink-logout"
+            onClick={() => setShowLogoutConfirm(true)}
+            className="p-3 rounded-2xl bg-rose-500/5 border border-rose-500/20 hover:bg-rose-500/15 transition-all flex flex-col items-center text-center gap-1.5 cursor-pointer group"
+          >
+            <div className="w-10 h-10 rounded-xl bg-rose-500/10 text-rose-700 flex items-center justify-center group-hover:scale-105 transition-transform">
+              <span className="material-symbols-outlined text-[20px]">logout</span>
+            </div>
+            <span className="text-[12px] font-bold text-rose-700 truncate max-w-full">Logout</span>
+            <span className="text-[10px] text-rose-600/80">End Session</span>
+          </button>
+        </div>
+      </section>
 
       {/* ========================================================================= */}
       {/* PROFILE MENU — index over every account destination                       */}

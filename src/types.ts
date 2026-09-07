@@ -167,6 +167,11 @@ export interface SavedServiceRef {
   serviceId: string;
 }
 
+export interface SavedStaffRef {
+  salonId: string;
+  stylistId: string;
+}
+
 export interface ReferredFriend {
   id: string;
   name: string;
@@ -230,9 +235,13 @@ export interface UserProfile {
   // App Settings & Preferences
   notificationsEnabled?: boolean;
   appointmentReminders?: boolean;
+  bookingConfirmationNotification?: boolean;
+  rewardsNotification?: boolean;
+  referralUpdatesNotification?: boolean;
   promotionalOffers?: boolean;
   whatsappAlerts?: boolean;
   appTheme?: 'light' | 'dark' | 'system';
+  language?: 'en' | 'hi';
 }
 
 export interface RecommendedServiceMatch {

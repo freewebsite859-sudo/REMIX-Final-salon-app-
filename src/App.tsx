@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActiveTab, Salon, SalonService, Stylist, Appointment, UserProfile, SavedServiceRef, SavedAddress } from './types';
+import { ActiveTab, Salon, SalonService, Stylist, Appointment, UserProfile, SavedServiceRef, SavedStaffRef, SavedAddress } from './types';
 import { useCatalog } from './hooks/useCatalog';
 import { Header } from './components/Header';
 import { BottomNav, type BottomNavTab } from './components/BottomNav';
@@ -9,6 +9,11 @@ import { AppointmentsTab } from './components/AppointmentsTab';
 import { BookingDetailPage } from './components/BookingDetailPage';
 import { SavedTab } from './components/SavedTab';
 import { RewardsTab } from './components/RewardsTab';
+import { MembershipPage } from './components/MembershipPage';
+import { SettingsPage } from './components/SettingsPage';
+import { ReferralPage } from './components/ReferralPage';
+import { ReviewsPage } from './components/ReviewsPage';
+import { NotificationsPage } from './components/NotificationsPage';
 import { ProfileTab } from './components/ProfileTab';
 import { LocationModal } from './components/LocationModal';
 import { FirstLoginLocationScreen } from './components/FirstLoginLocationScreen';
@@ -76,6 +81,7 @@ const STORAGE_KEYS = {
   appointments: 'nexora-appointments',
   savedSalons: 'nexora-saved-salons',
   savedServices: 'nexora-saved-services',
+  savedStaff: 'nexora-saved-staff',
   profile: 'nexora-profile',
 };
 
@@ -190,6 +196,14 @@ function sanitizeSavedServices(value: unknown): SavedServiceRef[] | null {
   return value.filter(
     (item): item is SavedServiceRef =>
       isRecord(item) && typeof item.salonId === 'string' && typeof item.serviceId === 'string'
+  );
+}
+
+function sanitizeSavedStaff(value: unknown): SavedStaffRef[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.filter(
+    (item): item is SavedStaffRef =>
+      isRecord(item) && typeof item.salonId === 'string' && typeof item.stylistId === 'string'
   );
 }
 
@@ -323,6 +337,7 @@ export default function App() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [savedSalonIds, setSavedSalonIds] = useState<string[]>([]);
   const [savedServices, setSavedServices] = useState<SavedServiceRef[]>([]);
+  const [savedStaff, setSavedStaff] = useState<SavedStaffRef[]>([]);
   const hydratedUserIdRef = useRef<string | null>(null);
   /** Prevents the URL→state effect from fighting a state→URL write in the same tick. */
   const applyingRouteRef = useRef(false);
@@ -713,6 +728,7 @@ export default function App() {
       setAppointments([]);
       setSavedSalonIds([]);
       setSavedServices([]);
+      setSavedStaff([]);
       setCurrentLocation('Mansarovar, Jaipur');
       setShowFirstLoginLocation(false);
       return;
@@ -789,6 +805,9 @@ export default function App() {
     setSavedSalonIds(loadJson(scopedStorageKey(STORAGE_KEYS.savedSalons, userId), [], sanitizeSalonIds));
     setSavedServices(
       loadJson(scopedStorageKey(STORAGE_KEYS.savedServices, userId), [], sanitizeSavedServices)
+    );
+    setSavedStaff(
+      loadJson(scopedStorageKey(STORAGE_KEYS.savedStaff, userId), [], sanitizeSavedStaff)
     );
     // Reviews edited in memory are not authoritative and must not bleed into a
     // different account after switching sessions.
@@ -941,6 +960,12 @@ export default function App() {
 
   useEffect(() => {
     if (userId && hydratedUserIdRef.current === userId) {
+      saveJson(scopedStorageKey(STORAGE_KEYS.savedStaff, userId), savedStaff);
+    }
+  }, [savedStaff, userId]);
+
+  useEffect(() => {
+    if (userId && hydratedUserIdRef.current === userId) {
       saveJson(scopedStorageKey(STORAGE_KEYS.profile, userId), user);
     }
   }, [user, userId]);
@@ -1030,6 +1055,16 @@ export default function App() {
     });
   };
 
+  const handleToggleSaveStaff = (salonId: string, stylistId: string) => {
+    setSavedStaff((prev) => {
+      const exists = prev.some((item) => item.salonId === salonId && item.stylistId === stylistId);
+      if (exists) {
+        return prev.filter((item) => !(item.salonId === salonId && item.stylistId === stylistId));
+      }
+      return [...prev, { salonId, stylistId }];
+    });
+  };
+
   const handleCancelAppointment = (id: string) => {
     setAppointments(
       appointments.map((a) => (a.id === id ? { ...a, status: 'cancelled' } : a))
@@ -1062,6 +1097,7 @@ export default function App() {
     setAppointments([]);
     setSavedSalonIds([]);
     setSavedServices([]);
+    setSavedStaff([]);
     setActiveTab('home');
     setShowAuthScreen(true);
     setAuthInitialMode('login');
@@ -1076,6 +1112,7 @@ export default function App() {
         localStorage.removeItem(scopedStorageKey(STORAGE_KEYS.appointments, userId));
         localStorage.removeItem(scopedStorageKey(STORAGE_KEYS.savedSalons, userId));
         localStorage.removeItem(scopedStorageKey(STORAGE_KEYS.savedServices, userId));
+        localStorage.removeItem(scopedStorageKey(STORAGE_KEYS.savedStaff, userId));
       } catch {
         /* ignore storage errors */
       }
@@ -1273,7 +1310,9 @@ export default function App() {
             {(activeTab === 'home' ||
               customerRoute.kind === 'salon' ||
               customerRoute.kind === 'book') &&
-              activeTab !== 'search' && (
+              activeTab !== 'search' &&
+              customerRoute.kind !== 'membership' &&
+              customerRoute.kind !== 'notifications' && (
               <HomeTab
                 user={user}
                 salons={salons}
@@ -1318,7 +1357,7 @@ export default function App() {
               />
             )}
 
-            {activeTab === 'search' && (
+            {activeTab === 'search' && customerRoute.kind !== 'membership' && (
               <SearchTab
                 user={user}
                 salons={salons}
@@ -1348,7 +1387,7 @@ export default function App() {
               />
             )}
 
-            {activeTab === 'bookings' &&
+            {activeTab === 'bookings' && customerRoute.kind !== 'membership' &&
               (customerRoute.kind === 'booking' ? (
                 <BookingDetailPage
                   bookingId={customerRoute.bookingId}
@@ -1392,62 +1431,119 @@ export default function App() {
                 />
               ))}
 
-            {activeTab === 'rewards' && (
+            {activeTab === 'rewards' && customerRoute.kind !== 'membership' && (
               <RewardsTab
                 user={user}
+                userId={userId || undefined}
+                salons={salons}
                 appointments={appointments}
                 onNavigateToBooking={() => goToCustomer(CUSTOMER_HOME)}
                 onOpenMembership={() => goToCustomer(CUSTOMER_MEMBERSHIP)}
                 onOpenReferral={() => goToCustomer(CUSTOMER_REFERRAL)}
+                onOpenSalonDetails={handleOpenSalonDetails}
               />
             )}
 
-            {activeTab === 'saved' && (
+            {activeTab === 'saved' && customerRoute.kind !== 'membership' && (
               <SavedTab
                 salons={salons}
                 savedSalonIds={savedSalonIds}
                 savedServices={savedServices}
+                savedStaff={savedStaff}
                 onOpenSalonDetails={handleOpenSalonDetails}
                 onBookSalon={handleOpenBooking}
                 onToggleSaveSalon={handleToggleSaveSalon}
                 onToggleSaveService={handleToggleSaveService}
+                onToggleSaveStaff={handleToggleSaveStaff}
+                onExploreSalons={() => goToCustomer(CUSTOMER_SEARCH)}
               />
             )}
 
-            {activeTab === 'profile' && (
-              <ProfileTab
+            {customerRoute.kind === 'membership' && (
+              <MembershipPage
+                user={user}
+                salons={salons}
+                appointments={appointments}
+                onUpdateUser={setUser}
+                onBack={() => goToCustomer(CUSTOMER_HOME, { replace: true })}
+                onNavigateToBooking={() => goToCustomer(CUSTOMER_HOME)}
+                onOpenSalonDetails={handleOpenSalonDetails}
+                onOpenRewards={() => goToCustomer(CUSTOMER_REWARDS)}
+              />
+            )}
+
+            {customerRoute.kind === 'settings' && (
+              <SettingsPage
+                user={user}
+                onUpdateUser={setUser}
+                onBack={() => goToCustomer(CUSTOMER_PROFILE, { replace: true })}
+                onLogout={handleLogout}
+                onDeleteAccount={handleDeleteAccount}
+                onOpenLocationModal={() => setIsLocationModalOpen(true)}
+              />
+            )}
+
+            {customerRoute.kind === 'referral' && (
+              <ReferralPage
+                user={user}
+                onBack={() => goToCustomer(CUSTOMER_PROFILE, { replace: true })}
+                onOpenRewards={() => goToCustomer(CUSTOMER_REWARDS)}
+                onExploreSalons={() => goToCustomer(CUSTOMER_SEARCH)}
+              />
+            )}
+
+            {customerRoute.kind === 'reviews' && (
+              <ReviewsPage
                 user={user}
                 appointments={appointments}
-                activeSection={
-                  customerRoute.kind === 'settings'
-                    ? 'settings'
-                    : customerRoute.kind === 'membership'
-                      ? 'membership'
-                      : customerRoute.kind === 'referral'
-                        ? 'referral'
-                        : customerRoute.kind === 'reviews'
-                          ? 'reviews'
-                          : undefined
-                }
-                onUpdateUser={setUser}
+                onBack={() => goToCustomer(CUSTOMER_PROFILE, { replace: true })}
                 onNavigateToBooking={() => goToCustomer(CUSTOMER_HOME)}
-                onViewAppointments={handleViewAppointments}
-                onViewFavourites={() => goToCustomer(CUSTOMER_FAVOURITES)}
-                onOpenNotifications={() => {
-                  goToCustomer(CUSTOMER_NOTIFICATIONS);
-                  setIsNotificationsModalOpen(true);
-                }}
-                onOpenSettings={() => goToCustomer(CUSTOMER_SETTINGS)}
+                onExploreSalons={() => goToCustomer(CUSTOMER_SEARCH)}
+              />
+            )}
+
+            {customerRoute.kind === 'notifications' && (
+              <NotificationsPage
+                user={user}
+                userId={userId || undefined}
+                onBack={() => goToCustomer(CUSTOMER_HOME, { replace: true })}
+                onOpenBookings={() => goToCustomer(CUSTOMER_BOOKINGS)}
                 onOpenRewards={() => goToCustomer(CUSTOMER_REWARDS)}
                 onOpenMembership={() => goToCustomer(CUSTOMER_MEMBERSHIP)}
                 onOpenReferral={() => goToCustomer(CUSTOMER_REFERRAL)}
                 onOpenReviews={() => goToCustomer(CUSTOMER_REVIEWS)}
-                unreadNotifications={unreadNotifications}
-                favouritesCount={savedSalonIds.length}
-                onLogout={handleLogout}
-                onDeleteAccount={handleDeleteAccount}
+                onExploreSalons={() => goToCustomer(CUSTOMER_SEARCH)}
+                onNotificationsChanged={refreshNotifications}
               />
             )}
+
+            {activeTab === 'profile' &&
+              customerRoute.kind !== 'membership' &&
+              customerRoute.kind !== 'settings' &&
+              customerRoute.kind !== 'referral' &&
+              customerRoute.kind !== 'reviews' && (
+                <ProfileTab
+                  user={user}
+                  appointments={appointments}
+                  onUpdateUser={setUser}
+                  onNavigateToBooking={() => goToCustomer(CUSTOMER_HOME)}
+                  onViewAppointments={handleViewAppointments}
+                  onViewFavourites={() => goToCustomer(CUSTOMER_FAVOURITES)}
+                  onOpenNotifications={() => {
+                    goToCustomer(CUSTOMER_NOTIFICATIONS);
+                    setIsNotificationsModalOpen(true);
+                  }}
+                  onOpenSettings={() => goToCustomer(CUSTOMER_SETTINGS)}
+                  onOpenRewards={() => goToCustomer(CUSTOMER_REWARDS)}
+                  onOpenMembership={() => goToCustomer(CUSTOMER_MEMBERSHIP)}
+                  onOpenReferral={() => goToCustomer(CUSTOMER_REFERRAL)}
+                  onOpenReviews={() => goToCustomer(CUSTOMER_REVIEWS)}
+                  unreadNotifications={unreadNotifications}
+                  favouritesCount={savedSalonIds.length}
+                  onLogout={handleLogout}
+                  onDeleteAccount={handleDeleteAccount}
+                />
+              )}
           </main>
         </>
       )}
