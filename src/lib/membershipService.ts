@@ -236,6 +236,7 @@ export interface MembershipRecord {
   spend: number;
   expiresAt?: string;
   startedAt?: string;
+  status?: string;
 }
 
 function membershipTierFromRaw(raw: unknown): MembershipTier {
@@ -253,10 +254,10 @@ export async function loadMembership(
 ): Promise<MembershipRecord | null> {
   if (!client || !isSupabaseConfigured || !isLiveCustomerDataEnabled || !userId) return null;
   try {
-    let query = client.from(SALONOS_TABLES.memberships).select('*').eq('user_id', userId).order('created_at', { ascending: false });
+    const query = client.from(SALONOS_TABLES.memberships).select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(1);
     const { data, error } = await query.maybeSingle();
     if (error || !data) return null;
-    const row = data as Record<string, unknown>;
+    const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown>;
     return {
       id: typeof row.id === 'string' ? row.id : undefined,
       userId,
@@ -265,6 +266,7 @@ export async function loadMembership(
       spend: Number(row.spend ?? row.total_spend ?? 0) || 0,
       expiresAt: typeof row.expires_at === 'string' ? row.expires_at : undefined,
       startedAt: typeof row.started_at === 'string' ? row.started_at : undefined,
+      status: typeof row.status === 'string' ? row.status : undefined,
     };
   } catch {
     return null;
@@ -284,6 +286,7 @@ export async function saveMembership(
   }
   const payload = {
     user_id: userId,
+    customer_id: userId,
     tier: membership.tier,
     memberships_tier: membership.tier,
     points: membership.points,
@@ -291,8 +294,28 @@ export async function saveMembership(
     spend: membership.spend,
     total_spend: membership.spend,
     expires_at: membership.expiresAt || null,
+    status: 'active',
     updated_at: new Date().toISOString(),
   };
-  const { error } = await client.from(SALONOS_TABLES.memberships).upsert(payload, { onConflict: 'user_id' });
-  return { error: error?.message || null };
+  const upsert = await client.from(SALONOS_TABLES.memberships).upsert(payload, { onConflict: 'user_id' });
+  if (!upsert.error) return { error: null };
+
+  // If the deployment lacks a unique `user_id` constraint, update the existing
+  // row first, otherwise insert a new one. Never silently create a duplicate.
+  const existing = await client
+    .from(SALONOS_TABLES.memberships)
+    .select('id')
+    .eq('user_id', userId)
+    .limit(1)
+    .maybeSingle();
+  if (existing.error || !existing.data) {
+    const insert = await client.from(SALONOS_TABLES.memberships).insert(payload);
+    return { error: insert.error?.message || null };
+  }
+  const rowId = String((existing.data as Record<string, unknown>).id || '');
+  const update = await client
+    .from(SALONOS_TABLES.memberships)
+    .update(payload)
+    .eq('id', rowId);
+  return { error: update.error?.message || null };
 }

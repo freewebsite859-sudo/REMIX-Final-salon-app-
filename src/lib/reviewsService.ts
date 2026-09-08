@@ -173,7 +173,13 @@ export async function loadLiveReviews(
 ): Promise<CustomerReview[]> {
   if (!client || !isSupabaseConfigured || !isLiveCustomerDataEnabled || !userId) return [];
   try {
-    const { data, error } = await client.from(SALONOS_TABLES.reviews).select('*').eq('user_id', userId).order('created_at', { ascending: false });
+    const base = client
+    .from(SALONOS_TABLES.reviews)
+    .select('*')
+    .order('created_at', { ascending: false });
+  let result = await base.eq('user_id', userId);
+  if (result.error) result = await base.eq('customer_id', userId);
+  const { data, error } = result;
     if (error || !Array.isArray(data)) return [];
     return data.map((row) => reviewFromRow(row));
   } catch {
@@ -192,9 +198,40 @@ export async function saveReviewLive(
   if (!client || !isSupabaseConfigured || !isLiveCustomerDataEnabled || !userId) {
     return { error: 'Live Supabase reviews service is not configured.' };
   }
+
+  // One review per completed booking for this customer, and only the signed-in
+  // customer who owns that booking may review it.
+  if (review.bookingId) {
+    const existingBase = client
+      .from(SALONOS_TABLES.reviews)
+      .select('id')
+      .eq('booking_id', review.bookingId)
+      .limit(1);
+    let existing = await existingBase.eq('user_id', userId);
+    if (existing.error) existing = await existingBase.eq('customer_id', userId);
+    if (existing.error) return { error: `Review eligibility check failed: ${existing.error.message}` };
+    if (Array.isArray(existing.data) && existing.data.length > 0) {
+      return { error: 'You have already submitted a review for this booking.' };
+    }
+
+    const bookingBase = client
+      .from(SALONOS_TABLES.bookings)
+      .select('id,status')
+      .eq('id', review.bookingId);
+    let ownedBooking = await bookingBase.or(`user_id.eq.${userId},customer_id.eq.${userId}`);
+    if (ownedBooking.error) ownedBooking = await bookingBase.eq('customer_id', userId);
+    if (ownedBooking.error) ownedBooking = await bookingBase.eq('user_id', userId);
+    const bookingRow = ownedBooking.data?.[0] as Record<string, unknown> | undefined;
+    if (!bookingRow) return { error: 'Booking not found. Only the customer who completed the booking can review it.' };
+    if (String(bookingRow.status || '').toLowerCase() !== 'completed') {
+      return { error: 'Only completed bookings can be reviewed.' };
+    }
+  }
+
   const now = new Date().toISOString();
-  const { error } = await client.from(SALONOS_TABLES.reviews).insert({
+  const insertPayload = {
     user_id: userId,
+    customer_id: userId,
     booking_id: review.bookingId || null,
     salon_id: review.salonId || null,
     salon_name: review.salonName || null,
@@ -213,6 +250,17 @@ export async function saveReviewLive(
     user_avatar: review.userAvatar || null,
     verified_booking: true,
     created_at: now,
-  });
-  return { error: error?.message || null };
+  };
+
+  // Try the canonical column pair first, then the individual conventions
+  // already present in the existing deployment. Failing columns are unknown
+  // column errors, not data errors.
+  let insertError: string | null = null;
+  let first = await client.from(SALONOS_TABLES.reviews).insert(insertPayload);
+  if (!first.error) return { error: null };
+  insertError = first.error.message;
+
+  first = await client.from(SALONOS_TABLES.reviews).insert({ ...insertPayload, customer_id: undefined });
+  if (!first.error) return { error: null };
+  return { error: insertError || first.error.message };
 }

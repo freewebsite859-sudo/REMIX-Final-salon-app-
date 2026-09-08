@@ -191,6 +191,9 @@ export function minSalonPrice(salon: Salon): number {
 }
 
 export function isVerifiedSalon(salon: Salon): boolean {
+  // Prefer the live `is_verified` value from `salons`; fall back to the
+  // historical heuristic so unconfigured/demo catalogs still behave.
+  if (typeof salon.isVerified === 'boolean') return salon.isVerified;
   return (
     salon.featured === true ||
     salon.rating >= 4.5 ||
@@ -890,6 +893,9 @@ export function searchSalons(
 
   const results: SearchResult[] = [];
   for (const salon of salons) {
+    // Real catalog rows have an explicit `is_active`; never serve an inactive
+    // salon in the discovery/search surface.
+    if (salon.isActive === false) continue;
     const { ok, matchedService, fromPrice } = passesFilters(salon, filters, textTokens);
     if (!ok) continue;
     results.push({

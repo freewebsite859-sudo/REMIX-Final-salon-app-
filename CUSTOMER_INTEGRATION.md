@@ -56,8 +56,10 @@ duplicate tables, rename tables, drop anything, or overwrite existing rows.
   user for writes.
 
 - **Rewards / QR payments / redemptions**
-  `src/lib/rewardsService.ts` uses `reward_wallets`, `reward_transactions`
-  and `customer_qr_payments`.
+  `src/lib/rewardsService.ts` reads `reward_wallets`, `reward_transactions`
+  and `customer_qr_payments`. These three are **read-only** for the customer
+  app. Reward credits, redemptions and offer redemptions require backend /
+  QR-terminal verification; the client never marks a reward approved.
 
 - **Membership**
   `loadMembership` / `saveMembership` use `memberships`.
@@ -74,7 +76,18 @@ duplicate tables, rename tables, drop anything, or overwrite existing rows.
   `offer_redemptions`.
 
 - **Search history**
-  `src/lib/searchHistoryService.ts` records reads from `search_history`.
+  `src/lib/searchHistoryService.ts` records reads from `search_history`; the
+  Search tab also loads the customer's recent searches from that table.
+
+- **Profile / Settings**
+  `src/lib/profileService.ts` loads the signed-in profile via `auth.uid()` and
+  persists name/email/mobile/city/area/avatar/language/referral-code updates to
+  `profiles`. No other customer's row is read.
+
+- **Booking safety**
+  Before creating a booking the service re-checks that the salon, service and
+  staff are active, that the selected `staff_slots` row is still available, and
+  that no duplicate active booking exists for the same salon/staff/date/time.
 
 ## Database setup
 

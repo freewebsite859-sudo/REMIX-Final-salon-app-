@@ -168,12 +168,10 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
     }
 
     const result = isLiveCustomerDataEnabled && userId
-      ? await redeemRewardsLive(userId, {
-          salonName: selectedRedeemSalon.name,
-          salonId: selectedRedeemSalon.id,
-          billAmount: bill,
-          pointsToRedeem: pts,
-        })
+      ? {
+          success: false,
+          error: 'Redemption is verified by the backend/QR terminal. The customer app cannot approve its own points.',
+        }
       : redeemRewardsViaQr({
           userId,
           salonName: selectedRedeemSalon.name,
@@ -207,13 +205,13 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
     };
 
     const result = isLiveCustomerDataEnabled && userId
-      ? await recordQrPaymentReward(userId, {
-          salonName: targetSalon.name,
-          salonId: targetSalon.id,
-          amountInr: bill,
-          status: 'Approved',
-          description: simDescription ? `10% cashback on ₹${bill} QR payment for ${simDescription}` : undefined,
-        })
+      ? {
+          success: false,
+          transaction: undefined as never,
+          message: bill < MIN_QR_PAYMENT_INR
+            ? `Minimum ₹${MIN_QR_PAYMENT_INR} QR payment required.`
+            : 'Reward credit requires verified payment confirmation by the backend/QR terminal.',
+        }
       : addQrPaymentReward({
           userId,
           salonName: targetSalon.name,

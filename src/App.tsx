@@ -79,7 +79,7 @@ import {
   tabToCustomerPath,
   type CustomerRoute,
 } from './lib/customerRoutes';
-import { fetchUserProfile } from './lib/profileService';
+import { fetchUserProfile, profileRowToUser, saveUserProfile } from './lib/profileService';
 import {
   listNotifications,
   resolveNotificationTarget,
@@ -729,6 +729,20 @@ export default function App() {
   }, [session, isAuthLoading, activeTab]);
 
   /**
+   * Update the in-memory profile and, when live Supabase is configured,
+   * persist the signed-in customer's own row to `profiles`. The local store is
+   * only a device cache used by the offline preview.
+   */
+  const handleUpdateUser = useCallback((updated: UserProfile) => {
+    setUser(updated);
+    if (!userId) return;
+    saveJson(scopedStorageKey(STORAGE_KEYS.profile, userId), updated);
+    if (isLiveCustomerDataEnabled) {
+      void saveUserProfile(userId, updated);
+    }
+  }, [userId]);
+
+  /**
    * Load the live customer records for this user from Supabase. In real
    * Supabase mode bookings and favourites come ONLY from the database — the
    * localStorage arrays are treated as an offline/local-demo cache only.
@@ -838,18 +852,18 @@ export default function App() {
       try {
         if (isSupabaseConfigured && userId) {
           const { profile } = await fetchUserProfile(userId);
-          const p = (profile || {}) as Record<string, unknown>;
-          if (profile || p.role || p.full_name || p.phone) {
+          if (profile) {
+            const live = profileRowToUser(profile as unknown as Record<string, unknown>);
             setUser((prev) => ({
               ...prev,
-              role: (p.role as UserProfile['role']) || prev.role,
-              name: typeof p.full_name === 'string' && p.full_name ? p.full_name : prev.name,
-              phone: typeof p.phone === 'string' && p.phone ? p.phone : prev.phone,
-              locationArea: typeof p.location_area === 'string' && p.location_area ? p.location_area : prev.locationArea,
-              city: typeof p.city === 'string' && p.city ? p.city : prev.city,
-              loyaltyPoints: Number(p.loyalty_points) > 0 ? Number(p.loyalty_points) : prev.loyaltyPoints,
-              membershipTier: (p.membership_tier as UserProfile['membershipTier']) || prev.membershipTier,
-              referralCode: typeof p.referral_code === 'string' && p.referral_code ? p.referral_code : prev.referralCode,
+              ...live,
+              name: live.name || prev.name,
+              email: live.email || prev.email,
+              phone: live.phone || prev.phone,
+              avatar: live.avatar || prev.avatar,
+              city: live.city || prev.city,
+              locationArea: live.locationArea || prev.locationArea,
+              defaultLocality: live.defaultLocality || prev.defaultLocality,
             }));
           }
         }
@@ -1518,6 +1532,7 @@ export default function App() {
             {activeTab === 'search' && customerRoute.kind !== 'membership' && (
               <SearchTab
                 user={user}
+                userId={userId || undefined}
                 salons={salons}
                 currentLocation={currentLocation}
                 savedSalonIds={savedSalonIds}
@@ -1626,7 +1641,7 @@ export default function App() {
                 userId={userId || undefined}
                 salons={salons}
                 appointments={appointments}
-                onUpdateUser={setUser}
+                onUpdateUser={handleUpdateUser}
                 onBack={() => goToCustomer(CUSTOMER_HOME, { replace: true })}
                 onNavigateToBooking={() => goToCustomer(CUSTOMER_HOME)}
                 onOpenSalonDetails={handleOpenSalonDetails}
@@ -1637,7 +1652,7 @@ export default function App() {
             {customerRoute.kind === 'settings' && (
               <SettingsPage
                 user={user}
-                onUpdateUser={setUser}
+                onUpdateUser={handleUpdateUser}
                 onBack={() => goToCustomer(CUSTOMER_PROFILE, { replace: true })}
                 onLogout={handleLogout}
                 onDeleteAccount={handleDeleteAccount}
@@ -1689,7 +1704,7 @@ export default function App() {
                 <ProfileTab
                   user={user}
                   appointments={appointments}
-                  onUpdateUser={setUser}
+                  onUpdateUser={handleUpdateUser}
                   onNavigateToBooking={() => goToCustomer(CUSTOMER_HOME)}
                   onViewAppointments={handleViewAppointments}
                   onViewFavourites={() => goToCustomer(CUSTOMER_FAVOURITES)}

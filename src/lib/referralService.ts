@@ -146,7 +146,7 @@ import { supabase, isLiveCustomerDataEnabled, isSupabaseConfigured } from './sup
 import { SALONOS_TABLES } from './supabase/tables';
 
 function referralFromRow(row: Record<string, unknown>, userId: string): ReferralRecord {
-  const referredName = String(row.referred_user_name ?? row.friend_name ?? row.referred_name ?? 'Friend');
+  const referredName = String(row.referred_user_name ?? row.referred_name ?? row.friend_name ?? 'Friend');
   const completed = Boolean(row.completed_at || row.qualified_at || String(row.status || '').toLowerCase() === 'completed');
   return {
     id: String(row.id || ''),
@@ -172,7 +172,21 @@ export async function loadLiveReferrals(
 ): Promise<ReferralRecord[]> {
   if (!client || !isSupabaseConfigured || !isLiveCustomerDataEnabled || !userId) return [];
   try {
-    const { data, error } = await client.from(SALONOS_TABLES.referrals).select('*').eq('referrer_user_id', userId).order('created_at', { ascending: false });
+    const { data, error } = await client
+      .from(SALONOS_TABLES.referrals)
+      .select('*')
+      .eq('referrer_user_id', userId)
+      .order('created_at', { ascending: false });
+    if (!error && Array.isArray(data)) return data.map((row) => referralFromRow(row, userId));
+  } catch {
+    /* fall through to alias column */
+  }
+  try {
+    const { data, error } = await client
+      .from(SALONOS_TABLES.referrals)
+      .select('*')
+      .eq('referrer_id', userId)
+      .order('created_at', { ascending: false });
     if (error || !Array.isArray(data)) return [];
     return data.map((row) => referralFromRow(row, userId));
   } catch {
@@ -193,13 +207,28 @@ export async function saveReferralRecordLive(
   if (!client || !isSupabaseConfigured || !isLiveCustomerDataEnabled || !userId) {
     return { error: 'Live Supabase referral service is not configured.' };
   }
-  const { error } = await client.from(SALONOS_TABLES.referrals).insert({
+  const basePayload = {
     referrer_user_id: userId,
+    referrer_id: userId,
+    referred_user_name: record.friendName,
+    referred_user_mobile: record.friendMobile || null,
+    status: 'pending',
+    reward_points: record.rewardPoints || REFERRAL_POINTS_PER_INVITE,
+    created_at: new Date().toISOString(),
+  };
+  const { error } = await client.from(SALONOS_TABLES.referrals).insert(basePayload);
+  if (!error) return { error: null };
+
+  // The existing deployment may use `referrer_id` instead of
+  // `referrer_user_id`. Retry with the alias column only (the previous
+  // unknown-column error is not a data integrity problem).
+  const { error: retry } = await client.from(SALONOS_TABLES.referrals).insert({
+    referrer_id: userId,
     referred_user_name: record.friendName,
     referred_user_mobile: record.friendMobile || null,
     status: 'pending',
     reward_points: record.rewardPoints || REFERRAL_POINTS_PER_INVITE,
     created_at: new Date().toISOString(),
   });
-  return { error: error?.message || null };
+  return { error: retry?.message || null };
 }

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { UserProfile } from '../types';
 import { supabase, isSupabaseConfigured } from './supabase';
 
 /**
@@ -219,4 +220,119 @@ export async function getUserRole(
   // Default to customer if no profile or role - safe fallback
   // Real role should be set during signup
   return 'customer';
+}
+
+/**
+ * Map a `profiles` row to the app's UserProfile view model. Only the fields
+ * this customer owns are used; never read anything from another user's row.
+ */
+export function profileRowToUser(row: Record<string, unknown>): Partial<UserProfile> {
+  const value = (key: string): unknown => row[key];
+  const text = (key: string, fallback = ''): string => {
+    const v = value(key);
+    return typeof v === 'string' && v.trim() ? v.trim() : fallback;
+  };
+  const num = (key: string): number | undefined => {
+    const v = value(key);
+    const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN;
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const language = text('language').toLowerCase();
+  return {
+    name: text('full_name') || text('name'),
+    email: text('email'),
+    phone: text('phone') || text('mobile') || text('phone_number'),
+    avatar: text('avatar_url') || text('avatar') || text('image'),
+    locationArea: text('location_area') || text('area') || text('locality'),
+    city: text('city') || text('town'),
+    defaultLocality: text('location_area') || text('area') || text('locality'),
+    role: (text('role') as UserProfile['role']) || 'customer',
+    dateOfBirth: text('date_of_birth') || undefined,
+    gender: (text('gender') as UserProfile['gender']) || undefined,
+    genderPreference:
+      text('gender') === 'women'
+        ? 'women'
+        : text('gender') === 'men'
+          ? 'men'
+          : (text('gender_preference') as UserProfile['genderPreference']) || 'all',
+    referralCode: text('referral_code') || text('referralCode'),
+    loyaltyPoints: num('loyalty_points') ?? num('points') ?? 0,
+    membershipTier: (text('membership_tier') || text('membership')) as UserProfile['membershipTier'] | undefined,
+    language: language === 'hi' ? 'hi' : 'en',
+    notificationsEnabled: typeof value('notifications_enabled') === 'boolean' ? (value('notifications_enabled') as boolean) : undefined,
+    appointmentReminders: typeof value('appointment_reminders') === 'boolean' ? (value('appointment_reminders') as boolean) : undefined,
+    bookingConfirmationNotification: typeof value('booking_confirmation_notification') === 'boolean' ? (value('booking_confirmation_notification') as boolean) : undefined,
+    rewardsNotification: typeof value('rewards_notification') === 'boolean' ? (value('rewards_notification') as boolean) : undefined,
+    referralUpdatesNotification: typeof value('referral_updates_notification') === 'boolean' ? (value('referral_updates_notification') as boolean) : undefined,
+    promotionalOffers: typeof value('promotional_offers') === 'boolean' ? (value('promotional_offers') as boolean) : undefined,
+    whatsappAlerts: typeof value('whatsapp_alerts') === 'boolean' ? (value('whatsapp_alerts') as boolean) : undefined,
+  };
+}
+
+/**
+ * Persist the signed-in customer's own profile row. The payload is written
+ * only when the caller is authenticated (RLS `auth.uid() = id/user_id`).
+ * The function first tries the canonical `profiles` table with `id`, then the
+ * `user_id` convention used by some deployments.
+ */
+export async function saveUserProfile(
+  userId: string,
+  profile: Partial<UserProfile>,
+  client: SupabaseClient | null = supabase
+): Promise<{ success: boolean; error: string | null }> {
+  if (!client || !isSupabaseConfigured || !userId) {
+    return { success: false, error: 'Supabase is not configured.' };
+  }
+  const payload: Record<string, unknown> = {
+    email: profile.email?.toLowerCase() || undefined,
+    full_name: profile.name || undefined,
+    phone: profile.phone || undefined,
+    mobile: profile.phone || undefined,
+    avatar_url: profile.avatar || undefined,
+    avatar: profile.avatar || undefined,
+    city: profile.city || undefined,
+    area: profile.locationArea || undefined,
+    location_area: profile.locationArea || undefined,
+    gender: profile.gender || undefined,
+    gender_preference: profile.genderPreference || undefined,
+    date_of_birth: profile.dateOfBirth || undefined,
+    referral_code: profile.referralCode || undefined,
+    language: profile.language || undefined,
+    notifications_enabled: profile.notificationsEnabled,
+    appointment_reminders: profile.appointmentReminders,
+    booking_confirmation_notification: profile.bookingConfirmationNotification,
+    rewards_notification: profile.rewardsNotification,
+    referral_updates_notification: profile.referralUpdatesNotification,
+    promotional_offers: profile.promotionalOffers,
+    whatsapp_alerts: profile.whatsappAlerts,
+    updated_at: new Date().toISOString(),
+  };
+  // Drop undefined so existing columns with NOT NULL constraints are not hit.
+  for (const key of Object.keys(payload)) {
+    if (payload[key] === undefined) delete payload[key];
+  }
+
+  // Canonical profiles table keyed by auth uuid.
+  const idPayload = { ...payload, id: userId, user_id: userId };
+  const { error: idError } = await client.from('profiles').upsert(idPayload, { onConflict: 'id' });
+  if (!idError) return { success: true, error: null };
+
+  const code = (idError as { code?: string }).code || '';
+  if (code !== '42P01' && code !== 'PGRST205' && !idError.message.includes('does not exist')) {
+    // Some deployments key profiles by user_id. Try that too before failing.
+    const { error: userError } = await client
+      .from('profiles')
+      .upsert({ ...payload, user_id: userId }, { onConflict: 'user_id' });
+    if (!userError) return { success: true, error: null };
+    return { success: false, error: userError.message || idError.message };
+  }
+
+  // If the canonical namespaced table is missing, try the alternative
+  // user_profiles table without inventing a new table (it already exists there).
+  const { error: altError } = await client
+    .from('user_profiles')
+    .upsert({ ...payload, user_id: userId }, { onConflict: 'user_id' });
+  if (!altError) return { success: true, error: null };
+
+  return { success: false, error: altError.message || 'Profile could not be saved.' };
 }

@@ -76,7 +76,15 @@ export async function redeemOfferLive(
   params: { offerId: string; salonId?: string; code?: string },
   client: SupabaseClient | null = supabase
 ): Promise<{ success: boolean; error?: string; redemption?: OfferRedemption }> {
-  if (!client || !isSupabaseConfigured || !isLiveCustomerDataEnabled || !userId) {
+  // Offer redemptions are verified by the backend/point-of-sale. The customer
+  // app may only read its own redeemed rows; it never writes a redemption.
+  if (isLiveCustomerDataEnabled && userId) {
+    return {
+      success: false,
+      error: 'Offer redemption is confirmed by the backend/QR terminal. The customer app cannot create its own redemption.',
+    };
+  }
+  if (!client || !isSupabaseConfigured || !userId) {
     return { success: false, error: 'Live Supabase offers service is not configured.' };
   }
   if (!params.offerId) return { success: false, error: 'Missing offer id.' };

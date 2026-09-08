@@ -218,6 +218,9 @@ function normalizeReview(row: Record<string, unknown>): Review | null {
   const comment = asTrimmedString(pick(row, ['comment', 'review', 'message']));
   const rating = asNumber(pick(row, ['rating', 'salon_rating']));
   if (!id || !comment || rating === null || rating < 1 || rating > 5) return null;
+  const status = String(pick(row, ['status', 'review_status', 'approval_status']) || 'approved').toLowerCase();
+  const isApproved = pick(row, ['is_approved', 'isApproved', 'approved']);
+  if (status === 'pending' || status === 'rejected' || isApproved === false) return null;
   const created = asTrimmedString(pick(row, ['created_at', 'date', 'review_date']), '');
   return {
     id,
@@ -336,6 +339,8 @@ function normalizeSalon(
     gallery,
     photoGallery,
     isOpen: asBoolean(pick(row, ['is_open', 'isOpen', 'open_now']), false),
+    isActive: asBoolean(pick(row, ['is_active', 'isActive', 'active']), true),
+    isVerified: asBoolean(pick(row, ['is_verified', 'isVerified', 'verified']), false),
     openingHours: asTrimmedString(pick(row, ['opening_hours', 'hours', 'business_hours'])),
     priceRange: priceRangeValue(pick(row, ['price_range', 'priceRange', 'pricing'])),
     featured: asBoolean(pick(row, ['featured', 'is_featured']), false),

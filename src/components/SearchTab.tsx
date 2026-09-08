@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Salon, SalonService, Stylist, UserProfile } from '../types';
+import { fetchSearchHistory } from '../lib/searchHistoryService';
+import { isLiveCustomerDataEnabled } from '../lib/supabase';
 import {
   DEFAULT_SEARCH_FILTERS,
   DISTANCE_OPTIONS,
@@ -30,6 +32,7 @@ import {
 
 interface SearchTabProps {
   user: UserProfile;
+  userId?: string | null;
   salons: Salon[];
   currentLocation: string;
   savedSalonIds: string[];
@@ -244,6 +247,7 @@ const Chip: React.FC<{
 
 export const SearchTab: React.FC<SearchTabProps> = ({
   user: _user,
+  userId,
   salons,
   currentLocation,
   savedSalonIds,
@@ -259,7 +263,9 @@ export const SearchTab: React.FC<SearchTabProps> = ({
   const [sort, setSort] = useState<SearchSort | null>(null);
   const [sortTouched, setSortTouched] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [recent, setRecent] = useState<string[]>(() => loadRecentSearches());
+  const [recent, setRecent] = useState<string[]>(() =>
+    isLiveCustomerDataEnabled && userId ? [] : loadRecentSearches()
+  );
   const [isListening, setIsListening] = useState(false);
   const [voiceHint, setVoiceHint] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(Boolean((initialSearchQuery || '').trim()));
@@ -275,6 +281,19 @@ export const SearchTab: React.FC<SearchTabProps> = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialSearchQuery]);
+
+  // Recent searches come from `search_history` for the signed-in customer in
+  // live mode. Unconfigured previews still use the device cache only.
+  useEffect(() => {
+    if (!isLiveCustomerDataEnabled || !userId) return;
+    let active = true;
+    void fetchSearchHistory(userId).then((rows) => {
+      if (active) setRecent(rows.map((r) => r.query).filter(Boolean));
+    });
+    return () => {
+      active = false;
+    };
+  }, [userId]);
 
   const areaShort = useMemo(() => {
     const raw = (currentLocation || '').split(',')[0]?.trim() || 'Mansarovar';

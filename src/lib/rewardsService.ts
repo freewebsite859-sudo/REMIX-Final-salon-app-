@@ -854,7 +854,15 @@ export async function recordQrPaymentReward(
     status: params.status,
     description: params.description,
   });
-  if (!client || !isSupabaseConfigured || !isLiveCustomerDataEnabled || !userId) {
+  if (isLiveCustomerDataEnabled && userId) {
+    return {
+      success: false,
+      pointsEarned: 0,
+      message: 'Reward credit requires a verified payment by the backend/QR terminal.',
+      error: 'Reward approval is server-side and cannot be performed by the customer app.',
+    };
+  }
+  if (!client || !isSupabaseConfigured || !userId) {
     return { ...localResult, error: localResult.success ? undefined : 'Live Supabase rewards service is not configured.' };
   }
   if (!localResult.success) return localResult;
@@ -917,7 +925,15 @@ export async function recordReferralReward(
     amountInr: params.amountInr,
     status: params.status,
   });
-  if (!client || !isSupabaseConfigured || !isLiveCustomerDataEnabled || !userId) {
+  if (isLiveCustomerDataEnabled && userId) {
+    return {
+      success: false,
+      pointsEarned: 0,
+      message: 'Referral rewards are qualified only after verified QR payment confirmation.',
+      error: 'Referral reward qualification is server-side and cannot be marked by the customer app.',
+    };
+  }
+  if (!client || !isSupabaseConfigured || !userId) {
     return { ...localResult, error: localResult.success ? undefined : 'Live Supabase rewards service is not configured.' };
   }
   if (!localResult.success) return localResult;
@@ -966,7 +982,13 @@ export async function redeemRewardsLive(
     billAmount: params.billAmount,
     pointsToRedeem: params.pointsToRedeem,
   });
-  if (!client || !isSupabaseConfigured || !isLiveCustomerDataEnabled || !userId) {
+  if (isLiveCustomerDataEnabled && userId) {
+    return {
+      success: false,
+      error: 'In-shop redemption is confirmed by the backend/QR terminal. The customer app cannot approve its own points.',
+    };
+  }
+  if (!client || !isSupabaseConfigured || !userId) {
     return { ...localResult, error: localResult.error || 'Live Supabase rewards service is not configured.' };
   }
   if (!localResult.success) return localResult;

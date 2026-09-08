@@ -456,35 +456,26 @@ create policy "customer_review_wallets_select_own"
   on public.reward_wallets for select to authenticated
   using (auth.uid() = user_id);
 
+-- Rewards wallet and transactions are read-only for the customer app. Credits,
+-- redemptions and wallet mutations are performed by the backend/payment
+-- verification path only.
 drop policy if exists "customer_review_wallets_upsert_own" on public.reward_wallets;
-create policy "customer_review_wallets_upsert_own"
-  on public.reward_wallets for insert to authenticated
-  with check (auth.uid() = user_id);
-
 drop policy if exists "customer_reward_wallets_update_own" on public.reward_wallets;
-create policy "customer_reward_wallets_update_own"
-  on public.reward_wallets for update to authenticated
-  using (auth.uid() = user_id);
+drop policy if exists "customer_reward_transactions_insert_own" on public.reward_transactions;
+drop policy if exists "customer_qr_payments_insert_own" on public.customer_qr_payments;
+drop policy if exists "customer_offer_redemptions_insert_own" on public.offer_redemptions;
 
 drop policy if exists "customer_reward_transactions_select_own" on public.reward_transactions;
 create policy "customer_reward_transactions_select_own"
   on public.reward_transactions for select to authenticated
   using (auth.uid() = user_id);
 
-drop policy if exists "customer_reward_transactions_insert_own" on public.reward_transactions;
-create policy "customer_reward_transactions_insert_own"
-  on public.reward_transactions for insert to authenticated
-  with check (auth.uid() = user_id);
 
 drop policy if exists "customer_qr_payments_select_own" on public.customer_qr_payments;
 create policy "customer_qr_payments_select_own"
   on public.customer_qr_payments for select to authenticated
   using (auth.uid() = user_id);
 
-drop policy if exists "customer_qr_payments_insert_own" on public.customer_qr_payments;
-create policy "customer_qr_payments_insert_own"
-  on public.customer_qr_payments for insert to authenticated
-  with check (auth.uid() = user_id);
 
 drop policy if exists "customer_memberships_select_own" on public.memberships;
 create policy "customer_memberships_select_own"
@@ -531,10 +522,6 @@ create policy "customer_offer_redemptions_select_own"
   on public.offer_redemptions for select to authenticated
   using (auth.uid() = user_id);
 
-drop policy if exists "customer_offer_redemptions_insert_own" on public.offer_redemptions;
-create policy "customer_offer_redemptions_insert_own"
-  on public.offer_redemptions for insert to authenticated
-  with check (auth.uid() = user_id);
 
 -- -----------------------------------------------------------------------------
 -- Helpful verification query (no data change)

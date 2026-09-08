@@ -97,6 +97,18 @@ function asStringArray(value: unknown): string[] {
   return [];
 }
 
+/** Convert 24h DB times (e.g. "17:30:00") to the app's display format. */
+function toDisplayTime(value: string): string {
+  if (!value) return value;
+  const match = value.trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (!match) return value;
+  let hour = Number(match[1]);
+  const minute = match[2];
+  const suffix = hour >= 12 ? 'PM' : 'AM';
+  hour = hour % 12 || 12;
+  return `${hour}:${minute} ${suffix}`;
+}
+
 function servicesFromRow(row: Record<string, unknown>): SalonService[] {
   const raw = pick(row, ['services', 'service_details', 'booking_services']);
   if (!Array.isArray(raw)) return [];
@@ -152,7 +164,7 @@ export function normalizeBooking(row: Record<string, unknown>): Appointment {
     services: services.length ? services : [],
     stylist: foundStaff,
     date: asTrimmedString(pick(row, ['date', 'booking_date', 'slot_date']), ''),
-    time: asTrimmedString(pick(row, ['time', 'slot_time', 'start_time']), ''),
+    time: toDisplayTime(asTrimmedString(pick(row, ['time', 'slot_time', 'start_time']), '')),
     status: normalizeBookingStatus(pick(row, ['status', 'booking_status'])),
     totalPrice: asNumber(pick(row, ['total_price', 'totalPrice', 'amount', 'price'])) || 0,
     advancePaid: asNumber(pick(row, ['advance_paid', 'advancePaid', 'advance_amount'])) ?? undefined,
@@ -182,7 +194,110 @@ function collectRows(data: unknown): Record<string, unknown>[] {
   return [];
 }
 
+async function buildFlatBookings(
+  client: SupabaseClient,
+  userId: string,
+  rowsData: unknown
+): Promise<{ rows: Record<string, unknown>[]; error?: string; bookings: Record<string, unknown>[] }> {
+  const rows = collectRows(rowsData);
+  const ids = rows.map((b) => String(b.id || ''));
+  const servicesByBooking: Record<string, Record<string, unknown>[]> = {};
+  if (ids.length) {
+    const { data: serviceData, error: sErr } = await client
+      .from(SALONOS_TABLES.bookingServices)
+      .select('*')
+      .in('booking_id', ids);
+    if (!sErr) {
+      for (const rs of collectRows(serviceData)) {
+        const bookingId = asTrimmedString(pick(rs, ['booking_id', 'bookingId']));
+        if (!bookingId) continue;
+        servicesByBooking[bookingId] = servicesByBooking[bookingId] || [];
+        servicesByBooking[bookingId].push(rs);
+      }
+    }
+  }
+  // Refresh embedded service rows with the live `salon_services` catalogue so
+  // name/price/duration reflect the current database, not a stale denormalised
+  // copy inside `booking_services`.
+  const serviceIds = Array.from(
+    new Set(
+      Object.values(servicesByBooking)
+        .flat()
+        .map((s) => String((s as Record<string, unknown>).service_id || ''))
+        .filter(Boolean)
+    )
+  );
+  if (serviceIds.length) {
+    const { data: serviceRows, error: catalogErr } = await client
+      .from(SALONOS_TABLES.salonServices)
+      .select('*')
+      .in('id', serviceIds);
+    if (!catalogErr && Array.isArray(serviceRows)) {
+      const byId: Record<string, Record<string, unknown>> = {};
+      for (const rs of collectRows(serviceRows)) byId[String(rs.id || '')] = rs;
+      for (const bookingId of Object.keys(servicesByBooking)) {
+        servicesByBooking[bookingId] = servicesByBooking[bookingId].map((s) => {
+          const catalog = byId[String((s as Record<string, unknown>).service_id || '')];
+          const rec = s as Record<string, unknown>;
+          return {
+            ...rec,
+            service_name: asTrimmedString(pick(rec, ['service_name', 'name']), asTrimmedString(pick(catalog || {}, ['name']))),
+            price: asNumber(pick(rec, ['price', 'amount'])) ?? asNumber(pick(catalog || {}, ['price'])) ?? 0,
+            duration: asNumber(pick(rec, ['duration'])) ?? asNumber(pick(catalog || {}, ['duration', 'duration_minutes'])) ?? 0,
+            duration_minutes: asNumber(pick(rec, ['duration_minutes'])) ?? asNumber(pick(catalog || {}, ['duration_minutes', 'duration'])) ?? 0,
+            discount_price: asNumber(pick(rec, ['discount_price'])) ?? asNumber(pick(catalog || {}, ['discount_price'])) ?? null,
+          };
+        });
+      }
+    }
+  }
+
+  const salonIds = rows.map((b) => String(b.salon_id || '')).filter(Boolean);
+  const staffIds = rows.map((b) => String(b.staff_id || '')).filter(Boolean);
+  const salonsById: Record<string, Record<string, unknown>> = {};
+  if (salonIds.length) {
+    const { data: salonData, error: sErr } = await client
+      .from(SALONOS_TABLES.salons)
+      .select('*')
+      .in('id', salonIds);
+    if (!sErr) {
+      for (const rs of collectRows(salonData)) salonsById[String(rs.id || '')] = rs;
+    }
+  }
+  const staffById: Record<string, Record<string, unknown>> = {};
+  if (staffIds.length) {
+    const { data: staffData, error: stErr } = await client
+      .from(SALONOS_TABLES.salonStaff)
+      .select('*')
+      .in('id', staffIds);
+    if (!stErr) {
+      for (const rs of collectRows(staffData)) staffById[String(rs.id || '')] = rs;
+    }
+  }
+  const withServices = rows.map((b) => {
+    const bookingId = String(b.id || '');
+    const salon = salonsById[String(b.salon_id || '')] || {};
+    const staff = staffById[String(b.staff_id || '')] || {};
+    return {
+      ...b,
+      services: servicesByBooking[bookingId] || [],
+      salon_name: asTrimmedString(pick(b, ['salon_name']), asTrimmedString(pick(salon, ['name']))),
+      salon_image: asTrimmedString(pick(b, ['salon_image']), asTrimmedString(pick(salon, ['image', 'image_url']))),
+      salon_address: asTrimmedString(pick(b, ['salon_address']), asTrimmedString(pick(salon, ['address']))),
+      salon_phone: asTrimmedString(pick(b, ['salon_phone']), asTrimmedString(pick(salon, ['phone']))),
+      salon_latitude: asNumber(pick(salon, ['latitude'])) ?? null,
+      salon_longitude: asNumber(pick(salon, ['longitude'])) ?? null,
+      maps_url: asTrimmedString(pick(b, ['maps_url']), asTrimmedString(pick(salon, ['maps_url']))),
+      staff_name: asTrimmedString(pick(b, ['staff_name']), asTrimmedString(pick(staff, ['name']))),
+    };
+  });
+  return { rows: withServices, error: undefined, bookings: withServices };
+}
+
 async function fetchBookingsRaw(client: SupabaseClient, userId: string) {
+  // Some deployments expose the FK relationship with the canonical FK name and
+  // some do not. Place the FK object as part of the query but fall back to the
+  // flat query + explicit lookups below so neither breaks.
   const { data, error } = await client
     .from(SALONOS_TABLES.bookings)
     .select(`
@@ -190,74 +305,35 @@ async function fetchBookingsRaw(client: SupabaseClient, userId: string) {
       salons!bookings_salon_id_fkey(*),
       salon_staff!bookings_staff_id_fkey(*)
     `)
-    .eq('user_id', userId)
+    .or(`user_id.eq.${userId},customer_id.eq.${userId}`)
     .order('created_at', { ascending: false });
 
   if (error) {
-    // Some deployments do not have a FK-named relationship; retry with a flat query.
+    // Some deployments do not have a FK-named relationship or use only
+    // customer_id; retry with heuristics before giving up.
     const flat = await client
       .from(SALONOS_TABLES.bookings)
       .select('*')
-      .eq('user_id', userId)
+      .or(`user_id.eq.${userId},customer_id.eq.${userId}`)
       .order('created_at', { ascending: false });
-    if (flat.error) return { rows: [] as Record<string, unknown>[], error: flat.error.message || 'Bookings unavailable', bookings: [] as Record<string, unknown>[] };
-    const rows = collectRows(flat.data);
-    const ids = rows.map((b) => String(b.id || ''));
-    const servicesByBooking: Record<string, Record<string, unknown>[]> = {};
-    if (ids.length) {
-      const { data: serviceData, error: sErr } = await client
-        .from(SALONOS_TABLES.bookingServices)
+    if (flat.error) {
+      // The `.or` OR-filter can fail when a deployment only has customer_id
+      // (or only user_id). Try the single column that is present.
+      const byCustomer = await client
+        .from(SALONOS_TABLES.bookings)
         .select('*')
-        .in('booking_id', ids);
-      if (!sErr) {
-        for (const rs of collectRows(serviceData)) {
-          const bookingId = asTrimmedString(pick(rs, ['booking_id', 'bookingId']));
-          if (!bookingId) continue;
-          servicesByBooking[bookingId] = servicesByBooking[bookingId] || [];
-          servicesByBooking[bookingId].push(rs);
-        }
-      }
-    }
-    const salonIds = rows.map((b) => String(b.salon_id || '')).filter(Boolean);
-    const staffIds = rows.map((b) => String(b.staff_id || '')).filter(Boolean);
-    const salonsById: Record<string, Record<string, unknown>> = {};
-    if (salonIds.length) {
-      const { data: salonData, error: sErr } = await client
-        .from(SALONOS_TABLES.salons)
+        .eq('customer_id', userId)
+        .order('created_at', { ascending: false });
+      if (!byCustomer.error) return await buildFlatBookings(client, userId, byCustomer.data);
+      const byUser = await client
+        .from(SALONOS_TABLES.bookings)
         .select('*')
-        .in('id', salonIds);
-      if (!sErr) {
-        for (const rs of collectRows(salonData)) salonsById[String(rs.id || '')] = rs;
-      }
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+      if (!byUser.error) return await buildFlatBookings(client, userId, byUser.data);
+      return { rows: [] as Record<string, unknown>[], error: flat.error.message || 'Bookings unavailable', bookings: [] as Record<string, unknown>[] };
     }
-    const staffById: Record<string, Record<string, unknown>> = {};
-    if (staffIds.length) {
-      const { data: staffData, error: stErr } = await client
-        .from(SALONOS_TABLES.salonStaff)
-        .select('*')
-        .in('id', staffIds);
-      if (!stErr) {
-        for (const rs of collectRows(staffData)) staffById[String(rs.id || '')] = rs;
-      }
-    }
-    const withServices = rows.map((b) => {
-      const bookingId = String(b.id || '');
-      const salon = salonsById[String(b.salon_id || '')] || {};
-      const staff = staffById[String(b.staff_id || '')] || {};
-      return {
-        ...b,
-        services: servicesByBooking[bookingId] || [],
-        salon_name: asTrimmedString(pick(b, ['salon_name']), asTrimmedString(pick(salon, ['name']))),
-        salon_image: asTrimmedString(pick(b, ['salon_image']), asTrimmedString(pick(salon, ['image', 'image_url']))),
-        salon_address: asTrimmedString(pick(b, ['salon_address']), asTrimmedString(pick(salon, ['address']))),
-        salon_phone: asTrimmedString(pick(b, ['salon_phone']), asTrimmedString(pick(salon, ['phone']))),
-        salon_latitude: asNumber(pick(salon, ['latitude'])) ?? null,
-        salon_longitude: asNumber(pick(salon, ['longitude'])) ?? null,
-        maps_url: asTrimmedString(pick(b, ['maps_url']), asTrimmedString(pick(salon, ['maps_url']))),
-        staff_name: asTrimmedString(pick(b, ['staff_name']), asTrimmedString(pick(staff, ['name']))),
-      };
-    });
-    return { rows: withServices, error: undefined, bookings: withServices };
+    return await buildFlatBookings(client, userId, flat.data);
   }
 
   const bookings = collectRows(data);
@@ -276,6 +352,35 @@ async function fetchBookingsRaw(client: SupabaseClient, userId: string) {
         if (!bookingId) continue;
         servicesByBooking[bookingId] = servicesByBooking[bookingId] || [];
         servicesByBooking[bookingId].push(rs);
+      }
+    }
+  }
+
+  // Enrich denormalised booking_service rows from the live salon_services table.
+  const joinedServiceIds = Array.from(
+    new Set(Object.values(servicesByBooking).flat().map((s) => String((s as Record<string, unknown>).service_id || '')).filter(Boolean))
+  );
+  if (joinedServiceIds.length) {
+    const { data: joinedCatalog, error: catErr } = await client
+      .from(SALONOS_TABLES.salonServices)
+      .select('*')
+      .in('id', joinedServiceIds);
+    if (!catErr && Array.isArray(joinedCatalog)) {
+      const byId: Record<string, Record<string, unknown>> = {};
+      for (const rs of collectRows(joinedCatalog)) byId[String(rs.id || '')] = rs;
+      for (const bookingId of Object.keys(servicesByBooking)) {
+        servicesByBooking[bookingId] = servicesByBooking[bookingId].map((s) => {
+          const catalog = byId[String((s as Record<string, unknown>).service_id || '')];
+          const rec = s as Record<string, unknown>;
+          return {
+            ...rec,
+            service_name: asTrimmedString(pick(rec, ['service_name', 'name']), asTrimmedString(pick(catalog || {}, ['name']))),
+            price: asNumber(pick(rec, ['price', 'amount'])) ?? asNumber(pick(catalog || {}, ['price'])) ?? 0,
+            duration: asNumber(pick(rec, ['duration'])) ?? asNumber(pick(catalog || {}, ['duration', 'duration_minutes'])) ?? 0,
+            duration_minutes: asNumber(pick(rec, ['duration_minutes'])) ?? asNumber(pick(catalog || {}, ['duration_minutes', 'duration'])) ?? 0,
+            discount_price: asNumber(pick(rec, ['discount_price'])) ?? asNumber(pick(catalog || {}, ['discount_price'])) ?? null,
+          };
+        });
       }
     }
   }
@@ -351,10 +456,95 @@ export async function createCustomerBooking(
   const advance = input.advancePaid ?? Math.round(totalPrice * 0.25);
   const remaining = input.remainingAmount ?? Math.max(0, totalPrice - advance);
 
+  // Before creating any row, verify the catalog is active and the requested
+  // slot is still available. This is an application-level safety check on top
+  // of RLS/data integrity; it never bypasses policies.
+  const { data: salonRow, error: salonErr } = await client
+    .from(SALONOS_TABLES.salons)
+    .select('id,is_active,is_verified')
+    .eq('id', input.salonId)
+    .maybeSingle();
+  if (salonErr || !salonRow) {
+    return { appointment: null, error: salonErr?.message || 'Salon is not available for booking.' };
+  }
+  if (salonRow.is_active === false) {
+    return { appointment: null, error: 'This salon is currently inactive and cannot accept bookings.' };
+  }
+
+  const serviceIds = input.services.map((s) => s.id).filter(Boolean);
+  if (serviceIds.length) {
+    const { data: serviceRows, error: serviceErr } = await client
+      .from(SALONOS_TABLES.salonServices)
+      .select('id,is_active')
+      .in('id', serviceIds)
+      .eq('salon_id', input.salonId);
+    if (serviceErr) {
+      return { appointment: null, error: `Selected services could not be verified: ${serviceErr.message}` };
+    }
+    const activeIds = new Set((serviceRows || []).map((row) => String((row as Record<string, unknown>).id || '')));
+    const inactive = serviceIds.filter((id) => !activeIds.has(id));
+    if (inactive.length) {
+      return { appointment: null, error: 'One or more selected services are unavailable at this salon.' };
+    }
+  }
+
+  if (input.staffId) {
+    const { data: staffRow, error: staffErr } = await client
+      .from(SALONOS_TABLES.salonStaff)
+      .select('id,is_active')
+      .eq('id', input.staffId)
+      .eq('salon_id', input.salonId)
+      .maybeSingle();
+    if (staffErr || !staffRow) {
+      return { appointment: null, error: staffErr?.message || 'Selected staff member is not available at this salon.' };
+    }
+    if (staffRow.is_active === false) {
+      return { appointment: null, error: 'Selected staff member is currently inactive.' };
+    }
+
+    const slotResult = await fetchAvailableSlots(input.salonId, { staffId: input.staffId, date: input.date }, client);
+    const slotAvailable = slotResult.slots.some(
+      (slot) => slot.staffId === input.staffId && slot.date === input.date && slot.startTime === input.time
+    );
+    if (!slotAvailable) {
+      return { appointment: null, error: slotResult.error || 'The selected staff slot is no longer available.' };
+    }
+  }
+
+  // Duplicate-slot guard for the same customer and salon. Blocks a second
+  // booking for the same staff/date/time while a previous one is not cancelled
+  // or complete.
+  const existingQuery = client
+    .from(SALONOS_TABLES.bookings)
+    .select('id,status,staff_id,stylist_id')
+    .eq('salon_id', input.salonId)
+    .eq('date', input.date)
+    .eq('time', input.time);
+  let existing = await existingQuery.or(`user_id.eq.${input.userId},customer_id.eq.${input.userId}`);
+  if (existing.error) {
+    existing = await existingQuery.eq('customer_id', input.userId);
+  }
+  if (existing.error) {
+    existing = await existingQuery.eq('user_id', input.userId);
+  }
+  if (existing.error) {
+    return { appointment: null, error: `Booking conflict check failed: ${existing.error.message}` };
+  }
+  const duplicate = (existing.data || []).find((row) => {
+    const status = String((row as Record<string, unknown>).status || '').toLowerCase();
+    const staffId = String((row as Record<string, unknown>).staff_id || (row as Record<string, unknown>).stylist_id || '');
+    return status !== 'cancelled' && status !== 'no_show' && status !== 'completed' && (!input.staffId || staffId === input.staffId);
+  });
+  if (duplicate) {
+    return { appointment: null, error: 'You already have a booking for this slot. Select another date or time.' };
+  }
+
   const bookingPayload = {
     user_id: input.userId,
+    customer_id: input.userId,
     salon_id: input.salonId,
     staff_id: input.staffId || null,
+    stylist_id: input.staffId || null,
     date: input.date,
     time: input.time,
     booking_date: input.date,
@@ -428,12 +618,39 @@ export async function cancelCustomerBooking(
   if (!client || !isSupabaseConfigured || !isLiveCustomerDataEnabled) {
     return { error: 'Live Supabase booking service is not configured.' };
   }
-  const { error } = await client
+
+  // Customers can cancel only their own upcoming pending/confirmed bookings.
+  const base = client
+    .from(SALONOS_TABLES.bookings)
+    .select('id,status,date,time')
+    .eq('id', bookingId);
+  let owned = await base.or(`user_id.eq.${userId},customer_id.eq.${userId}`);
+  if (owned.error) owned = await base.eq('customer_id', userId);
+  if (owned.error) owned = await base.eq('user_id', userId);
+  if (owned.error || !owned.data || !owned.data.length) {
+    return { error: owned.error?.message || 'Booking not found. You can only cancel your own bookings.' };
+  }
+  const booking = owned.data[0] as Record<string, unknown>;
+  const status = String(booking.status || '').toLowerCase();
+  if (status === 'completed' || status === 'no_show') {
+    return { error: 'Completed/no-show bookings cannot be cancelled by the customer.' };
+  }
+  const dateStr = String(booking.date || booking.booking_date || '');
+  const isPast = dateStr && new Date(`${dateStr}T23:59:59`).getTime() < Date.now();
+  if (status === 'confirmed' && isPast) {
+    return { error: 'Confirmed bookings in the past cannot be cancelled by the customer.' };
+  }
+
+  const updateBase = client
     .from(SALONOS_TABLES.bookings)
     .update({ status: 'cancelled', updated_at: new Date().toISOString() })
-    .eq('id', bookingId)
-    .eq('user_id', userId);
-  return { error: error?.message || null };
+    .eq('id', bookingId);
+  const byUser = await updateBase.eq('user_id', userId);
+  if (byUser.error) {
+    const byCustomer = await updateBase.eq('customer_id', userId);
+    if (byCustomer.error) return { error: byCustomer.error.message };
+  }
+  return { error: null };
 }
 
 /**
@@ -464,7 +681,7 @@ export async function fetchAvailableSlots(
         salonId: asTrimmedString(pick(row, ['salon_id', 'salonId']), salonId),
         staffId: asTrimmedString(pick(row, ['staff_id', 'staffId'])),
         date: asTrimmedString(pick(row, ['date', 'slot_date']), options.date || ''),
-        startTime: asTrimmedString(pick(row, ['start_time', 'startTime', 'time']), ''),
+        startTime: toDisplayTime(asTrimmedString(pick(row, ['start_time', 'startTime', 'time']), '')),
         endTime: asTrimmedString(pick(row, ['end_time', 'endTime'])),
         isAvailable: Boolean(asNumber(pick(row, ['is_available', 'isAvailable', 'available'])) === 1 || pick(row, ['is_available', 'isAvailable', 'available']) === true),
         status: asTrimmedString(pick(row, ['status'])),

@@ -264,6 +264,18 @@ export const MembershipPage: React.FC<MembershipPageProps> = ({
               <span className="opacity-75 block">Partner Spend</span>
               <span className="font-extrabold text-[14px]">₹{lifetimeSpend.toLocaleString('en-IN')}</span>
             </div>
+            <div>
+              <span className="opacity-75 block">Member Since</span>
+              <span className="font-extrabold text-[14px]">
+                {liveMembership?.startedAt ? new Date(liveMembership.startedAt).toLocaleDateString('en-IN') : '—'}
+              </span>
+            </div>
+            <div>
+              <span className="opacity-75 block">Valid Till</span>
+              <span className="font-extrabold text-[14px]">
+                {liveMembership?.expiresAt ? new Date(liveMembership.expiresAt).toLocaleDateString('en-IN') : '—'}
+              </span>
+            </div>
             <div className="col-span-2 sm:col-span-1">
               <span className="opacity-75 block">Network Status</span>
               <span className="font-extrabold text-[14px] flex items-center gap-1">

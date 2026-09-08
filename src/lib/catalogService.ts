@@ -38,6 +38,8 @@ export interface SalonDbRow {
   gallery?: string[] | string | null;
   photo_gallery?: GalleryPhoto[] | null;
   is_open?: boolean | null;
+  is_active?: boolean | null;
+  is_verified?: boolean | null;
   opening_hours?: string | null;
   price_range?: Salon['priceRange'] | string | null;
   rating?: number | null;
@@ -368,6 +370,8 @@ export function normalizeCatalog(
       gallery,
       photoGallery: Array.isArray(row.photo_gallery) ? (row.photo_gallery as GalleryPhoto[]) : undefined,
       isOpen: asBoolean(row.is_open, false),
+      isActive: asBoolean(row.is_active, true),
+      isVerified: asBoolean(row.is_verified, false),
       openingHours: asTrimmedString(row.opening_hours, ''),
       priceRange: priceRangeValue(row.price_range),
       featured: asBoolean(row.featured, false),

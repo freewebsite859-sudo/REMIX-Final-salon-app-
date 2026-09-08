@@ -72,6 +72,8 @@ export interface Salon {
   gallery: string[];
   photoGallery?: GalleryPhoto[];
   isOpen: boolean;
+  isActive?: boolean;
+  isVerified?: boolean;
   openingHours: string;
   priceRange: '₹' | '₹₹' | '₹₹₹' | '₹₹₹₹' | '$' | '$$' | '$$$';
   featured?: boolean;
