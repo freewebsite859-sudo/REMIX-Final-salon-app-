@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Salon, SalonService, Stylist, Appointment } from '../types';
 import { BookingConfirmationPage } from './BookingConfirmationPage';
+import { buildBookingMetadataServices } from '../lib/bookingContract';
+import { computeBookingTotals, couponDiscountAmount } from '../lib/bookingCore';
 
 /** Indian-rupee formatting with thousands separators (e.g. ₹3,150). */
 function formatINR(amount: number): string {
@@ -165,10 +167,20 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   };
 
   // --- Dynamic totals across every selected service -------------------------
-  const subtotal = selectedServices.reduce((acc, s) => acc + (s.discountPrice || s.price || 0), 0);
-  const totalDuration = selectedServices.reduce((acc, s) => acc + (s.duration || 0), 0);
-  const discountAmount = Math.round((subtotal * appliedDiscountPercent) / 100);
-  const finalTotal = Math.max(0, subtotal - discountAmount);
+  // Computed from the canonical booking line items (same helpers the summary
+  // modal and the server use) so the cart, the deposit and the server-side
+  // recomputation can never disagree.
+  const lineItems = buildBookingMetadataServices(selectedServices);
+  const baseTotals = computeBookingTotals(lineItems, 0);
+  const totals = computeBookingTotals(
+    lineItems,
+    couponDiscountAmount(baseTotals.subtotal, appliedDiscountPercent)
+  );
+  const subtotal = totals.subtotal;
+  const totalDuration = totals.durationMinutes;
+  const discountAmount = totals.discountAmount;
+  const finalTotal = totals.total;
+  const advanceAmount = totals.advanceAmount;
   const hasSelection = selectedServices.length > 0;
 
   const buildDraft = () => ({
@@ -511,6 +523,16 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   <div className="flex justify-between font-bold text-on-surface text-[14px] pt-1 border-t border-outline-variant/30">
                     <span>Total Amount</span>
                     <span className="text-primary text-[16px]">{formatINR(finalTotal)}</span>
+                  </div>
+                  <div className="flex justify-between text-[11px]">
+                    <span>Advance payable now (25%)</span>
+                    <span className="font-semibold text-on-surface">{formatINR(advanceAmount)}</span>
+                  </div>
+                  <div className="flex justify-between text-[11px]">
+                    <span>Balance at salon</span>
+                    <span className="font-semibold text-on-surface">
+                      {formatINR(Math.max(0, finalTotal - advanceAmount))}
+                    </span>
                   </div>
                 </div>
               </div>

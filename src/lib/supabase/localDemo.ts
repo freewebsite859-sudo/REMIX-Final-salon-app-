@@ -43,6 +43,10 @@ const DEMO_TABLES = new Set([
   'notifications',
   'notification_preferences',
   'notification_deliveries',
+  // Written by src/lib/demoBookingStore.ts so a demo checkout persists real
+  // booking rows instead of failing on the unconfigured server endpoint.
+  'bookings',
+  'booking_services',
 ]);
 
 // ---------------------------------------------------------------------------

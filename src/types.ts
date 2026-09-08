@@ -151,6 +151,12 @@ export interface Appointment {
   whatsappSentAt?: string;
   /** True when this booking was opened from history (enables Rebook CTA). */
   rebookFromHistory?: boolean;
+  /**
+   * True when the booking was created by the on-device demo store (no live
+   * Supabase project configured). Screens use it to label the booking as a
+   * demo record instead of implying a captured gateway payment.
+   */
+  isDemoBooking?: boolean;
 }
 
 /**

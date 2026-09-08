@@ -1,6 +1,9 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Salon, SalonService, Stylist, Appointment } from '../types';
 import { PaymentFailureDialog } from './PaymentFailureDialog';
+import { buildBookingMetadataServices } from '../lib/bookingContract';
+import { computeBookingTotals, couponDiscountAmount } from '../lib/bookingCore';
+import { isLocalDemoMode } from '../lib/supabase';
 import { BookingConfirmationPage } from './BookingConfirmationPage';
 
 export interface BookingPaymentRequest {
@@ -135,6 +138,8 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
   const [isEditingNotes, setIsEditingNotes] = useState<boolean>(false);
   const [buttonState, setButtonState] = useState<'idle' | 'loading' | 'success'>('idle');
   const [paymentError, setPaymentError] = useState<string | null>(null);
+  /** Inline cart feedback (replaces blocking window.alert calls). */
+  const [cartMessage, setCartMessage] = useState<string | null>(null);
   const [showFailureDialog, setShowFailureDialog] = useState<boolean>(false);
   const [isRetryingPayment, setIsRetryingPayment] = useState<boolean>(false);
   const isSubmitting = buttonState !== 'idle';
@@ -159,35 +164,37 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
     setIsEditingNotes(false);
     setButtonState('idle');
     setPaymentError(null);
+    setCartMessage(null);
     setShowFailureDialog(false);
     setIsRetryingPayment(false);
   }, [isOpen, salon?.id, date, time, specialNotes]);
 
-  // Total duration & price calculations
-  const totalDuration = useMemo(() => {
-    return services.reduce((sum, s) => sum + (s.duration || 30), 0);
-  }, [services]);
+  // ---------------------------------------------------------------------
+  // Cart math — computed from the SAME canonical line items the server
+  // recomputes on POST /api/bookings. Any drift between this panel and the
+  // server is what produced "Advance Payment Incomplete" at checkout, so the
+  // shared core (src/lib/bookingCore.ts) owns every number below.
+  // ---------------------------------------------------------------------
+  const lineItems = useMemo(() => buildBookingMetadataServices(services), [services]);
 
-  const subtotal = useMemo(() => {
-    return services.reduce((sum, s) => sum + (s.discountPrice || s.price || 0), 0);
-  }, [services]);
+  /** Services the pricing contract had to drop (bad price/duration data). */
+  const unpricedCount = Math.max(0, services.length - lineItems.length);
 
-  const discountAmount = useMemo(() => {
-    return Math.round((subtotal * appliedDiscountPercent) / 100);
-  }, [subtotal, appliedDiscountPercent]);
+  const totals = useMemo(() => {
+    const base = computeBookingTotals(lineItems, 0);
+    return computeBookingTotals(
+      lineItems,
+      couponDiscountAmount(base.subtotal, appliedDiscountPercent)
+    );
+  }, [lineItems, appliedDiscountPercent]);
 
-  const finalTotal = useMemo(() => {
-    return Math.max(0, subtotal - discountAmount);
-  }, [subtotal, discountAmount]);
-
+  const totalDuration = totals.durationMinutes;
+  const subtotal = totals.subtotal;
+  const discountAmount = totals.discountAmount;
+  const finalTotal = totals.total;
   // Advance Payment (25%) & Remaining at Salon (75%)
-  const advanceAmount = useMemo(() => {
-    return Math.round(finalTotal * 0.25);
-  }, [finalTotal]);
-
-  const remainingAmount = useMemo(() => {
-    return Math.max(0, finalTotal - advanceAmount);
-  }, [finalTotal, advanceAmount]);
+  const advanceAmount = totals.advanceAmount;
+  const remainingAmount = totals.remainingAmount;
 
   const formattedDate = useMemo(() => formatReadableDate(date), [date]);
   const estimatedEndTime = useMemo(() => calculateEndTime(time, totalDuration), [time, totalDuration]);
@@ -211,10 +218,13 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
 
   const handleRemoveService = (srvId: string) => {
     if (services.length <= 1) {
-      alert('At least one service must remain in your appointment.');
+      // Inline, non-blocking feedback (a window.alert froze the checkout flow
+      // on mobile and looked like the modal had crashed).
+      setCartMessage('At least one service must remain in your appointment.');
       return;
     }
     const updated = services.filter((s) => s.id !== srvId);
+    setCartMessage(null);
     if (onUpdateServices) {
       onUpdateServices(updated);
     }
@@ -223,6 +233,16 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
   const handleConfirm = async () => {
     if (buttonState !== 'idle' || !salon) return;
     setPaymentError(null);
+    setCartMessage(null);
+
+    // Nothing priceable in the cart → stop before any payment attempt.
+    if (lineItems.length === 0) {
+      setPaymentError(
+        'Your appointment has no priceable services. Add at least one service before paying the advance.'
+      );
+      setShowFailureDialog(true);
+      return;
+    }
 
     if (!onPayDeposit) {
       // This build has no Razorpay/order/signature adapter. Do not display a
@@ -488,6 +508,24 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
                     </button>
                   )}
                 </div>
+
+                {(cartMessage || unpricedCount > 0) && (
+                  <p
+                    id="summary-cart-message"
+                    role="status"
+                    className="mb-2 text-[11px] font-semibold text-warning-amber bg-warning-amber/10 border border-warning-amber/30 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">info</span>
+                    <span>
+                      {cartMessage ||
+                        `${unpricedCount} selected ${
+                          unpricedCount === 1 ? 'service is' : 'services are'
+                        } missing valid pricing and ${
+                          unpricedCount === 1 ? 'was' : 'were'
+                        } excluded from the total.`}
+                    </span>
+                  </p>
+                )}
 
                 <div className="space-y-2">
                   {services.map((srv) => (
@@ -800,16 +838,32 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
                 </div>
 
                 {/* Payment contract status */}
-                <div
-                  role="status"
-                  className="rounded-xl border border-amber-300 bg-amber-50 p-3.5 text-center text-amber-900"
-                >
-                  <span className="material-symbols-outlined text-[22px]">lock</span>
-                  <p className="mt-1 text-[12px] font-bold">Secure deposit required to lock this slot</p>
-                  <p className="mt-1 text-[11px] leading-relaxed">
-                    No merchant QR code or client-side payment shortcut is used. The booking is created only after a server-side gateway order and signature verification succeed.
-                  </p>
-                </div>
+                {isLocalDemoMode ? (
+                  <div
+                    role="status"
+                    id="summary-demo-mode-notice"
+                    className="rounded-xl border border-sky-300 bg-sky-50 p-3.5 text-center text-sky-900"
+                  >
+                    <span className="material-symbols-outlined text-[22px]">science</span>
+                    <p className="mt-1 text-[12px] font-bold">Demo mode — booking saved on this device</p>
+                    <p className="mt-1 text-[11px] leading-relaxed">
+                      No live Supabase project is configured, so no card is charged and no money moves. The
+                      appointment is created locally with the same 25% advance breakdown and stays{' '}
+                      <strong>pending</strong> until the salon confirms.
+                    </p>
+                  </div>
+                ) : (
+                  <div
+                    role="status"
+                    className="rounded-xl border border-amber-300 bg-amber-50 p-3.5 text-center text-amber-900"
+                  >
+                    <span className="material-symbols-outlined text-[22px]">lock</span>
+                    <p className="mt-1 text-[12px] font-bold">Secure deposit required to lock this slot</p>
+                    <p className="mt-1 text-[11px] leading-relaxed">
+                      No merchant QR code or client-side payment shortcut is used. The booking is created only after a server-side gateway order and signature verification succeed.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
 

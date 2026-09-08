@@ -42,6 +42,7 @@ import {
   toBookingStylistSnapshot,
   type BookingCreateRequest,
 } from './lib/bookingContract';
+import { computeBookingTotals } from './lib/bookingCore';
 import { createBooking } from './lib/createBookingClient';
 import { isRealtimeEnabled, subscribeToTable } from './lib/realtimeService';
 import { currentPath, isAuthRoute, isSignupRoute, redirectToApp } from './lib/authRoutes';
@@ -1065,20 +1066,33 @@ export default function App() {
    */
   const handleServerBooking = useCallback(
     async (request: BookingPaymentRequest): Promise<Appointment> => {
+      // Canonical line items are the ONLY pricing input. Rebuilding them here
+      // (instead of trusting the amount the modal rendered) means a service
+      // the contract had to drop, or a stale draft, can never produce the
+      // "advance payment incomplete" mismatch the server rejects with 400.
+      const services = buildBookingMetadataServices(bookingSummaryDraft?.services ?? []);
+      if (services.length === 0) {
+        throw new Error(
+          'No valid services are selected for this booking. Add at least one service and try again.'
+        );
+      }
+      const totals = computeBookingTotals(services, request.discountAmount ?? 0);
+
       const body: BookingCreateRequest = {
         salon: toBookingSalonSnapshot(bookingSummaryDraft?.salon ?? null),
-        services: buildBookingMetadataServices(bookingSummaryDraft?.services ?? []),
+        services,
         stylist: toBookingStylistSnapshot(bookingSummaryDraft?.stylist ?? null),
         customer: {
           ...(userId ? { id: userId } : {}),
+          ...(user.name ? { name: user.name } : {}),
           ...(session?.user?.email ? { email: session.user.email } : {}),
-          ...(session?.user?.phone ? { phone: session.user.phone } : {}),
+          ...(session?.user?.phone || user.phone ? { phone: session?.user?.phone || user.phone } : {}),
         },
         date: request.date,
         time: request.time,
-        amount: request.amount,
+        amount: totals.advanceAmount,
         ...(request.couponCode ? { couponCode: request.couponCode } : {}),
-        ...(request.discountAmount !== undefined ? { discountAmount: request.discountAmount } : {}),
+        ...(totals.discountAmount > 0 ? { discountAmount: totals.discountAmount } : {}),
         notes: request.notes,
       };
 
@@ -1088,7 +1102,7 @@ export default function App() {
       }
       return result.appointment;
     },
-    [bookingSummaryDraft, userId, session]
+    [bookingSummaryDraft, userId, session, user.name, user.phone]
   );
 
   const handleConfirmBooking = (newAppointment: Appointment) => {
@@ -1797,9 +1811,12 @@ export default function App() {
             : []
         }
         onToggleSaveService={handleToggleSaveService}
-        onBookService={(salon, srv, st) => {
+        onBookService={(salon, srv, st, services) => {
           setIsSalonDetailModalOpen(false);
-          handleOpenBooking(salon, srv, st);
+          // `services` carries the salon page's multi-service cart so a bulk
+          // selection survives into the booking modal instead of collapsing
+          // to the single service that was tapped.
+          handleOpenBooking(salon, srv, st, services);
         }}
       />
 

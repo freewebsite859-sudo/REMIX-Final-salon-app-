@@ -1,12 +1,29 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Salon, SalonService, Stylist, Review } from '../types';
 import { StaticMapPreview } from './StaticMapPreview';
+import { buildBookingMetadataServices } from '../lib/bookingContract';
+import { computeBookingTotals } from '../lib/bookingCore';
+
+/** Indian-rupee formatting with thousands separators (e.g. ₹3,150). */
+function formatINR(amount: number): string {
+  return `₹${(amount || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+}
 
 interface SalonDetailModalProps {
   salon: Salon | null;
   isOpen: boolean;
   onClose: () => void;
-  onBookService: (salon: Salon, service?: SalonService, stylist?: Stylist) => void;
+  /**
+   * Start the booking flow. `services` carries the full multi-service
+   * selection (bulk booking); `service` stays for single-tap "Book" entries
+   * and is always the first item of `services` when both are present.
+   */
+  onBookService: (
+    salon: Salon,
+    service?: SalonService,
+    stylist?: Stylist,
+    services?: SalonService[]
+  ) => void;
   isSaved?: boolean;
   onToggleSave?: (salonId: string) => void;
   onAddReview?: (salonId: string, review: Review) => void;
@@ -33,6 +50,12 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<ModalTab>(initialTab);
   const [activeCategory, setActiveCategory] = useState<string>('all');
+  /**
+   * Multi-service cart for this salon (bulk selection).
+   * Stored as ids so a re-render of the catalog can never desynchronise the
+   * checked state from the salon's canonical service objects.
+   */
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const [activeImageIndex, setActiveImageIndex] = useState<number>(0);
 
   // Review & Rating Tab States
@@ -51,7 +74,47 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
   const [userVoted, setUserVoted] = useState<Record<string, boolean>>({});
   const [submitSuccessMessage, setSubmitSuccessMessage] = useState<string | null>(null);
 
+  const salonId = salon?.id ?? null;
+
+  // A fresh salon (or a re-opened sheet) always starts with an empty cart.
+  useEffect(() => {
+    setSelectedServiceIds([]);
+  }, [salonId, isOpen]);
+
+  // Selected services resolved against the live catalog, in catalog order.
+  const selectedServices = useMemo<SalonService[]>(() => {
+    if (!salon) return [];
+    return salon.services.filter((srv) => selectedServiceIds.includes(srv.id));
+  }, [salon, selectedServiceIds]);
+
+  // Cart totals use the canonical booking line items, so the number shown
+  // here is exactly what the booking modal and the server compute.
+  const cartTotals = useMemo(
+    () => computeBookingTotals(buildBookingMetadataServices(selectedServices), 0),
+    [selectedServices]
+  );
+
   if (!isOpen || !salon) return null;
+
+  const toggleService = (srv: SalonService) => {
+    setSelectedServiceIds((prev) =>
+      prev.includes(srv.id) ? prev.filter((id) => id !== srv.id) : [...prev, srv.id]
+    );
+  };
+
+  const clearCart = () => setSelectedServiceIds([]);
+
+  /** Book the current multi-service cart (falls back to a single service). */
+  const bookSelection = (single?: SalonService, stylist?: Stylist) => {
+    const chosen = single
+      ? [single, ...selectedServices.filter((s) => s.id !== single.id)]
+      : selectedServices;
+    if (chosen.length === 0) {
+      onBookService(salon, undefined, stylist);
+      return;
+    }
+    onBookService(salon, chosen[0], stylist, chosen);
+  };
 
   const categories = ['all', ...Array.from(new Set(salon.services.map((s) => s.category)))];
 
@@ -389,12 +452,15 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
 
               {/* Services Catalog */}
               <div>
-                <div className="flex items-center justify-between mb-2.5">
+                <div className="flex items-center justify-between mb-1">
                   <h3 className="font-section-heading text-[15px] text-on-surface">Services Catalog</h3>
                   <span className="text-[12px] text-on-surface-variant">
                     {filteredServices.length} {filteredServices.length === 1 ? 'service' : 'services'}
                   </span>
                 </div>
+                <p className="text-[11px] text-on-surface-variant mb-2.5">
+                  Tap services to add them to this appointment — book several treatments in one visit.
+                </p>
 
                 {/* Category Filter Chips */}
                 <div className="flex gap-1.5 overflow-x-auto no-scrollbar mb-3">
@@ -415,11 +481,44 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
 
                 {/* Service Items */}
                 <div className="flex flex-col gap-2.5">
-                  {filteredServices.map((srv) => (
+                  {filteredServices.map((srv) => {
+                    const isSelected = selectedServiceIds.includes(srv.id);
+                    return (
                     <div
                       key={srv.id}
-                      className="p-3 rounded-xl bg-surface-container-lowest border border-outline-variant/40 flex items-center justify-between gap-3 hover:border-nexora-pink/50 transition-all"
+                      role="checkbox"
+                      aria-checked={isSelected}
+                      tabIndex={0}
+                      data-service-id={srv.id}
+                      data-selected={isSelected ? 'true' : 'false'}
+                      onClick={() => toggleService(srv)}
+                      onKeyDown={(e) => {
+                        if (e.key === ' ' || e.key === 'Enter') {
+                          e.preventDefault();
+                          toggleService(srv);
+                        }
+                      }}
+                      className={`p-3 rounded-xl border flex items-center justify-between gap-3 transition-all cursor-pointer select-none outline-none ${
+                        isSelected
+                          ? 'bg-nexora-pink/[0.06] border-nexora-pink ring-1 ring-nexora-pink shadow-xs'
+                          : 'bg-surface-container-lowest border-outline-variant/40 hover:border-nexora-pink/50'
+                      }`}
                     >
+                      <div
+                        className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors ${
+                          isSelected
+                            ? 'bg-nexora-pink border-nexora-pink text-white'
+                            : 'border-on-surface-variant/50 bg-surface text-transparent'
+                        }`}
+                      >
+                        <span
+                          className="material-symbols-outlined text-[13px]"
+                          style={{ fontVariationSettings: "'FILL' 1" }}
+                        >
+                          check
+                        </span>
+                      </div>
+
                       <div className="flex-1">
                         <div className="flex items-center gap-1.5">
                           <h4 className="font-medium text-[14px] text-on-surface">{srv.name}</h4>
@@ -446,7 +545,10 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
                           {onToggleSaveService && (
                             <button
                               type="button"
-                              onClick={() => onToggleSaveService(salon.id, srv.id)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onToggleSaveService(salon.id, srv.id);
+                              }}
                               className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
                                 savedServiceIds.includes(srv.id)
                                   ? 'bg-nexora-pink/10 text-nexora-pink'
@@ -460,15 +562,38 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
                             </button>
                           )}
                           <button
-                            onClick={() => onBookService(salon, srv)}
-                            className="px-3 py-1 bg-primary text-white text-[12px] font-semibold rounded-lg hover:bg-nexora-pink transition-colors shadow-xs"
+                            type="button"
+                            data-testid={`toggle-service-${srv.id}`}
+                            aria-label={
+                              isSelected ? `Remove ${srv.name} from appointment` : `Add ${srv.name} to appointment`
+                            }
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleService(srv);
+                            }}
+                            className={`px-3 py-1 text-[12px] font-semibold rounded-lg transition-colors shadow-xs border ${
+                              isSelected
+                                ? 'bg-nexora-pink/10 text-nexora-pink border-nexora-pink/40 hover:bg-nexora-pink/15'
+                                : 'bg-primary text-white border-primary hover:bg-nexora-pink'
+                            }`}
+                          >
+                            {isSelected ? 'Added' : 'Add'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              bookSelection(srv);
+                            }}
+                            className="px-3 py-1 bg-surface-container text-nexora-pink text-[12px] font-semibold rounded-lg border border-outline-variant/60 hover:border-nexora-pink transition-colors"
                           >
                             Book
                           </button>
                         </div>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </>
@@ -944,7 +1069,7 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
                           </div>
                         </div>
                         <button
-                          onClick={() => onBookService(salon, undefined, st)}
+                          onClick={() => bookSelection(undefined, st)}
                           className="px-2.5 py-1 text-[11px] font-semibold bg-surface-container text-nexora-pink rounded-lg hover:bg-primary hover:text-white transition-colors shrink-0"
                         >
                           Book
@@ -976,18 +1101,56 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
           )}
         </div>
 
-        {/* Sticky Bottom Action */}
+        {/* Sticky Bottom Action — live multi-service cart */}
         <div className="sticky bottom-0 bg-surface/95 backdrop-blur-md p-4 border-t border-outline-variant/40 flex items-center gap-3 z-10">
-          <div className="flex-1">
-            <span className="text-[10px] text-on-surface-variant block uppercase font-medium">Starting from</span>
-            <span className="font-bold text-[18px] text-primary">₹{salon.services[0]?.price || 399}</span>
+          <div className="flex-1 min-w-0">
+            {selectedServices.length > 0 ? (
+              <div id="salon-detail-cart-summary">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold uppercase text-nexora-pink">
+                    {selectedServices.length}{' '}
+                    {selectedServices.length === 1 ? 'service' : 'services'} selected
+                  </span>
+                  <button
+                    type="button"
+                    id="salon-detail-clear-cart"
+                    onClick={clearCart}
+                    className="text-[10px] font-semibold text-on-surface-variant underline hover:text-nexora-pink"
+                  >
+                    Clear
+                  </button>
+                </div>
+                <span className="font-bold text-[18px] text-primary">
+                  {formatINR(cartTotals.subtotal)}
+                </span>
+                <span className="text-[11px] text-on-surface-variant ml-1.5">
+                  · {cartTotals.durationMinutes} mins
+                </span>
+              </div>
+            ) : (
+              <div>
+                <span className="text-[10px] text-on-surface-variant block uppercase font-medium">Starting from</span>
+                <span className="font-bold text-[18px] text-primary">
+                  {formatINR(
+                    salon.services.reduce(
+                      (min, srv) => Math.min(min, srv.discountPrice || srv.price || 0),
+                      salon.services[0]?.discountPrice || salon.services[0]?.price || 399
+                    )
+                  )}
+                </span>
+              </div>
+            )}
           </div>
           <button
             id="salon-detail-book-now-btn"
-            onClick={() => onBookService(salon)}
-            className="flex-2 py-3 px-6 bg-primary text-white font-button-text rounded-xl hover:bg-nexora-pink transition-colors shadow-md text-center"
+            onClick={() => bookSelection()}
+            className="flex-2 py-3 px-6 bg-primary text-white font-button-text rounded-xl hover:bg-nexora-pink transition-colors shadow-md text-center whitespace-nowrap"
           >
-            Book Appointment
+            {selectedServices.length > 1
+              ? `Book ${selectedServices.length} Services`
+              : selectedServices.length === 1
+                ? 'Book 1 Service'
+                : 'Book Appointment'}
           </button>
         </div>
       </div>
