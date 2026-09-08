@@ -163,6 +163,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({
       if (!status.hasUrl) detail += 'Missing VITE_SUPABASE_URL. ';
       if (!status.hasAnonKey) detail += 'Missing VITE_SUPABASE_ANON_KEY. ';
       if (status.isPrivilegedKey) detail += 'Service role key detected in public env — use anon key. ';
+      if (status.anonKeyPlaceholder || status.urlPlaceholder) {
+        detail += 'Placeholder values detected — replace with the real keys from the Supabase dashboard. ';
+      }
       
       console.error('[Nexora] CONFIGURATION ERROR:', detail, status);
       
