@@ -1,16 +1,20 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type { UserProfile } from '../types.ts';
 import {
   computeReferralSummary,
   loadReferralRecords,
   saveReferralRecords,
+  loadLiveReferrals,
+  saveReferralRecordLive,
   REFERRAL_POINTS_PER_INVITE,
   MIN_QUALIFYING_QR_PAYMENT,
   type ReferralRecord,
 } from '../lib/referralService.ts';
+import { isLiveCustomerDataEnabled } from '../lib/supabase';
 
 interface ReferralPageProps {
   user: UserProfile;
+  userId?: string | null;
   onBack?: () => void;
   onOpenRewards?: () => void;
   onExploreSalons?: () => void;
@@ -18,6 +22,7 @@ interface ReferralPageProps {
 
 export const ReferralPage: React.FC<ReferralPageProps> = ({
   user,
+  userId,
   onBack,
   onOpenRewards,
   onExploreSalons,
@@ -29,12 +34,27 @@ export const ReferralPage: React.FC<ReferralPageProps> = ({
     return `NEXORA-${clean}78`;
   }, [user.referralCode, user.name]);
 
-  // Load referral records
+  // Load referral records — live Supabase rows when configured, otherwise the
+  // unconfigured local preview store.
   const [records, setRecords] = useState<ReferralRecord[]>(() =>
-    loadReferralRecords(user.email || user.phone)
+    isLiveCustomerDataEnabled && userId ? [] : loadReferralRecords(user.email || user.phone)
   );
   const [filterTab, setFilterTab] = useState<'all' | 'completed' | 'pending'>('all');
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  const refreshRecords = async () => {
+    if (isLiveCustomerDataEnabled && userId) {
+      const live = await loadLiveReferrals(userId);
+      setRecords(live);
+    } else {
+      setRecords(loadReferralRecords(user.email || user.phone));
+    }
+  };
+
+  useEffect(() => {
+    void refreshRecords();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, user.email]);
 
   // Invite modal state
   const [showInviteModal, setShowInviteModal] = useState(false);
@@ -84,7 +104,7 @@ export const ReferralPage: React.FC<ReferralPageProps> = ({
     showToast('Opening WhatsApp to share invite...');
   };
 
-  const handleAddInvite = (e: React.FormEvent) => {
+  const handleAddInvite = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inviteName.trim()) return;
 
@@ -98,9 +118,18 @@ export const ReferralPage: React.FC<ReferralPageProps> = ({
       salonName: `Awaiting first ₹${MIN_QUALIFYING_QR_PAYMENT}+ QR payment`,
     };
 
-    const updated = [newRecord, ...records];
-    setRecords(updated);
-    saveReferralRecords(updated, user.email || user.phone);
+    if (isLiveCustomerDataEnabled && userId) {
+      const { error } = await saveReferralRecordLive(userId, newRecord);
+      if (error) {
+        showToast(error);
+        return;
+      }
+      await refreshRecords();
+    } else {
+      const updated = [newRecord, ...records];
+      setRecords(updated);
+      saveReferralRecords(updated, user.email || user.phone);
+    }
     setShowInviteModal(false);
     setInviteName('');
     setInviteMobile('');

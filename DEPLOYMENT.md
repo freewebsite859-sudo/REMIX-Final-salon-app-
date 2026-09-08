@@ -82,6 +82,32 @@ touch their own row, and `anon` gets no access at all.
 
 ---
 
+## 2b. Apply the customer-app tables
+
+The customer app now reads/writes the canonical 18-table Nexora SalonOS
+schema:
+
+`profiles`, `salons`, `salon_services`, `salon_staff`, `staff_slots`,
+`bookings`, `booking_services`, `favourites`, `reviews`, `reward_wallets`,
+`reward_transactions`, `customer_qr_payments`, `memberships`, `referrals`,
+`notifications`, `search_history`, `offers`, `offer_redemptions`.
+
+Run **`supabase/customer_tables.sql`** against the existing project. It is
+non-destructive (`create table if not exists`, `drop policy if exists`) and
+does not rename, drop, truncate, or overwrite any table or row.
+
+Verify what the app is able to detect with the public anon key:
+
+```bash
+VITE_SUPABASE_URL=https://qwaehqsmodekbgvnaavz.supabase.co \
+VITE_SUPABASE_ANON_KEY=<anon public key> \
+npm run verify:customer-tables
+```
+
+It reports `✓/✗` for each of the 18 tables and exits non-zero if any are
+missing. The same detection is also implemented at runtime in
+`src/lib/supabase/schema.ts`.
+
 ## 3. Required canonical backend work before release
 
 This checkout contains only the customer-web shell and the `user_locations`

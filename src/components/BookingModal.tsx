@@ -1,6 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Salon, SalonService, Stylist, Appointment } from '../types';
 import { BookingConfirmationPage } from './BookingConfirmationPage';
+import { fetchAvailableSlots, subscribeToStaffSlots, type AvailableSlot } from '../lib/bookingService';
+import { isLiveCustomerDataEnabled } from '../lib/supabase';
 
 interface BookingModalProps {
   salon: Salon | null;
@@ -48,6 +50,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [bookingError, setBookingError] = useState<string | null>(null);
   const [isSuccess, setIsSuccess] = useState<boolean>(false);
   const [confirmedBooking, setConfirmedBooking] = useState<Appointment | null>(null);
+  const [availableSlots, setAvailableSlots] = useState<AvailableSlot[]>([]);
+  const [slotsLoaded, setSlotsLoaded] = useState<boolean>(!isLiveCustomerDataEnabled);
 
   useEffect(() => {
     if (!isOpen || !salon) return;
@@ -70,11 +74,50 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     setBookingError(null);
     setIsSuccess(false);
     setConfirmedBooking(null);
+    setAvailableSlots([]);
+    setSlotsLoaded(!isLiveCustomerDataEnabled);
   }, [isOpen, salon, initialService, initialServices, initialStylist, todayStr]);
+
+  // Load real staff_slots for the selected salon/date/staff. In live Supabase
+  // mode availability comes only from the database.
+  const refreshSlots = useCallback(async () => {
+    if (!salon || !isLiveCustomerDataEnabled) return;
+    const result = await fetchAvailableSlots(salon.id, {
+      staffId: selectedStylist?.id || null,
+      date: selectedDate,
+    });
+    setAvailableSlots(result.slots);
+    setSlotsLoaded(true);
+    if (result.slots.length > 0 && !result.slots.some((slot) => slot.startTime === selectedTime)) {
+      setSelectedTime(result.slots[0].startTime);
+    }
+  }, [salon, selectedStylist?.id, selectedDate, selectedTime, isLiveCustomerDataEnabled]);
+
+  useEffect(() => {
+    if (!isOpen || !salon || !isLiveCustomerDataEnabled) return;
+    let active = true;
+    setAvailableSlots([]);
+    setSlotsLoaded(false);
+    void refreshSlots();
+    return () => {
+      active = false;
+    };
+  }, [isOpen, salon, selectedDate, selectedStylist?.id, refreshSlots]);
+
+  // Live slot availability. If another customer books a slot while this modal
+  // is open, the realtime feed refreshes the list so the customer never tries
+  // to book a slot that is no longer available.
+  useEffect(() => {
+    if (!isOpen || !salon || !isLiveCustomerDataEnabled) return;
+    const unsubscribe = subscribeToStaffSlots(salon.id, () => {
+      void refreshSlots();
+    });
+    return unsubscribe;
+  }, [isOpen, salon, refreshSlots]);
 
   if (!isOpen || !salon) return null;
 
-  const timeSlots = [
+  const fallbackTimeSlots = [
     '10:00 AM',
     '11:00 AM',
     '12:30 PM',
@@ -86,6 +129,9 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     '7:15 PM',
     '8:00 PM',
   ];
+  const timeSlots = isLiveCustomerDataEnabled
+    ? availableSlots.map((slot) => slot.startTime)
+    : fallbackTimeSlots;
 
   const toggleService = (srv: SalonService) => {
     if (selectedServices.find((s) => s.id === srv.id)) {

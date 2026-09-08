@@ -383,7 +383,9 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
                     <span className="material-symbols-outlined text-[20px]">local_offer</span>
                     <span className="text-[13px] font-bold">{salon.discountOffer}</span>
                   </div>
-                  <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded font-mono font-bold">NEXORA20</span>
+                  <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded font-mono font-bold">
+                    {salon.offerCode || 'Use in-shop'}
+                  </span>
                 </div>
               )}
 

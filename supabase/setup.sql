@@ -475,3 +475,20 @@ revoke all on public.user_locations from anon;
 
 create index if not exists user_locations_updated_at_idx
   on public.user_locations (updated_at desc);
+
+-- =============================================================================
+-- CUSTOMER APP TABLES (18 canonical tables)
+-- =============================================================================
+-- The customer app connects to these tables in addition to the auth/location/
+-- notification backend above:
+--
+--   profiles, salons, salon_services, salon_staff, staff_slots,
+--   bookings, booking_services, favourites, reviews, reward_wallets,
+--   reward_transactions, customer_qr_payments, memberships, referrals,
+--   notifications, search_history, offers, offer_redemptions
+--
+-- The idempotent, non-destructive DDL + RLS for these tables lives in
+-- `supabase/customer_tables.sql`. Run that file once against the existing
+-- Supabase project; it creates only missing tables, never drops/resets data,
+-- and applies owner-only policies for private rows plus read-only access for
+-- the salon/service/staff/slot/offer catalog.

@@ -13,7 +13,15 @@
  * - Approved: Active and available for in-shop QR redemption.
  * - Redeemed: Applied against a qualifying salon bill via QR.
  * - Expired: Not redeemed within the validity window.
+ *
+ * When a real Supabase project is configured this service reads and writes the
+ * canonical `reward_wallets`, `reward_transactions`, `customer_qr_payments`,
+ * `offers` and `offer_redemptions` tables. The legacy localStorage functions
+ * remain only for the unconfigured local preview/builds.
  */
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { supabase, isLiveCustomerDataEnabled, isSupabaseConfigured } from './supabase';
+import { SALONOS_TABLES } from './supabase/tables';
 
 export type RewardStatus = 'Pending' | 'Approved' | 'Redeemed' | 'Expired';
 
@@ -703,4 +711,287 @@ export function getTypeBadgeMeta(type: RewardType): {
         colorClass: 'text-amber-700 bg-amber-500/10',
       };
   }
+}
+
+// =============================================================================
+// LIVE SUPABASE REWARDS WALLET SUPPORT
+// =============================================================================
+
+function asRewardRecord(row: Record<string, unknown>): RewardTransaction {
+  const typeRaw = String(row.type ?? row.transaction_type ?? 'qr_payment').replace(/[\s-]+/g, '_');
+  let type: RewardType = 'qr_payment';
+  const normalized = typeRaw.toLowerCase();
+  if (normalized.includes('referral')) type = 'referral';
+  else if (normalized.includes('redeem') || normalized.includes('redemption')) type = 'redemption';
+  else if (normalized.includes('expire') || normalized.includes('expired')) type = 'expired';
+  else if (normalized.includes('bonus')) type = 'bonus';
+  const pointsRaw = row.points ?? row.point_value ?? 0;
+  const points = typeof pointsRaw === 'number' ? pointsRaw : Number(pointsRaw) || 0;
+  const statusRaw = String(row.status ?? 'Pending');
+  const status: RewardStatus =
+    statusRaw === 'Approved' || statusRaw === 'Pending' || statusRaw === 'Redeemed' || statusRaw === 'Expired'
+      ? (statusRaw as RewardStatus)
+      : 'Pending';
+  return {
+    id: String(row.id || ''),
+    type,
+    typeLabel: String(row.type_label ?? row.label ?? typeLabelFor(type)),
+    points,
+    date: formatRewardDate(String(row.created_at ?? row.date ?? Date.now())),
+    createdAt: String(row.created_at ?? row.date ?? new Date().toISOString()),
+    salonName: String(row.salon_name ?? row.salonName ?? 'Nexora Partner Salon'),
+    salonId: typeof row.salon_id === 'string' ? row.salon_id : undefined,
+    status,
+    billAmount: typeof row.bill_amount === 'number' ? row.bill_amount : undefined,
+    description: typeof row.description === 'string' ? row.description : undefined,
+    expiresAt: typeof row.expires_at === 'string' ? row.expires_at : undefined,
+    friendName: typeof row.friend_name === 'string' ? row.friend_name : undefined,
+    qrTransactionRef: typeof row.qr_transaction_ref === 'string' ? row.qr_transaction_ref : undefined,
+    qualifyingPaymentMade: Boolean(row.qualifying_payment_made ?? row.qualifying_payment),
+  };
+}
+
+function typeLabelFor(type: RewardType): string {
+  switch (type) {
+    case 'referral': return 'Referral Reward';
+    case 'redemption': return 'In-Shop QR Redemption';
+    case 'expired': return 'Expired Points';
+    case 'bonus': return 'Bonus Reward';
+    default: return 'QR Payment Reward';
+  }
+}
+
+async function readRows(client: SupabaseClient, table: string, filter: Record<string, string>): Promise<Record<string, unknown>[]> {
+  try {
+    let query = client.from(table).select('*');
+    for (const [k, v] of Object.entries(filter)) query = query.eq(k, v);
+    const { data, error } = await query;
+    if (error) return [];
+    return Array.isArray(data) ? data.filter((r): r is Record<string, unknown> => typeof r === 'object' && r !== null) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Load the customer's reward wallet from `reward_wallets` + `reward_transactions`.
+ * When the backend has no wallet row yet, an empty wallet is returned (never a
+ * fake seeded wallet).
+ */
+export async function loadRewardWallet(
+  userId: string,
+  client: SupabaseClient | null = supabase
+): Promise<RewardWalletSummary> {
+  if (!client || !isSupabaseConfigured || !isLiveCustomerDataEnabled || !userId) {
+    return {
+      currentPoints: 0,
+      lifetimeEarned: 0,
+      lifetimeRedeemed: 0,
+      qrPaymentRewards: 0,
+      referralRewards: 0,
+      expiringPoints: 0,
+      pendingPoints: 0,
+      expiredPoints: 0,
+      transactions: [],
+    };
+  }
+
+  const [walletRows, txRows] = await Promise.all([
+    readRows(client, SALONOS_TABLES.rewardWallets, { user_id: userId }),
+    readRows(client, SALONOS_TABLES.rewardTransactions, { user_id: userId }),
+  ]);
+
+  const wallet = walletRows[0] || {};
+  const transactions = txRows.map(asRewardRecord);
+
+  if (transactions.length) return calculateWalletSummary(transactions);
+
+  const currentPoints =
+    typeof wallet.current_points === 'number'
+      ? wallet.current_points
+      : Number(wallet.current_points) || 0;
+  return {
+    currentPoints,
+    lifetimeEarned: Number(wallet.lifetime_earned) || currentPoints,
+    lifetimeRedeemed: Number(wallet.lifetime_redeemed) || 0,
+    qrPaymentRewards: Number(wallet.qr_payment_rewards) || 0,
+    referralRewards: Number(wallet.referral_rewards) || 0,
+    expiringPoints: Number(wallet.expiring_points) || 0,
+    pendingPoints: Number(wallet.pending_points) || 0,
+    expiredPoints: Number(wallet.expired_points) || 0,
+    transactions: [],
+  };
+}
+
+async function upsertWallet(userId: string, patch: Record<string, unknown>, client: SupabaseClient): Promise<void> {
+  try {
+    await client.from(SALONOS_TABLES.rewardWallets).upsert(
+      { user_id: userId, ...patch, updated_at: new Date().toISOString() },
+      { onConflict: 'user_id' }
+    );
+  } catch {
+    // Non-fatal: the wallet may not exist on older deployments.
+  }
+}
+
+export async function recordQrPaymentReward(
+  userId: string,
+  params: {
+    salonName: string;
+    salonId?: string;
+    amountInr: number;
+    status?: RewardStatus;
+    description?: string;
+    qrReference?: string;
+  },
+  client: SupabaseClient | null = supabase
+): Promise<{ success: boolean; transaction?: RewardTransaction; pointsEarned: number; message: string; error?: string }> {
+  const localResult = addQrPaymentReward({
+    userId,
+    salonName: params.salonName,
+    salonId: params.salonId,
+    amountInr: params.amountInr,
+    status: params.status,
+    description: params.description,
+  });
+  if (!client || !isSupabaseConfigured || !isLiveCustomerDataEnabled || !userId) {
+    return { ...localResult, error: localResult.success ? undefined : 'Live Supabase rewards service is not configured.' };
+  }
+  if (!localResult.success) return localResult;
+
+  const tx = localResult.transaction!;
+  const now = new Date().toISOString();
+  try {
+    const { error: qrError } = await client.from(SALONOS_TABLES.customerQrPayments).insert({
+      user_id: userId,
+      salon_id: params.salonId || null,
+      salon_name: params.salonName,
+      bill_amount: params.amountInr,
+      points_earned: tx.points,
+      status: tx.status,
+      qr_reference: params.qrReference || tx.qrTransactionRef || null,
+      description: tx.description || null,
+      created_at: now,
+    });
+    if (qrError) return { ...localResult, error: qrError.message };
+    const { error: txError } = await client.from(SALONOS_TABLES.rewardTransactions).insert({
+      user_id: userId,
+      type: 'qr_payment',
+      points: tx.points,
+      status: tx.status,
+      salon_id: params.salonId || null,
+      salon_name: params.salonName,
+      bill_amount: params.amountInr,
+      description: tx.description || null,
+      expires_at: tx.expiresAt || null,
+      qr_transaction_ref: tx.qrTransactionRef || null,
+      created_at: now,
+    });
+    if (txError) return { ...localResult, error: txError.message };
+    await upsertWallet(
+      userId,
+      { current_points: tx.points, lifetime_earned: tx.points, qr_payment_rewards: tx.points },
+      client
+    );
+  } catch (err) {
+    return { ...localResult, error: err instanceof Error ? err.message : String(err) };
+  }
+  return localResult;
+}
+
+export async function recordReferralReward(
+  userId: string,
+  params: {
+    friendName: string;
+    salonName?: string;
+    amountInr?: number;
+    status?: RewardStatus;
+    referralId?: string;
+  },
+  client: SupabaseClient | null = supabase
+): Promise<{ success: boolean; transaction?: RewardTransaction; pointsEarned: number; message: string; error?: string }> {
+  const localResult = addReferralReward({
+    userId,
+    friendName: params.friendName,
+    salonName: params.salonName,
+    amountInr: params.amountInr,
+    status: params.status,
+  });
+  if (!client || !isSupabaseConfigured || !isLiveCustomerDataEnabled || !userId) {
+    return { ...localResult, error: localResult.success ? undefined : 'Live Supabase rewards service is not configured.' };
+  }
+  if (!localResult.success) return localResult;
+  const tx = localResult.transaction!;
+  try {
+    const { error } = await client.from(SALONOS_TABLES.rewardTransactions).insert({
+      user_id: userId,
+      type: 'referral',
+      points: tx.points,
+      status: tx.status,
+      salon_id: tx.salonId || null,
+      salon_name: tx.salonName || params.salonName || null,
+      bill_amount: tx.billAmount || null,
+      friend_name: tx.friendName || null,
+      description: tx.description || null,
+      referral_id: params.referralId || null,
+      expires_at: tx.expiresAt || null,
+      created_at: new Date().toISOString(),
+    });
+    if (error) return { ...localResult, error: error.message };
+    await upsertWallet(
+      userId,
+      { current_points: tx.points, lifetime_earned: tx.points, referral_rewards: tx.points },
+      client
+    );
+  } catch (err) {
+    return { ...localResult, error: err instanceof Error ? err.message : String(err) };
+  }
+  return localResult;
+}
+
+export async function redeemRewardsLive(
+  userId: string,
+  params: {
+    salonName: string;
+    salonId?: string;
+    billAmount: number;
+    pointsToRedeem: number;
+  },
+  client: SupabaseClient | null = supabase
+): Promise<{ success: boolean; error?: string; transaction?: RewardTransaction; remainingPoints?: number; netPayableInr?: number }> {
+  const localResult = redeemRewardsViaQr({
+    userId,
+    salonName: params.salonName,
+    salonId: params.salonId,
+    billAmount: params.billAmount,
+    pointsToRedeem: params.pointsToRedeem,
+  });
+  if (!client || !isSupabaseConfigured || !isLiveCustomerDataEnabled || !userId) {
+    return { ...localResult, error: localResult.error || 'Live Supabase rewards service is not configured.' };
+  }
+  if (!localResult.success) return localResult;
+  const tx = localResult.transaction!;
+  try {
+    const { error } = await client.from(SALONOS_TABLES.rewardTransactions).insert({
+      user_id: userId,
+      type: 'redemption',
+      points: tx.points,
+      status: 'Redeemed',
+      salon_id: params.salonId || null,
+      salon_name: params.salonName,
+      bill_amount: params.billAmount,
+      description: tx.description || null,
+      qr_transaction_ref: tx.qrTransactionRef || null,
+      created_at: new Date().toISOString(),
+    });
+    if (error) return { success: false, error: error.message };
+    await upsertWallet(
+      userId,
+      { current_points: tx.points, lifetime_redeemed: Math.abs(tx.points) },
+      client
+    );
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
+  return localResult;
 }

@@ -52,64 +52,32 @@ export const SavedTab: React.FC<SavedTabProps> = ({
 
   // 1. Saved Salons list
   const savedSalonsList = useMemo(() => {
-    // If empty, provide first 2 demo salons as initial favourites if available
-    const ids = savedSalonIds.length > 0 ? savedSalonIds : salons.slice(0, 2).map((s) => s.id);
-    return salons.filter((s) => ids.includes(s.id));
+    return salons.filter((s) => savedSalonIds.includes(s.id));
   }, [salons, savedSalonIds]);
 
   // 2. Saved Staff list
   const savedStaffList = useMemo(() => {
     const list: Array<{ stylist: Stylist; salon: Salon }> = [];
-
-    if (savedStaff && savedStaff.length > 0) {
-      savedStaff.forEach((ref) => {
-        const salon = salons.find((s) => s.id === ref.salonId);
-        const stylist = salon?.stylists.find((st) => st.id === ref.stylistId);
-        if (salon && stylist) {
-          list.push({ stylist, salon });
-        }
-      });
-    } else {
-      // Provide default initial favourite staff from salons for rich demo
-      salons.forEach((salon) => {
-        if (salon.stylists && salon.stylists.length > 0) {
-          salon.stylists.slice(0, 1).forEach((st) => {
-            if (list.length < 3) {
-              list.push({ stylist: st, salon });
-            }
-          });
-        }
-      });
-    }
-
+    savedStaff.forEach((ref) => {
+      const salon = salons.find((s) => s.id === ref.salonId);
+      const stylist = salon?.stylists.find((st) => st.id === ref.stylistId);
+      if (salon && stylist) {
+        list.push({ stylist, salon });
+      }
+    });
     return list;
   }, [salons, savedStaff]);
 
   // 3. Saved Services list
   const savedServicesList = useMemo(() => {
     const list: Array<{ service: SalonService; salon: Salon }> = [];
-
-    if (savedServices && savedServices.length > 0) {
-      savedServices.forEach((ref) => {
-        const salon = salons.find((s) => s.id === ref.salonId);
-        const service = salon?.services.find((srv) => srv.id === ref.serviceId);
-        if (salon && service) {
-          list.push({ service, salon });
-        }
-      });
-    } else {
-      // Provide default initial favourite services from salons
-      salons.forEach((salon) => {
-        if (salon.services && salon.services.length > 0) {
-          salon.services.slice(0, 1).forEach((srv) => {
-            if (list.length < 3) {
-              list.push({ service: srv, salon });
-            }
-          });
-        }
-      });
-    }
-
+    savedServices.forEach((ref) => {
+      const salon = salons.find((s) => s.id === ref.salonId);
+      const service = salon?.services.find((srv) => srv.id === ref.serviceId);
+      if (salon && service) {
+        list.push({ service, salon });
+      }
+    });
     return list;
   }, [salons, savedServices]);
 

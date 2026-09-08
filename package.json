@@ -35,7 +35,8 @@
     "test:reviews-service": "tsx test/reviewsService.test.mts",
     "test:notifications-page": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/notificationsPage.test.tsx",
     "typecheck": "tsc --noEmit",
-    "verify:live": "node scripts/verify-live.mjs"
+    "verify:live": "node scripts/verify-live.mjs",
+    "verify:customer-tables": "node scripts/verify-customer-tables.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",

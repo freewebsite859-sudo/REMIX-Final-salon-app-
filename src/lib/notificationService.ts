@@ -529,6 +529,42 @@ export async function saveNotificationPreference(
   }
 }
 
+/**
+ * Subscribe to realtime changes on the customer's own notifications.
+ *
+ * Uses the `user_id=eq.<uid>` filter exactly like the row-level policies, so a
+ * client can only receive its own notification rows. Returns an unsubscribe
+ * function.
+ */
+export function subscribeToNotifications(
+  userId: string,
+  onChange: () => void,
+  options: { client?: SupabaseClient | null } = {}
+): () => void {
+  const client = clientOrFallback(options.client);
+  if (!client || !userId) return () => undefined;
+  try {
+    const channel = client
+      .channel(`nexora-notifications:${userId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: NOTIFICATIONS_TABLE,
+          filter: `user_id=eq.${userId}`,
+        },
+        onChange
+      )
+      .subscribe();
+    return () => {
+      channel.unsubscribe();
+    };
+  } catch {
+    return () => undefined;
+  }
+}
+
 export { DEFAULT_PREFERENCES };
 
 /**

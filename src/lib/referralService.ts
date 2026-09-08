@@ -137,3 +137,69 @@ export function computeReferralSummary(
     friends: records,
   };
 }
+
+// =============================================================================
+// LIVE SUPABASE REFERRALS
+// =============================================================================
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { supabase, isLiveCustomerDataEnabled, isSupabaseConfigured } from './supabase';
+import { SALONOS_TABLES } from './supabase/tables';
+
+function referralFromRow(row: Record<string, unknown>, userId: string): ReferralRecord {
+  const referredName = String(row.referred_user_name ?? row.friend_name ?? row.referred_name ?? 'Friend');
+  const completed = Boolean(row.completed_at || row.qualified_at || String(row.status || '').toLowerCase() === 'completed');
+  return {
+    id: String(row.id || ''),
+    friendName: referredName,
+    friendMobile: typeof row.referred_user_mobile === 'string' ? row.referred_user_mobile : undefined,
+    friendAvatar: typeof row.referred_user_avatar === 'string' ? row.referred_user_avatar : undefined,
+    invitedDate: String(row.invited_at ?? row.created_at ?? new Date().toISOString()),
+    completedDate: typeof row.completed_at === 'string' ? row.completed_at : undefined,
+    status: completed ? 'completed' : 'pending',
+    rewardPoints: Number(row.reward_points ?? 150) || 0,
+    qualifyingPaymentAmount: typeof row.qualifying_payment_amount === 'number' ? row.qualifying_payment_amount : undefined,
+    salonName: typeof row.salon_name === 'string' ? row.salon_name : undefined,
+  };
+}
+
+/**
+ * Load referrals where this customer is the referrer. Uses RLS/owner scoping
+ * on the canonical `referrals` table.
+ */
+export async function loadLiveReferrals(
+  userId: string,
+  client: SupabaseClient | null = supabase
+): Promise<ReferralRecord[]> {
+  if (!client || !isSupabaseConfigured || !isLiveCustomerDataEnabled || !userId) return [];
+  try {
+    const { data, error } = await client.from(SALONOS_TABLES.referrals).select('*').eq('referrer_user_id', userId).order('created_at', { ascending: false });
+    if (error || !Array.isArray(data)) return [];
+    return data.map((row) => referralFromRow(row, userId));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Persist a pending invite. Referrals should normally be created by the secure
+ * server/RPC; this is a graceful client insert only where the table's RLS
+ * policy allows a signed-in user to write their own referrer row.
+ */
+export async function saveReferralRecordLive(
+  userId: string,
+  record: ReferralRecord,
+  client: SupabaseClient | null = supabase
+): Promise<{ error: string | null }> {
+  if (!client || !isSupabaseConfigured || !isLiveCustomerDataEnabled || !userId) {
+    return { error: 'Live Supabase referral service is not configured.' };
+  }
+  const { error } = await client.from(SALONOS_TABLES.referrals).insert({
+    referrer_user_id: userId,
+    referred_user_name: record.friendName,
+    referred_user_mobile: record.friendMobile || null,
+    status: 'pending',
+    reward_points: record.rewardPoints || REFERRAL_POINTS_PER_INVITE,
+    created_at: new Date().toISOString(),
+  });
+  return { error: error?.message || null };
+}

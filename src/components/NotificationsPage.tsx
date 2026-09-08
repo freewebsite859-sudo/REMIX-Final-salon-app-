@@ -1,11 +1,41 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type { UserProfile } from '../types.ts';
 import {
   deleteNotification,
+  listNotifications,
   markAllNotificationsRead,
   markNotificationRead,
   markNotificationUnread,
+  type AppNotification,
 } from '../lib/notificationService.ts';
+import { isLiveCustomerDataEnabled } from '../lib/supabase';
+
+function notificationToCustomerItem(item: AppNotification): CustomerNotificationItem {
+  const validTypes = [
+    'booking_confirmed',
+    'booking_reminder',
+    'booking_cancelled',
+    'reward_credited',
+    'referral_reward_pending',
+    'membership_update',
+    'offer_available',
+    'review_reminder',
+  ];
+  const type = validTypes.includes(item.type) ? (item.type as CustomerNotificationType) : ('booking_confirmed' as CustomerNotificationType);
+  const payload = item.payload || {};
+  const route = (payload.route || '') as CustomerNotificationItem['actionRoute'];
+  return {
+    id: item.id,
+    type,
+    title: item.title,
+    message: item.body,
+    time: item.createdAt,
+    createdAt: item.createdAt,
+    isRead: Boolean(item.isRead),
+    actionRoute: route || undefined,
+    metadata: payload as Record<string, unknown>,
+  };
+}
 
 export type CustomerNotificationType =
   | 'booking_confirmed'
@@ -192,6 +222,7 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({
   onNotificationsChanged,
 }) => {
   const [notifications, setNotifications] = useState<CustomerNotificationItem[]>(() => {
+    if (isLiveCustomerDataEnabled && userId) return [];
     if (typeof window === 'undefined') return DEFAULT_CUSTOMER_NOTIFICATIONS;
     try {
       const key = `nexora_notifications_${user.email || user.phone || 'guest'}`;
@@ -207,7 +238,23 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({
   const [activeFilter, setActiveFilter] = useState<'all' | 'unread'>('all');
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
+  const refreshLiveNotifications = async () => {
+    if (!isLiveCustomerDataEnabled || !userId) return;
+    const result = await listNotifications(userId);
+    if (result.ok && result.data) {
+      setNotifications(result.data.map(notificationToCustomerItem));
+    } else if (result.disabled) {
+      setNotifications([]);
+    }
+  };
+
+  useEffect(() => {
+    void refreshLiveNotifications();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, isLiveCustomerDataEnabled]);
+
   const saveToStorage = (updated: CustomerNotificationItem[]) => {
+    if (isLiveCustomerDataEnabled) return;
     if (typeof window === 'undefined') return;
     try {
       const key = `nexora_notifications_${user.email || user.phone || 'guest'}`;
@@ -251,6 +298,7 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({
       } else {
         await markNotificationUnread(id, { userId });
       }
+      await refreshLiveNotifications();
       onNotificationsChanged?.();
     }
   };
@@ -263,6 +311,7 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({
 
     if (userId) {
       await markAllNotificationsRead(userId);
+      await refreshLiveNotifications();
       onNotificationsChanged?.();
     }
   };
@@ -276,6 +325,7 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({
 
     if (userId) {
       await deleteNotification(id, { userId });
+      await refreshLiveNotifications();
       onNotificationsChanged?.();
     }
   };

@@ -1,16 +1,20 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { Appointment, UserProfile } from '../types.ts';
 import {
   canReviewBooking,
   getCompletedAppointmentsForReview,
   loadCustomerReviews,
   saveCustomerReviews,
+  loadLiveReviews,
+  saveReviewLive,
   type CustomerReview,
 } from '../lib/reviewsService.ts';
+import { isLiveCustomerDataEnabled } from '../lib/supabase';
 
 interface ReviewsPageProps {
   user: UserProfile;
   appointments: Appointment[];
+  userId?: string | null;
   onBack?: () => void;
   onNavigateToBooking?: () => void;
   onExploreSalons?: () => void;
@@ -19,15 +23,31 @@ interface ReviewsPageProps {
 export const ReviewsPage: React.FC<ReviewsPageProps> = ({
   user,
   appointments = [],
+  userId,
   onBack,
   onNavigateToBooking,
   onExploreSalons,
 }) => {
-  // Customer submitted reviews state
+  // Customer submitted reviews state — live Supabase rows when configured,
+  // local preview store otherwise.
   const [reviews, setReviews] = useState<CustomerReview[]>(() =>
-    loadCustomerReviews(user.email || user.phone)
+    isLiveCustomerDataEnabled && userId ? [] : loadCustomerReviews(user.email || user.phone)
   );
   const [filterRating, setFilterRating] = useState<number | 'all'>('all');
+
+  const refreshReviews = async () => {
+    if (isLiveCustomerDataEnabled && userId) {
+      const live = await loadLiveReviews(userId);
+      setReviews(live);
+    } else {
+      setReviews(loadCustomerReviews(user.email || user.phone));
+    }
+  };
+
+  useEffect(() => {
+    void refreshReviews();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, user.email]);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
   // Review Form Modal State
@@ -100,7 +120,7 @@ export const ReviewsPage: React.FC<ReviewsPageProps> = ({
     reader.readAsDataURL(file);
   };
 
-  const handleSubmitReview = (e: React.FormEvent) => {
+  const handleSubmitReview = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
 
@@ -144,13 +164,22 @@ export const ReviewsPage: React.FC<ReviewsPageProps> = ({
       date: 'Today',
       createdAt: new Date().toISOString(),
       userName: user.name || 'Nexora Customer',
-      userAvatar: user.avatar || 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=120&q=80',
+      userAvatar: user.avatar || '',
       verifiedBooking: true,
     };
 
-    const updated = [newReview, ...reviews];
-    setReviews(updated);
-    saveCustomerReviews(updated, user.email || user.phone);
+    if (isLiveCustomerDataEnabled && userId) {
+      const { error } = await saveReviewLive(userId, newReview);
+      if (error) {
+        setFormError(error);
+        return;
+      }
+      await refreshReviews();
+    } else {
+      const updated = [newReview, ...reviews];
+      setReviews(updated);
+      saveCustomerReviews(updated, user.email || user.phone);
+    }
     setIsFormOpen(false);
     showToast('Review submitted successfully!');
   };

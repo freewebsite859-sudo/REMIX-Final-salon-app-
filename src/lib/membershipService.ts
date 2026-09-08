@@ -220,3 +220,79 @@ export function getEligiblePartnerSalons(salons: Salon[], areaFilter: string = '
     return true;
   });
 }
+
+// =============================================================================
+// LIVE SUPABASE MEMBERSHIP
+// =============================================================================
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { supabase, isLiveCustomerDataEnabled, isSupabaseConfigured } from './supabase';
+import { SALONOS_TABLES } from './supabase/tables';
+
+export interface MembershipRecord {
+  id?: string;
+  userId: string;
+  tier: MembershipTier;
+  points: number;
+  spend: number;
+  expiresAt?: string;
+  startedAt?: string;
+}
+
+function membershipTierFromRaw(raw: unknown): MembershipTier {
+  const value = String(raw || 'standard').toLowerCase();
+  if (value === 'silver' || value === 'gold' || value === 'platinum') return value;
+  return 'standard';
+}
+
+/**
+ * Load the customer's active `memberships` row (only their own).
+ */
+export async function loadMembership(
+  userId: string,
+  client: SupabaseClient | null = supabase
+): Promise<MembershipRecord | null> {
+  if (!client || !isSupabaseConfigured || !isLiveCustomerDataEnabled || !userId) return null;
+  try {
+    let query = client.from(SALONOS_TABLES.memberships).select('*').eq('user_id', userId).order('created_at', { ascending: false });
+    const { data, error } = await query.maybeSingle();
+    if (error || !data) return null;
+    const row = data as Record<string, unknown>;
+    return {
+      id: typeof row.id === 'string' ? row.id : undefined,
+      userId,
+      tier: membershipTierFromRaw(row.tier ?? row.membership_tier),
+      points: Number(row.points ?? row.loyalty_points ?? 0) || 0,
+      spend: Number(row.spend ?? row.total_spend ?? 0) || 0,
+      expiresAt: typeof row.expires_at === 'string' ? row.expires_at : undefined,
+      startedAt: typeof row.started_at === 'string' ? row.started_at : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Activate/update the customer's membership row (own row only, RLS enforced).
+ */
+export async function saveMembership(
+  userId: string,
+  membership: Pick<MembershipRecord, 'tier' | 'points' | 'spend' | 'expiresAt'>,
+  client: SupabaseClient | null = supabase
+): Promise<{ error: string | null }> {
+  if (!client || !isSupabaseConfigured || !isLiveCustomerDataEnabled || !userId) {
+    return { error: 'Live Supabase membership service is not configured.' };
+  }
+  const payload = {
+    user_id: userId,
+    tier: membership.tier,
+    memberships_tier: membership.tier,
+    points: membership.points,
+    loyalty_points: membership.points,
+    spend: membership.spend,
+    total_spend: membership.spend,
+    expires_at: membership.expiresAt || null,
+    updated_at: new Date().toISOString(),
+  };
+  const { error } = await client.from(SALONOS_TABLES.memberships).upsert(payload, { onConflict: 'user_id' });
+  return { error: error?.message || null };
+}

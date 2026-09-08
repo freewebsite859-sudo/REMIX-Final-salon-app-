@@ -1,14 +1,19 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { UserProfile, Salon, Appointment, MembershipTier } from '../types';
 import {
   MEMBERSHIP_TIERS,
   calculateTierProgress,
   getEligiblePartnerSalons,
   MembershipCardConfig,
+  loadMembership,
+  saveMembership,
+  type MembershipRecord,
 } from '../lib/membershipService';
+import { isLiveCustomerDataEnabled } from '../lib/supabase';
 
 interface MembershipPageProps {
   user: UserProfile;
+  userId?: string | null;
   salons?: Salon[];
   appointments?: Appointment[];
   onUpdateUser?: (updated: UserProfile) => void;
@@ -20,6 +25,7 @@ interface MembershipPageProps {
 
 export const MembershipPage: React.FC<MembershipPageProps> = ({
   user,
+  userId,
   salons = [],
   appointments = [],
   onUpdateUser,
@@ -28,15 +34,32 @@ export const MembershipPage: React.FC<MembershipPageProps> = ({
   onOpenSalonDetails,
   onOpenRewards,
 }) => {
-  const currentTier: MembershipTier = user.membershipTier || 'standard';
-  const loyaltyPoints = Math.max(0, Number(user.loyaltyPoints) || 0);
+  const [liveMembership, setLiveMembership] = useState<MembershipRecord | null>(null);
 
-  // Calculate lifetime spend from appointments
+  useEffect(() => {
+    if (!isLiveCustomerDataEnabled || !userId) return;
+    let active = true;
+    void loadMembership(userId).then((record) => {
+      if (active) setLiveMembership(record);
+    });
+    return () => {
+      active = false;
+    };
+  }, [userId]);
+
+  const currentTier: MembershipTier = liveMembership?.tier || user.membershipTier || 'standard';
+  const loyaltyPoints = Math.max(0, Number(liveMembership?.points ?? user.loyaltyPoints ?? 0));
+
+  // Calculate lifetime spend from appointments — live memberships rows win
+  // when they exist.
   const lifetimeSpend = useMemo(() => {
+    if (liveMembership && Number.isFinite(liveMembership.spend)) {
+      return liveMembership.spend;
+    }
     return appointments
       .filter((a) => a.status === 'completed' || a.status === 'confirmed')
       .reduce((sum, a) => sum + (Number.isFinite(a.totalPrice) ? a.totalPrice : 0), 0);
-  }, [appointments]);
+  }, [appointments, liveMembership]);
 
   // Derived progress to next tier
   const tierProgress = useMemo(() => {
@@ -53,16 +76,32 @@ export const MembershipPage: React.FC<MembershipPageProps> = ({
     setTimeout(() => setToastMessage(null), 3000);
   };
 
-  // Switch tier (simulation / activation)
-  const handleSelectTier = (tier: MembershipTier) => {
+  // Switch tier (activation) — persisted to the live memberships table when a
+  // real Supabase project is configured.
+  const handleSelectTier = async (tier: MembershipTier) => {
+    const expiresAt = '2027-09-07T00:00:00.000Z';
+    if (isLiveCustomerDataEnabled && userId) {
+      const { error } = await saveMembership(userId, {
+        tier,
+        points: loyaltyPoints,
+        spend: lifetimeSpend,
+        expiresAt,
+      });
+      if (error) {
+        showToast(error);
+        return;
+      }
+      const record = await loadMembership(userId);
+      setLiveMembership(record);
+    }
     if (onUpdateUser) {
       onUpdateUser({
         ...user,
         membershipTier: tier,
-        membershipExpiresAt: '2027-09-07T00:00:00.000Z',
+        membershipExpiresAt: expiresAt,
       });
-      showToast(`Switched membership level to ${tier.toUpperCase()}!`);
     }
+    showToast(`Switched membership level to ${tier.toUpperCase()}!`);
   };
 
   // Filtered partner shops

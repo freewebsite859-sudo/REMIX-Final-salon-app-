@@ -131,3 +131,88 @@ export function getCompletedAppointmentsForReview(
     (apt) => apt.status === 'completed' && !reviewedBookingIds.has(apt.id)
   );
 }
+
+// =============================================================================
+// LIVE SUPABASE REVIEWS
+// =============================================================================
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { supabase, isLiveCustomerDataEnabled, isSupabaseConfigured } from './supabase';
+import { SALONOS_TABLES } from './supabase/tables';
+
+function reviewFromRow(row: Record<string, unknown>): CustomerReview {
+  const dateRaw = String(row.created_at ?? row.date ?? new Date().toISOString());
+  return {
+    id: String(row.id || ''),
+    bookingId: String(row.booking_id ?? row.bookingId ?? ''),
+    salonId: String(row.salon_id ?? row.salonId ?? ''),
+    salonName: String(row.salon_name ?? row.salonName ?? 'Salon'),
+    salonAddress: String(row.salon_address ?? row.salonAddress ?? ''),
+    salonImage: typeof row.salon_image === 'string' ? row.salon_image : undefined,
+    salonRating: Number(row.salon_rating ?? row.rating ?? 0),
+    staffName: String(row.staff_name ?? row.staffName ?? 'Stylist Team'),
+    staffAvatar: typeof row.staff_avatar === 'string' ? row.staff_avatar : undefined,
+    staffRole: typeof row.staff_role === 'string' ? row.staff_role : undefined,
+    staffRating: Number(row.staff_rating ?? 0),
+    comment: String(row.comment ?? row.review ?? ''),
+    photoUrl: typeof row.photo_url === 'string' ? row.photo_url : undefined,
+    serviceName: String(row.service_name ?? row.serviceUsed ?? 'Salon Service'),
+    date: dateRaw,
+    createdAt: dateRaw,
+    userName: String(row.user_name ?? row.full_name ?? 'Nexora Customer'),
+    userAvatar: typeof row.user_avatar === 'string' ? row.user_avatar : '',
+    verifiedBooking: Boolean(row.verified_booking ?? true),
+  };
+}
+
+/**
+ * Load the signed-in customer's own reviews from the canonical `reviews` table.
+ */
+export async function loadLiveReviews(
+  userId: string,
+  client: SupabaseClient | null = supabase
+): Promise<CustomerReview[]> {
+  if (!client || !isSupabaseConfigured || !isLiveCustomerDataEnabled || !userId) return [];
+  try {
+    const { data, error } = await client.from(SALONOS_TABLES.reviews).select('*').eq('user_id', userId).order('created_at', { ascending: false });
+    if (error || !Array.isArray(data)) return [];
+    return data.map((row) => reviewFromRow(row));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Insert a verified review from a completed booking.
+ */
+export async function saveReviewLive(
+  userId: string,
+  review: CustomerReview,
+  client: SupabaseClient | null = supabase
+): Promise<{ error: string | null }> {
+  if (!client || !isSupabaseConfigured || !isLiveCustomerDataEnabled || !userId) {
+    return { error: 'Live Supabase reviews service is not configured.' };
+  }
+  const now = new Date().toISOString();
+  const { error } = await client.from(SALONOS_TABLES.reviews).insert({
+    user_id: userId,
+    booking_id: review.bookingId || null,
+    salon_id: review.salonId || null,
+    salon_name: review.salonName || null,
+    salon_address: review.salonAddress || null,
+    salon_image: review.salonImage || null,
+    salon_rating: review.salonRating,
+    staff_id: null,
+    staff_name: review.staffName || null,
+    staff_avatar: review.staffAvatar || null,
+    staff_role: review.staffRole || null,
+    staff_rating: review.staffRating,
+    comment: review.comment,
+    photo_url: review.photoUrl || null,
+    service_name: review.serviceName || null,
+    user_name: review.userName || null,
+    user_avatar: review.userAvatar || null,
+    verified_booking: true,
+    created_at: now,
+  });
+  return { error: error?.message || null };
+}

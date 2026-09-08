@@ -81,6 +81,10 @@ export interface Salon {
   reviews: Review[];
   amenities: string[];
   discountOffer?: string;
+  offerId?: string;
+  offerCode?: string;
+  offerDiscountPercent?: number;
+  offerDiscountAmount?: number;
   phone?: string;
   gender: 'unisex' | 'women' | 'men';
 }

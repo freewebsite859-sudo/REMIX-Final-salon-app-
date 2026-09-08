@@ -19,7 +19,12 @@ import {
   getTypeBadgeMeta,
   resetRewardsToDemo,
   formatRewardDate,
+  loadRewardWallet,
+  recordQrPaymentReward,
+  recordReferralReward,
+  redeemRewardsLive,
 } from '../lib/rewardsService';
+import { isLiveCustomerDataEnabled } from '../lib/supabase';
 
 interface RewardsTabProps {
   user: UserProfile;
@@ -42,20 +47,37 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
   onNavigateToBooking,
   onOpenSalonDetails,
 }) => {
-  // Load stored transactions scoped to user or demo store
+  // Load stored transactions scoped to user or demo store. In live Supabase
+  // mode the database is the source of truth; the local store is only the
+  // unconfigured/local demo fallback.
   const [transactions, setTransactions] = useState<RewardTransaction[]>(() =>
-    getStoredRewardTransactions(userId)
+    isLiveCustomerDataEnabled && userId ? [] : getStoredRewardTransactions(userId)
   );
+  const [liveBalance, setLiveBalance] = useState<number | null>(null);
 
   // Sync if userId changes
   useEffect(() => {
+    if (isLiveCustomerDataEnabled && userId) {
+      let active = true;
+      void loadRewardWallet(userId).then((wallet) => {
+        if (active) {
+          setTransactions(wallet.transactions);
+          setLiveBalance(wallet.currentPoints);
+        }
+      });
+      return () => {
+        active = false;
+      };
+    }
     setTransactions(getStoredRewardTransactions(userId));
+    setLiveBalance(null);
   }, [userId]);
 
   // Derived wallet summary
   const summary = useMemo(() => {
     return calculateWalletSummary(transactions);
   }, [transactions]);
+  const walletBalance = liveBalance ?? summary.currentPoints;
 
   // History filtering and search state
   const [historyFilter, setHistoryFilter] = useState<
@@ -120,7 +142,7 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
   }, [salons, redeemSalonId]);
 
   // Handle QR Redemption submission
-  const handleExecuteRedemption = () => {
+  const handleExecuteRedemption = async () => {
     setRedeemError(null);
     const bill = Number(redeemBillAmount);
     const pts = Number(redeemPointsInput);
@@ -135,8 +157,8 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
       return;
     }
 
-    if (pts > summary.currentPoints) {
-      setRedeemError(`Cannot redeem ${pts} points. Your available balance is ${summary.currentPoints} points.`);
+    if (pts > walletBalance) {
+      setRedeemError(`Cannot redeem ${pts} points. Your available balance is ${walletBalance} points.`);
       return;
     }
 
@@ -145,17 +167,30 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
       return;
     }
 
-    const result = redeemRewardsViaQr({
-      userId,
-      salonName: selectedRedeemSalon.name,
-      salonId: selectedRedeemSalon.id,
-      billAmount: bill,
-      pointsToRedeem: pts,
-    });
+    const result = isLiveCustomerDataEnabled && userId
+      ? await redeemRewardsLive(userId, {
+          salonName: selectedRedeemSalon.name,
+          salonId: selectedRedeemSalon.id,
+          billAmount: bill,
+          pointsToRedeem: pts,
+        })
+      : redeemRewardsViaQr({
+          userId,
+          salonName: selectedRedeemSalon.name,
+          salonId: selectedRedeemSalon.id,
+          billAmount: bill,
+          pointsToRedeem: pts,
+        });
 
     if (result.success && result.transaction) {
-      const updated = getStoredRewardTransactions(userId);
-      setTransactions(updated);
+      if (isLiveCustomerDataEnabled && userId) {
+        const wallet = await loadRewardWallet(userId);
+        setTransactions(wallet.transactions);
+        setLiveBalance(wallet.currentPoints);
+      } else {
+        setTransactions(getStoredRewardTransactions(userId));
+        setLiveBalance(null);
+      }
       setRedeemSuccessTx(result.transaction);
       showToast(`Successfully redeemed ${pts} points at ${selectedRedeemSalon.name}!`, 'success');
     } else {
@@ -164,25 +199,39 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
   };
 
   // Handle QR Payment simulation submission
-  const handleExecuteQrPayment = () => {
+  const handleExecuteQrPayment = async () => {
     const bill = Number(simBillAmount);
     const targetSalon = salons.find((s) => s.id === simSalonId) || {
       id: 'salon-1',
       name: 'Nexora Signature C-Scheme',
     };
 
-    const result = addQrPaymentReward({
-      userId,
-      salonName: targetSalon.name,
-      salonId: targetSalon.id,
-      amountInr: bill,
-      status: 'Approved',
-      description: simDescription ? `10% cashback on ₹${bill} QR payment for ${simDescription}` : undefined,
-    });
+    const result = isLiveCustomerDataEnabled && userId
+      ? await recordQrPaymentReward(userId, {
+          salonName: targetSalon.name,
+          salonId: targetSalon.id,
+          amountInr: bill,
+          status: 'Approved',
+          description: simDescription ? `10% cashback on ₹${bill} QR payment for ${simDescription}` : undefined,
+        })
+      : addQrPaymentReward({
+          userId,
+          salonName: targetSalon.name,
+          salonId: targetSalon.id,
+          amountInr: bill,
+          status: 'Approved',
+          description: simDescription ? `10% cashback on ₹${bill} QR payment for ${simDescription}` : undefined,
+        });
 
     if (result.success && result.transaction) {
-      const updated = getStoredRewardTransactions(userId);
-      setTransactions(updated);
+      if (isLiveCustomerDataEnabled && userId) {
+        const wallet = await loadRewardWallet(userId);
+        setTransactions(wallet.transactions);
+        setLiveBalance(wallet.currentPoints);
+      } else {
+        setTransactions(getStoredRewardTransactions(userId));
+        setLiveBalance(null);
+      }
       setIsQrSimulateModalOpen(false);
       showToast(result.message, 'success');
     } else {
@@ -254,15 +303,17 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={handleResetDemo}
-            title="Reset wallet to default demo transactions"
-            className="text-[11px] font-semibold text-on-surface-variant hover:text-primary px-2.5 py-1 rounded-lg border border-outline-variant/40 bg-surface-container-lowest hover:bg-surface-container-low transition-colors flex items-center gap-1 cursor-pointer"
-          >
-            <span className="material-symbols-outlined text-[14px]">refresh</span>
-            <span className="hidden sm:inline">Reset Demo</span>
-          </button>
+          {!isLiveCustomerDataEnabled && (
+            <button
+              type="button"
+              onClick={handleResetDemo}
+              title="Reset wallet to default demo transactions"
+              className="text-[11px] font-semibold text-on-surface-variant hover:text-primary px-2.5 py-1 rounded-lg border border-outline-variant/40 bg-surface-container-lowest hover:bg-surface-container-low transition-colors flex items-center gap-1 cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[14px]">refresh</span>
+              <span className="hidden sm:inline">Reset Demo</span>
+            </button>
+          )}
         </div>
       </header>
 
@@ -361,10 +412,10 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
                   id="wallet-current-points-value"
                   className="text-[40px] font-extrabold leading-none tabular-nums"
                 >
-                  {summary.currentPoints.toLocaleString('en-IN')}
+                  {walletBalance.toLocaleString('en-IN')}
                 </p>
                 <span className="text-[14px] opacity-90 font-semibold">
-                  pts (≈ ₹{(summary.currentPoints * POINTS_TO_INR_RATIO).toLocaleString('en-IN')})
+                  pts (≈ ₹{(walletBalance * POINTS_TO_INR_RATIO).toLocaleString('en-IN')})
                 </span>
               </div>
               <p className="text-[12px] opacity-90 mt-1 flex items-center gap-1.5">
@@ -936,7 +987,7 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
                   </div>
                   <div className="flex justify-between text-on-surface">
                     <span>Remaining Wallet Balance:</span>
-                    <span className="font-bold text-emerald-800">{summary.currentPoints} pts</span>
+                    <span className="font-bold text-emerald-800">{walletBalance} pts</span>
                   </div>
                 </div>
 
@@ -962,7 +1013,7 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
                     <span className="text-[12px] font-bold text-on-surface">Available Points Balance</span>
                   </div>
                   <span className="text-[14px] font-extrabold text-primary tabular-nums">
-                    {summary.currentPoints} pts (₹{summary.currentPoints * POINTS_TO_INR_RATIO})
+                    {walletBalance} pts (₹{walletBalance * POINTS_TO_INR_RATIO})
                   </span>
                 </div>
 
@@ -1020,14 +1071,14 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
                       value={redeemPointsInput}
                       onChange={(e) => setRedeemPointsInput(e.target.value)}
                       min="1"
-                      max={summary.currentPoints}
+                      max={walletBalance}
                       className="flex-1 h-11 px-3.5 bg-surface-container-lowest text-on-surface rounded-xl text-[14px] font-bold border border-outline-variant/50 focus:border-primary focus:ring-1 focus:ring-primary"
                     />
                     <button
                       type="button"
                       onClick={() => {
                         const bill = Number(redeemBillAmount) || 0;
-                        const maxRedeemable = Math.min(summary.currentPoints, bill);
+                        const maxRedeemable = Math.min(walletBalance, bill);
                         setRedeemPointsInput(String(maxRedeemable));
                       }}
                       className="px-3 bg-surface-container text-on-surface text-[12px] font-bold rounded-xl hover:bg-surface-container-high transition-colors cursor-pointer"
@@ -1080,7 +1131,7 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
                     type="button"
                     id="confirm-qr-redemption-btn"
                     onClick={handleExecuteRedemption}
-                    disabled={summary.currentPoints <= 0}
+                    disabled={walletBalance <= 0}
                     className="flex-1 py-2.5 rounded-xl bg-primary text-white text-[12px] font-bold hover:bg-[#b00055] transition-colors cursor-pointer shadow-xs disabled:opacity-50"
                   >
                     Confirm & Redeem via QR

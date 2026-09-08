@@ -233,6 +233,18 @@ const demoModeEnv = (() => {
 export const isNexoraDemoMode = demoModeEnv === 'true';
 
 /**
+ * True only when the app is connected to a real Supabase project AND the
+ * VITE_NEXORA_DEMO_MODE override is not forcing the in-repo preview.
+ *
+ * The customer data services gate every live query on this flag: with a real
+ * project configured they NEVER use mock/demo data, but the local demo/QA
+ * preview (no project, or VITE_NEXORA_DEMO_MODE=true) can still exercise the
+ * full offline UI without touching a database.
+ */
+export const isLiveCustomerDataEnabled =
+  isRealSupabaseConfigured && !isNexoraDemoMode;
+
+/**
  * Singleton guard: Vite HMR (and React StrictMode double-invocation) can
  * re-evaluate this module. Reusing the instance stored on `globalThis`
  * guarantees exactly one GoTrue client — multiple clients on one storage key

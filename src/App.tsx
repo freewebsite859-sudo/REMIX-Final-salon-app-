@@ -21,7 +21,7 @@ import { BookingModal } from './components/BookingModal';
 import { SalonDetailModal } from './components/SalonDetailModal';
 import { NotificationsModal } from './components/NotificationsModal';
 import { ChooseProfessionalScreen } from './components/ChooseProfessionalScreen';
-import { BookingSummaryModal } from './components/BookingSummaryModal';
+import { BookingSummaryModal, type BookingPaymentRequest } from './components/BookingSummaryModal';
 import { AuthPage } from './components/auth/AuthPage';
 import { PasswordUpdatePage } from './components/auth/PasswordUpdatePage';
 import { isSupabaseConfigured, getSupabaseConfigStatus } from './lib/supabase';
@@ -36,6 +36,17 @@ import {
   type CustomerLocationPreference,
 } from './lib/customerLocation';
 import { isAppointmentUpcoming } from './lib/appointments';
+import {
+  createCustomerBooking,
+  fetchCustomerBookings,
+  cancelCustomerBooking,
+  subscribeToCustomerBookings,
+} from './lib/bookingService';
+import { fetchCustomerFavourites, toggleCustomerFavourite } from './lib/favouritesService';
+import { loadRewardWallet } from './lib/rewardsService';
+import { loadMembership } from './lib/membershipService';
+import { recordSearch } from './lib/searchHistoryService';
+import { isLiveCustomerDataEnabled } from './lib/supabase';
 import { currentPath, isAuthRoute, isSignupRoute, redirectToApp } from './lib/authRoutes';
 import {
   CUSTOMER_BOOKINGS,
@@ -72,6 +83,7 @@ import { fetchUserProfile } from './lib/profileService';
 import {
   listNotifications,
   resolveNotificationTarget,
+  subscribeToNotifications,
   type AppNotification,
 } from './lib/notificationService';
 
@@ -716,6 +728,42 @@ export default function App() {
     }
   }, [session, isAuthLoading, activeTab]);
 
+  /**
+   * Load the live customer records for this user from Supabase. In real
+   * Supabase mode bookings and favourites come ONLY from the database — the
+   * localStorage arrays are treated as an offline/local-demo cache only.
+   */
+  const refreshLiveCustomerData = useCallback(async (uid: string) => {
+    if (!isLiveCustomerDataEnabled) return;
+
+    const [bookingsResult, favourites, wallet, membership, notificationsResult] = await Promise.all([
+      fetchCustomerBookings(uid),
+      fetchCustomerFavourites(uid),
+      loadRewardWallet(uid),
+      loadMembership(uid),
+      listNotifications(uid),
+    ]);
+    if (notificationsResult.ok) {
+      setNotifications(notificationsResult.data);
+    }
+    setAppointments(bookingsResult.appointments);
+    setSavedSalonIds(favourites.salonIds);
+    setSavedServices(
+      favourites.serviceRefs.map((ref) => ({ salonId: ref.salonId, serviceId: ref.serviceId }))
+    );
+    setSavedStaff(
+      favourites.staffRefs.map((ref) => ({ salonId: ref.salonId, stylistId: ref.staffId }))
+    );
+    // Keep the profile's loyalty/membership summary in sync with the live DB.
+    setUser((prev) => ({
+      ...prev,
+      loyaltyPoints: wallet.currentPoints > 0 ? wallet.currentPoints : prev.loyaltyPoints,
+      membershipTier: membership?.tier || prev.membershipTier,
+      membershipExpiresAt: membership?.expiresAt || prev.membershipExpiresAt,
+      referralCode: prev.referralCode,
+    }));
+  }, []);
+
   // Load only this authenticated user's UI profile and local drafts. These
   // values are deliberately namespaced by the authoritative Supabase user id;
   // data from one account can never appear in another account's UI.
@@ -790,8 +838,19 @@ export default function App() {
       try {
         if (isSupabaseConfigured && userId) {
           const { profile } = await fetchUserProfile(userId);
-          if (profile?.role) {
-            setUser(prev => ({ ...prev, role: profile.role }));
+          const p = (profile || {}) as Record<string, unknown>;
+          if (profile || p.role || p.full_name || p.phone) {
+            setUser((prev) => ({
+              ...prev,
+              role: (p.role as UserProfile['role']) || prev.role,
+              name: typeof p.full_name === 'string' && p.full_name ? p.full_name : prev.name,
+              phone: typeof p.phone === 'string' && p.phone ? p.phone : prev.phone,
+              locationArea: typeof p.location_area === 'string' && p.location_area ? p.location_area : prev.locationArea,
+              city: typeof p.city === 'string' && p.city ? p.city : prev.city,
+              loyaltyPoints: Number(p.loyalty_points) > 0 ? Number(p.loyalty_points) : prev.loyaltyPoints,
+              membershipTier: (p.membership_tier as UserProfile['membershipTier']) || prev.membershipTier,
+              referralCode: typeof p.referral_code === 'string' && p.referral_code ? p.referral_code : prev.referralCode,
+            }));
           }
         }
       } catch (err) {
@@ -809,9 +868,36 @@ export default function App() {
     setSavedStaff(
       loadJson(scopedStorageKey(STORAGE_KEYS.savedStaff, userId), [], sanitizeSavedStaff)
     );
+    // Live Supabase data replaces local/draft copies whenever the real database
+    // is configured. Reviews edited in memory are not authoritative and must
+    // not bleed into a different account after switching sessions.
+    void refreshLiveCustomerData(userId);
     // Reviews edited in memory are not authoritative and must not bleed into a
     // different account after switching sessions.
-  }, [userId, session?.user, authRole]);
+  }, [userId, session?.user, authRole, refreshLiveCustomerData]);
+
+  // Live booking updates (e.g. salon confirms/cancels) are reflected while the
+  // customer is signed in. RLS keeps the realtime feed scoped to the caller.
+  useEffect(() => {
+    if (!userId || !isLiveCustomerDataEnabled) return;
+    const unsubscribe = subscribeToCustomerBookings(userId, () => {
+      void refreshLiveCustomerData(userId);
+    });
+    return unsubscribe;
+  }, [userId, refreshLiveCustomerData]);
+
+  // Live notification inbox. Only the signed-in user's own rows are delivered
+  // through the realtime filter (mirrors RLS).
+  useEffect(() => {
+    if (!userId || !isLiveCustomerDataEnabled) return;
+    const unsubscribe = subscribeToNotifications(userId, () => {
+      void (async () => {
+        const result = await listNotifications(userId);
+        if (result.ok) setNotifications(result.data);
+      })();
+    });
+    return unsubscribe;
+  }, [userId]);
 
   // First-login location permission: once per account, after auth is ready and
   // the auth screen is no longer showing. Guests never see this prompt.
@@ -1021,11 +1107,63 @@ export default function App() {
   };
 
   const handleConfirmBooking = (newAppointment: Appointment) => {
-    // The UI may receive a booking only from a future server-side payment
-    // adapter. Keep the guard here as a second line of defence; appointment
-    // state must never be created from an unauthenticated client event.
+    // The UI may receive a booking only from a live booking adapter. Keep the
+    // guard here as a second line of defence; appointment state must never be
+    // created from an unauthenticated client event.
     if (!isSupabaseConfigured || !userId) return;
     setAppointments((prev) => [newAppointment, ...prev.filter((a) => a.id !== newAppointment.id)]);
+    if (isLiveCustomerDataEnabled) {
+      void refreshLiveCustomerData(userId);
+    }
+  };
+
+  /**
+   * Transactional booking creation used by the summary/payment screen.
+   * Creates the `bookings` row plus every `booking_services` row, then returns
+   * the refreshed booking so the confirmation ticket comes from the DB.
+   */
+  const handlePayDepositBooking = async (request: BookingPaymentRequest): Promise<Appointment> => {
+    if (!userId || !isLiveCustomerDataEnabled) {
+      throw new Error('Online booking is available only when the live Supabase database is configured.');
+    }
+    const draft = bookingSummaryDraft;
+    const salon = draft?.salon || salons.find((item) => item.id === request.salonId) || null;
+    if (!salon) throw new Error('Salon record not found for booking.');
+
+    const selectedIds = new Set(request.serviceIds);
+    const services = draft?.services?.length
+      ? draft.services.filter((service) => selectedIds.has(service.id))
+      : salon.services.filter((service) => selectedIds.has(service.id));
+    if (!services.length) throw new Error('No services selected for booking.');
+
+    const stylist =
+      draft?.stylist ||
+      salon.stylists.find((member) => member.id === request.stylistId) ||
+      null;
+
+    const totalPrice = services.reduce((sum, s) => sum + (s.discountPrice || s.price || 0), 0);
+    const advancePaid = request.amount || Math.round(totalPrice * 0.25);
+    const { appointment, error } = await createCustomerBooking({
+      userId,
+      salonId: salon.id,
+      staffId: stylist?.id || null,
+      date: request.date,
+      time: request.time,
+      services,
+      totalPrice,
+      advancePaid,
+      remainingAmount: Math.max(0, totalPrice - advancePaid),
+      paymentMode: 'advance_25',
+      paymentStatus: 'paid',
+      discountApplied: null,
+      notes: request.notes,
+      couponCode: request.couponCode,
+      paymentMethodUsed: 'qr',
+    });
+    if (error || !appointment) {
+      throw new Error(error || 'Booking could not be created.');
+    }
+    return appointment;
   };
 
   const handleViewAppointments = () => {
@@ -1039,13 +1177,18 @@ export default function App() {
     goToCustomer(customerBookingPath(bookingId));
   };
 
-  const handleToggleSaveSalon = (salonId: string) => {
+  const handleToggleSaveSalon = async (salonId: string) => {
+    const nowFavourite = !savedSalonIds.includes(salonId);
     setSavedSalonIds((prev) =>
       prev.includes(salonId) ? prev.filter((id) => id !== salonId) : [...prev, salonId]
     );
+    if (userId && isLiveCustomerDataEnabled) {
+      await toggleCustomerFavourite(userId, { salonIds: savedSalonIds, serviceIds: [], staffIds: [], serviceRefs: [], staffRefs: [] }, { salonId });
+      void refreshLiveCustomerData(userId);
+    }
   };
 
-  const handleToggleSaveService = (salonId: string, serviceId: string) => {
+  const handleToggleSaveService = async (salonId: string, serviceId: string) => {
     setSavedServices((prev) => {
       const exists = prev.some((item) => item.salonId === salonId && item.serviceId === serviceId);
       if (exists) {
@@ -1053,9 +1196,13 @@ export default function App() {
       }
       return [...prev, { salonId, serviceId }];
     });
+    if (userId && isLiveCustomerDataEnabled) {
+      await toggleCustomerFavourite(userId, { salonIds: savedSalonIds, serviceIds: savedServices.map((s) => s.serviceId), staffIds: [], serviceRefs: savedServices, staffRefs: [] }, { salonId, serviceId });
+      void refreshLiveCustomerData(userId);
+    }
   };
 
-  const handleToggleSaveStaff = (salonId: string, stylistId: string) => {
+  const handleToggleSaveStaff = async (salonId: string, stylistId: string) => {
     setSavedStaff((prev) => {
       const exists = prev.some((item) => item.salonId === salonId && item.stylistId === stylistId);
       if (exists) {
@@ -1063,11 +1210,18 @@ export default function App() {
       }
       return [...prev, { salonId, stylistId }];
     });
+    if (userId && isLiveCustomerDataEnabled) {
+      await toggleCustomerFavourite(userId, { salonIds: savedSalonIds, serviceIds: [], staffIds: savedStaff.map((s) => s.stylistId), serviceRefs: [], staffRefs: savedStaff.map((s) => ({ salonId: s.salonId, staffId: s.stylistId })) }, { salonId, staffId: stylistId });
+      void refreshLiveCustomerData(userId);
+    }
   };
 
-  const handleCancelAppointment = (id: string) => {
-    setAppointments(
-      appointments.map((a) => (a.id === id ? { ...a, status: 'cancelled' } : a))
+  const handleCancelAppointment = async (id: string) => {
+    if (userId && isLiveCustomerDataEnabled) {
+      await cancelCustomerBooking(userId, id);
+    }
+    setAppointments((prev) =>
+      prev.map((a) => (a.id === id ? { ...a, status: 'cancelled' } : a))
     );
   };
 
@@ -1322,6 +1476,10 @@ export default function App() {
                 appointments={appointments}
                 initialSearchQuery={undefined}
                 onSearchQueryChange={(q) => {
+                  // Live search history is recorded for the signed-in user.
+                  if (userId && isLiveCustomerDataEnabled && q.trim()) {
+                    void recordSearch(userId, q);
+                  }
                   // Typing on Home promotes the URL to /customer/search?q=
                   setRouteSearchQuery(q);
                   if (q.trim()) {
@@ -1365,6 +1523,9 @@ export default function App() {
                 savedSalonIds={savedSalonIds}
                 initialSearchQuery={routeSearchQuery}
                 onSearchQueryChange={(q) => {
+                  if (userId && isLiveCustomerDataEnabled && q.trim()) {
+                    void recordSearch(userId, q);
+                  }
                   setRouteSearchQuery(q);
                   const next = customerSearchPath(q);
                   if (typeof window !== 'undefined') {
@@ -1462,6 +1623,7 @@ export default function App() {
             {customerRoute.kind === 'membership' && (
               <MembershipPage
                 user={user}
+                userId={userId || undefined}
                 salons={salons}
                 appointments={appointments}
                 onUpdateUser={setUser}
@@ -1486,6 +1648,7 @@ export default function App() {
             {customerRoute.kind === 'referral' && (
               <ReferralPage
                 user={user}
+                userId={userId || undefined}
                 onBack={() => goToCustomer(CUSTOMER_PROFILE, { replace: true })}
                 onOpenRewards={() => goToCustomer(CUSTOMER_REWARDS)}
                 onExploreSalons={() => goToCustomer(CUSTOMER_SEARCH)}
@@ -1496,6 +1659,7 @@ export default function App() {
               <ReviewsPage
                 user={user}
                 appointments={appointments}
+                userId={userId || undefined}
                 onBack={() => goToCustomer(CUSTOMER_PROFILE, { replace: true })}
                 onNavigateToBooking={() => goToCustomer(CUSTOMER_HOME)}
                 onExploreSalons={() => goToCustomer(CUSTOMER_SEARCH)}
@@ -1637,6 +1801,7 @@ export default function App() {
         date={bookingSummaryDraft?.date || new Date().toISOString().split('T')[0]}
         time={bookingSummaryDraft?.time || '2:30 PM'}
         specialNotes={bookingSummaryDraft?.notes || ''}
+        onPayDeposit={handlePayDepositBooking}
         onConfirmBooking={handleConfirmBooking}
         onViewAppointments={() => {
           setIsBookingConfirmationScreen(false);

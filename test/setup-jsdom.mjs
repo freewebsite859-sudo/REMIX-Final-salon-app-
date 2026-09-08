@@ -37,6 +37,9 @@ g.btoa = (s) => Buffer.from(s, 'binary').toString('base64');
 // non-privileged; using an anon-shaped JWT keeps the production guard active.
 process.env.VITE_SUPABASE_URL ||= 'https://qwaehqsmodekbgvnaavz.supabase.co';
 process.env.VITE_SUPABASE_STORAGE_KEY ||= 'nexora.auth.qwaehqsmodekbgvnaavz';
+// The test harness uses the in-repo preview data everywhere (no live DB). This
+// keeps the customer UI deterministic while production stays live-only.
+process.env.VITE_NEXORA_DEMO_MODE ||= 'true';
 process.env.VITE_SUPABASE_ANON_KEY ||= [
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9',
   'eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwicmVmIjoicXdhZWhxc21vZGVrYmd2bmFhdnoifQ',
