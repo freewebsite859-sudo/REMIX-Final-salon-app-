@@ -17,7 +17,7 @@ import {
 import { NexoraLogo } from './NexoraLogo';
 import { PasswordResetModal } from './PasswordResetModal';
 import { SupabaseConfigBanner } from '../SupabaseConfigBanner';
-import { supabase, isSupabaseConfigured, getSupabaseConfigStatus } from '../../lib/supabase';
+import { supabase, isSupabaseConfigured, isLiveCustomerDataEnabled, getSupabaseConfigStatus } from '../../lib/supabase';
 import { upsertUserProfile, fetchUserProfile, type UserRole } from '../../lib/profileService';
 import { UserProfile } from '../../types';
 import {
@@ -738,7 +738,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
 
         {/* 6. Footer Terms & Guest Preview Option */}
         <footer className="mt-6 pt-5 border-t border-[#e8e8e8]/70 text-center flex flex-col items-center gap-2">
-          {onExploreAsGuest && (
+          {!isLiveCustomerDataEnabled && onExploreAsGuest && (
             <button
               type="button"
               id="guest-preview-btn"
