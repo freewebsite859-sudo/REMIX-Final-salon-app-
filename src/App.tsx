@@ -43,6 +43,7 @@ import {
   type BookingCreateRequest,
 } from './lib/bookingContract';
 import { createBooking } from './lib/createBookingClient';
+import { isRealtimeEnabled, subscribeToTable } from './lib/realtimeService';
 import { currentPath, isAuthRoute, isSignupRoute, redirectToApp } from './lib/authRoutes';
 import {
   CUSTOMER_BOOKINGS,
@@ -436,6 +437,24 @@ export default function App() {
       void refreshNotifications();
     }, 60_000);
     return () => window.clearInterval(timer);
+  }, [userId, refreshNotifications]);
+
+  // Live notifications: when Supabase Realtime is enabled, salon-side booking
+  // confirmations (booking_confirmed etc.) arrive as notifications INSERTs and
+  // refresh the badge/panel instantly instead of waiting for the poll above.
+  useEffect(() => {
+    if (!userId || !isRealtimeEnabled()) return undefined;
+    const filter = `user_id=eq.${userId}`;
+    const sub = subscribeToTable(
+      'notifications',
+      () => {
+        void refreshNotifications();
+      },
+      { filter }
+    );
+    return () => {
+      void sub.unsubscribe();
+    };
   }, [userId, refreshNotifications]);
 
   /**

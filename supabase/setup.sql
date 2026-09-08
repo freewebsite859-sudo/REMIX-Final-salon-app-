@@ -600,3 +600,346 @@ drop trigger if exists bookings_lines_match_metadata_trigger on public.bookings;
 create trigger bookings_lines_match_metadata_trigger
   after insert or update on public.bookings
   for each row execute function public.booking_lines_match_metadata();
+-- ============================================================================
+-- NEXORA ENGAGEMENT — QR CHECK-IN, REWARDS LEDGER, TIERS, REFERRALS
+-- ============================================================================
+-- Backed by `server/engagement.ts` (service-role, /api/engagement/*) and
+-- `src/lib/realtimeService.ts` (realtime subscriptions). Reference DDL:
+-- run once in a fresh Supabase project together with the rest of this file.
+--
+-- Honesty rules baked in at the DB boundary:
+--  * Points are a ledger, never a counter: `rewards` rows are immutable
+--    facts (positive = earned, negative = redeemed/expired/adjusted).
+--  * A user may check in at a given salon once per calendar day (unique
+--    constraint) — repeated scans cannot farm points.
+--  * A booking pays points exactly once (trigger guarded by type+booking_id).
+--  * Tiers are derived from lifetime points via membership_tiers.min_points;
+--    user_memberships.tier is recomputed by trigger on every points change.
+-- ============================================================================
+
+-- ---------------------------------------------------------------------------
+-- 1. membership_tiers (must exist before user_memberships references it)
+-- ---------------------------------------------------------------------------
+create table if not exists public.membership_tiers (
+  id         uuid primary key default gen_random_uuid(),
+  tier_name  text not null unique
+             check (tier_name in ('standard', 'silver', 'gold', 'platinum')),
+  min_points integer not null default 0 check (min_points >= 0),
+  benefits   jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+insert into public.membership_tiers (tier_name, min_points, benefits) values
+  ('standard', 0,    '{"discountPercent": 0,  "label": "Standard Guest"}'),
+  ('silver',   500,  '{"discountPercent": 5,  "label": "Silver Member", "benefits": ["5% off services", "Priority booking"]}'),
+  ('gold',     1500, '{"discountPercent": 10, "label": "Gold Member",   "benefits": ["10% off services", "Free blow-dry on birthday month"]}'),
+  ('platinum', 4000, '{"discountPercent": 15, "label": "Platinum VIP",  "benefits": ["15% off services", "Free add-on monthly", "Dedicated stylist"]}')
+on conflict (tier_name) do nothing;
+
+-- ---------------------------------------------------------------------------
+-- 2. user_qr_codes + qr_check_ins
+-- ---------------------------------------------------------------------------
+create table if not exists public.user_qr_codes (
+  id              uuid primary key default gen_random_uuid(),
+  user_id         uuid not null unique references public.profiles (id) on delete cascade,
+  qr_code_data    text not null unique check (qr_code_data like 'NXQR1.%'),
+  generated_at    timestamptz not null default now(),
+  last_scanned_at timestamptz
+);
+
+create table if not exists public.qr_check_ins (
+  id             uuid primary key default gen_random_uuid(),
+  user_id        uuid not null references public.profiles (id) on delete cascade,
+  salon_id       text not null,
+  salon_name     text not null,
+  points_awarded integer not null default 0 check (points_awarded >= 0),
+  day_date       date not null default current_date,
+  checked_in_at  timestamptz not null default now(),
+  -- One rewarded check-in per user per salon per calendar day.
+  unique (user_id, salon_id, day_date)
+);
+
+create index if not exists qr_check_ins_user_date_idx
+  on public.qr_check_ins (user_id, day_date desc);
+
+-- ---------------------------------------------------------------------------
+-- 3. referrals
+-- ---------------------------------------------------------------------------
+create table if not exists public.referrals (
+  id                    uuid primary key default gen_random_uuid(),
+  referrer_user_id      uuid not null references public.profiles (id) on delete cascade,
+  referred_user_id      uuid not null unique references public.profiles (id) on delete cascade,
+  referred_name         text,
+  status                text not null default 'pending'
+                        check (status in ('pending', 'completed')),
+  reward_points         integer not null default 150 check (reward_points >= 0),
+  qualifying_booking_id uuid references public.bookings (id) on delete set null,
+  created_at            timestamptz not null default now(),
+  completed_at          timestamptz,
+  check (referrer_user_id <> referred_user_id)
+);
+
+create index if not exists referrals_referrer_idx
+  on public.referrals (referrer_user_id, created_at desc);
+
+-- ---------------------------------------------------------------------------
+-- 4. rewards — immutable points ledger
+-- ---------------------------------------------------------------------------
+create table if not exists public.rewards (
+  id               uuid primary key default gen_random_uuid(),
+  user_id          uuid not null references public.profiles (id) on delete cascade,
+  points_earned    integer not null check (points_earned <> 0),
+  points_used      integer not null default 0,
+  transaction_type text not null
+                   check (transaction_type in
+                     ('booking', 'qr_check_in', 'referral', 'birthday', 'bonus',
+                      'redemption', 'expiry', 'adjustment')),
+  description      text,
+  salon_id         text,
+  booking_id       uuid references public.bookings (id) on delete set null,
+  referral_id      uuid references public.referrals (id) on delete set null,
+  expires_at       timestamptz,
+  created_at       timestamptz not null default now()
+);
+
+create index if not exists rewards_user_created_idx
+  on public.rewards (user_id, created_at desc);
+create index if not exists rewards_booking_once_idx
+  on public.rewards (user_id, transaction_type, booking_id)
+  where booking_id is not null;
+
+-- ---------------------------------------------------------------------------
+-- 5. user_memberships — derived tier state (recomputed by trigger)
+-- ---------------------------------------------------------------------------
+create table if not exists public.user_memberships (
+  user_id         uuid primary key references public.profiles (id) on delete cascade,
+  tier_name       text not null default 'standard'
+                  references public.membership_tiers (tier_name) on update cascade,
+  lifetime_points integer not null default 0 check (lifetime_points >= 0),
+  current_points  integer not null default 0 check (current_points >= 0),
+  updated_at      timestamptz not null default now()
+);
+
+-- ---------------------------------------------------------------------------
+-- 6. staff_availability — realtime availability feed for booking flows
+--    (slot-level rows mutated by salon operations; customers subscribe)
+-- ---------------------------------------------------------------------------
+create table if not exists public.staff_availability (
+  id         uuid primary key default gen_random_uuid(),
+  salon_id   text not null,
+  staff_id   text not null,
+  slot_date  date not null,
+  slot_time  text not null check (slot_time <> ''),
+  available  boolean not null default true,
+  updated_at timestamptz not null default now(),
+  unique (salon_id, staff_id, slot_date, slot_time)
+);
+
+create index if not exists staff_availability_lookup_idx
+  on public.staff_availability (salon_id, slot_date, available);
+
+-- ---------------------------------------------------------------------------
+-- 7. Ledger application (rewards row + membership balance + tier sync)
+-- ---------------------------------------------------------------------------
+create or replace function public.apply_points_ledger(p_user uuid, p_points integer)
+returns void
+language plpgsql
+security definer set search_path = public
+as $$
+begin
+  -- Positive: earnings accumulate in lifetime and current.
+  -- Negative: only reduces current (redemption/expiry), never lifetime.
+  insert into public.user_memberships (user_id, lifetime_points, current_points)
+  values (p_user, greatest(p_points, 0), greatest(p_points, 0))
+  on conflict (user_id) do update
+    set lifetime_points = case when p_points > 0
+                               then public.user_memberships.lifetime_points + p_points
+                               else public.user_memberships.lifetime_points end,
+        current_points  = greatest(0, public.user_memberships.current_points + p_points),
+        updated_at      = now();
+end;
+$$;
+
+-- Tier recomputation: derived from lifetime points against membership_tiers.
+create or replace function public.sync_membership_tier()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_tier text;
+begin
+  select t.tier_name into v_tier
+    from public.membership_tiers t
+   where t.min_points <= new.lifetime_points
+   order by t.min_points desc
+   limit 1;
+  if v_tier is not null and v_tier <> new.tier_name then
+    new.tier_name := v_tier;
+  end if;
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+drop trigger if exists user_memberships_sync_tier_trigger on public.user_memberships;
+create trigger user_memberships_sync_tier_trigger
+  before insert or update of lifetime_points on public.user_memberships
+  for each row execute function public.sync_membership_tier();
+
+-- ---------------------------------------------------------------------------
+-- 8. Trigger: booking confirmed → award points; settle referrals once
+-- ---------------------------------------------------------------------------
+create or replace function public.settle_completed_referrals(p_referred uuid)
+returns void
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  r record;
+begin
+  -- Mark pending referral rows completed when the referred user has any
+  -- confirmed booking (idempotent: only pending rows are touched).
+  update public.referrals x
+     set status = 'completed',
+         completed_at = now(),
+         qualifying_booking_id = coalesce(x.qualifying_booking_id, q.id)
+    from (select b.id
+            from public.bookings b
+           where b.user_id = p_referred
+             and b.status in ('confirmed', 'completed')
+           order by b.created_at asc
+           limit 1) q
+   where x.referred_user_id = p_referred
+     and x.status = 'pending';
+
+  -- Pay each completed-but-unpaid referral exactly once (ledger guard).
+  for r in
+    select x.id, x.referrer_user_id, x.reward_points
+      from public.referrals x
+     where x.referred_user_id = p_referred
+       and x.status = 'completed'
+       and not exists (
+         select 1 from public.rewards w
+         where w.referral_id = x.id and w.transaction_type = 'referral'
+       )
+  loop
+    insert into public.rewards
+      (user_id, points_earned, transaction_type, description, referral_id)
+    values
+      (r.referrer_user_id, r.reward_points, 'referral',
+       'Referral bonus — your friend visited Nexora', r.id);
+    perform public.apply_points_ledger(r.referrer_user_id, r.reward_points);
+  end loop;
+end;
+$$;
+
+create or replace function public.award_booking_points()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_points integer;
+begin
+  -- Fire only on the transition into confirmed/completed (once per booking).
+  if new.status not in ('confirmed', 'completed')
+     or old.status in ('confirmed', 'completed') then
+    return new;
+  end if;
+
+  -- Ledger guard: a booking pays points exactly once.
+  if not exists (
+    select 1 from public.rewards
+    where booking_id = new.id and transaction_type = 'booking'
+  ) then
+    -- 10% back in points on the final bill (same ratio as QR cashback).
+    -- Guest bookings (user_id null) have no profile ledger to credit.
+    v_points := floor(coalesce(new.total_amount, 0) * 0.10);
+    if new.user_id is not null and v_points > 0 then
+      insert into public.rewards
+        (user_id, points_earned, transaction_type, description, salon_id, booking_id)
+      values
+        (new.user_id, v_points, 'booking',
+         '10% reward points on booking ' || new.booking_ref, new.salon_id, new.id);
+      perform public.apply_points_ledger(new.user_id, v_points);
+    end if;
+  end if;
+
+  -- Referral completion + bonus settlement for the referred user's first
+  -- confirmed booking (idempotent on both sides).
+  if new.user_id is not null then
+    perform public.settle_completed_referrals(new.user_id);
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists bookings_award_points_trigger on public.bookings;
+create trigger bookings_award_points_trigger
+  after update of status on public.bookings
+  for each row execute function public.award_booking_points();
+
+-- ---------------------------------------------------------------------------
+-- 9. Birthday bonus (idempotent: once per user per calendar year)
+-- ---------------------------------------------------------------------------
+alter table public.profiles
+  add column if not exists date_of_birth date;
+
+create or replace function public.award_birthday_bonus(p_user uuid)
+returns integer
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_dob date;
+  v_points constant integer := 200;
+begin
+  select date_of_birth into v_dob from public.profiles where id = p_user;
+  if v_dob is null then
+    return 0; -- no date of birth on file → nothing to award
+  end if;
+  if extract(month from v_dob) <> extract(month from current_date)
+     or extract(day from v_dob) <> extract(day from current_date) then
+    return 0; -- not the birthday
+  end if;
+  if exists (
+    select 1 from public.rewards
+    where user_id = p_user
+      and transaction_type = 'birthday'
+      and extract(year from created_at) = extract(year from current_date)
+  ) then
+    return 0; -- already awarded this year
+  end if;
+
+  insert into public.rewards
+    (user_id, points_earned, transaction_type, description)
+  values
+    (p_user, v_points, 'birthday', 'Happy birthday! Nexora bonus points');
+  perform public.apply_points_ledger(p_user, v_points);
+  return v_points;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- 10. Realtime publication (live salon availability, bookings, rewards…)
+-- ---------------------------------------------------------------------------
+do $$
+begin
+  -- Supabase projects ship the `supabase_realtime` publication by default;
+  -- if it is absent (custom project), skip with a NOTICE instead of failing.
+  alter publication supabase_realtime add table public.bookings;
+  alter publication supabase_realtime add table public.notifications;
+  alter publication supabase_realtime add table public.rewards;
+  alter publication supabase_realtime add table public.user_qr_codes;
+  alter publication supabase_realtime add table public.qr_check_ins;
+  alter publication supabase_realtime add table public.staff_availability;
+exception when undefined_table then
+  raise notice 'supabase_realtime publication missing; realtime tables not added';
+end $$;
+
+-- Full replica identity so UPDATE payloads carry the whole row to clients.
+alter table public.bookings replica identity full;
+alter table public.notifications replica identity full;
+alter table public.rewards replica identity full;
+alter table public.staff_availability replica identity full;

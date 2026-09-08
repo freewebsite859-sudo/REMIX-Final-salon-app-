@@ -24,6 +24,7 @@
     "test:booking-detail": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/bookingDetail.test.tsx",
     "test:booking-modal": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/bookingModal.test.tsx",
     "test:booking-service": "tsx test/bookingService.test.mts",
+    "test:engagement": "tsx test/engagement.test.mts",
     "test:rewards": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/rewardsWallet.test.tsx",
     "test:rewards-service": "tsx test/rewardsService.test.mts",
     "test:membership": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/membershipPage.test.tsx",
@@ -47,6 +48,7 @@
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "lucide-react": "^0.546.0",
+    "qrcode": "^1.5.4",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "vite": "^6.2.3"
@@ -55,6 +57,7 @@
     "@types/d3": "^7.4.3",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "autoprefixer": "^10.4.21",

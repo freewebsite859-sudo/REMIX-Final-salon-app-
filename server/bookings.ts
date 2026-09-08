@@ -54,7 +54,7 @@ import type { Appointment, Stylist } from '../src/types';
 // Response helpers
 // ---------------------------------------------------------------------------
 
-function jsonError(res: Response, status: number, error: string, fields?: string[]) {
+export function jsonError(res: Response, status: number, error: string, fields?: string[]) {
   return res.status(status).json({
     error,
     ...(fields && fields.length > 0 ? { fields } : {}),

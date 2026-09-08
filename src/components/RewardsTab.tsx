@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { UserProfile, Appointment, Salon } from '../types';
+import { QrEngagementCard } from './QrEngagementCard';
 import {
   RewardTransaction,
   RewardStatus,
@@ -265,6 +266,9 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
           </button>
         </div>
       </header>
+
+      {/* QR check-in & live engagement (DB-backed when enabled) */}
+      <QrEngagementCard userId={userId} />
 
       {/* ========================================================================= */}
       {/* 1. IMPORTANT BUSINESS RULES BANNER                                        */}

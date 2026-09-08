@@ -4,6 +4,7 @@ import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import { createNotificationsRouter } from "./server/notifications";
 import { createBookingsRouter } from "./server/bookings";
+import { createEngagementRouter } from "./server/engagement";
 
 dotenv.config();
 
@@ -20,6 +21,10 @@ app.use("/api/notifications", createNotificationsRouter(process.env));
 // Enabled only when SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY are configured;
 // otherwise it answers 503 "not configured" and never fabricates a booking.
 app.use("/api/bookings", createBookingsRouter(process.env));
+
+// Engagement: user QR codes, salon check-ins, rewards ledger summary.
+// Same trust model as bookings — service-role only.
+app.use("/api/engagement", createEngagementRouter(process.env));
 
 // Health check
 app.get("/api/health", (_req: Request, res: Response) => {
