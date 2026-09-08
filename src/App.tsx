@@ -27,6 +27,7 @@ import { PasswordUpdatePage } from './components/auth/PasswordUpdatePage';
 import { isSupabaseConfigured, getSupabaseConfigStatus } from './lib/supabase';
 import { useAuth } from './providers/AuthProvider';
 import { useLocationSync } from './hooks/useLocationSync';
+import { resolveLocationWithFallback } from './lib/areaResolver';
 import { clearUserLocation, syncUserLocation } from './lib/locationService';
 import {
   hasCompletedLocationSetup,
@@ -1683,19 +1684,42 @@ export default function App() {
         isLiveSyncBlocked={locationSync.permissionDenied && !locationSync.isWatching}
         onSelectLocation={(loc, lat, lng, meta) => {
           setCurrentLocation(loc);
-          // Persist structured preference (lat/lng/city/area/pincode) when we
-          // have enough detail — first-login and header picker share this path.
-          if (userId && typeof lat === 'number' && typeof lng === 'number') {
-            const area = meta?.area || loc.split(',')[0]?.trim() || loc;
-            const city = meta?.city || loc.split(',').slice(-1)[0]?.trim() || 'Jaipur';
+          // A selection without coordinates used to be dropped on the floor by
+          // the preference store, so the header label reverted on reload.
+          // Resolve one through the fallback ladder instead.
+          let latitude = lat;
+          let longitude = lng;
+          let resolvedMeta = meta;
+          if (typeof latitude !== 'number' || typeof longitude !== 'number') {
+            const resolved = resolveLocationWithFallback({
+              typedText: meta?.area || loc,
+              saved: userId ? loadCustomerLocation(userId) : null,
+              profileArea: user.locationArea || user.defaultLocality || null,
+              profileCity: user.city || null,
+            });
+            latitude = resolved.latitude;
+            longitude = resolved.longitude;
+            resolvedMeta = {
+              area: resolved.area,
+              city: resolved.city,
+              pincode: resolved.pincode,
+              source: resolved.preferenceSource,
+            };
+            setCurrentLocation(resolved.label);
+          }
+          if (userId && typeof latitude === 'number' && typeof longitude === 'number') {
+            const lat2 = latitude;
+            const lng2 = longitude;
+            const area = resolvedMeta?.area || loc.split(',')[0]?.trim() || loc;
+            const city = resolvedMeta?.city || loc.split(',').slice(-1)[0]?.trim() || 'Jaipur';
             void persistCustomerLocation(userId, {
-              latitude: lat,
-              longitude: lng,
+              latitude: lat2,
+              longitude: lng2,
               city,
               area,
-              pincode: meta?.pincode,
-              label: loc,
-              source: meta?.source || (meta?.area ? 'chip' : 'gps'),
+              pincode: resolvedMeta?.pincode,
+              label: resolvedMeta === meta ? loc : `${area}, ${city}`,
+              source: resolvedMeta?.source || (resolvedMeta?.area ? 'chip' : 'gps'),
             }).then((saved) => {
               if (saved) {
                 setUser((prev) => ({
@@ -1707,9 +1731,9 @@ export default function App() {
                 }));
               }
             });
-          } else if (typeof lat === 'number' && typeof lng === 'number') {
+          } else if (typeof latitude === 'number' && typeof longitude === 'number') {
             // Guest: push is a no-op without a session, but keep the label.
-            void handleManualLocationSync(lat, lng);
+            void handleManualLocationSync(latitude, longitude);
           }
         }}
       />

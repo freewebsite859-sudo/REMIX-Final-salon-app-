@@ -1,7 +1,15 @@
 import React, { useState } from 'react';
 import type { UserProfile } from '../types.ts';
 import { requestDeviceLocation } from '../lib/deviceLocation.ts';
-import { nearestJaipurArea, JAIPUR_AREA_CHIPS } from '../lib/jaipurAreas.ts';
+import { JAIPUR_AREA_CHIPS } from '../lib/jaipurAreas.ts';
+import { resolveLocationWithFallback } from '../lib/areaResolver.ts';
+import {
+  DEFAULT_MAPS_GROUNDING_PREFERENCES,
+  describeGroundingCapability,
+  loadMapsGroundingPreferences,
+  setMapsGroundingPreference,
+  type MapsGroundingPreferences,
+} from '../lib/mapsGrounding.ts';
 
 interface SettingsPageProps {
   user: UserProfile;
@@ -128,6 +136,27 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   };
 
   // GPS Update Button Handler
+  const [mapsGrounding, setMapsGrounding] = useState<MapsGroundingPreferences>(
+    () => DEFAULT_MAPS_GROUNDING_PREFERENCES
+  );
+  const groundingCapability = describeGroundingCapability();
+
+  React.useEffect(() => {
+    setMapsGrounding(loadMapsGroundingPreferences());
+  }, []);
+
+  const handleToggleGrounding = (key: keyof MapsGroundingPreferences) => {
+    setMapsGrounding((prev) => {
+      const next = setMapsGroundingPreference(key, !prev[key]);
+      showToast(
+        key === 'groundedResults'
+          ? `Google Maps grounded results ${next.groundedResults ? 'on' : 'off'}`
+          : `AI Maps grounding ${next.aiGrounding ? 'on' : 'off'}`
+      );
+      return next;
+    });
+  };
+
   const handleGpsUpdate = async () => {
     setIsUpdatingGps(true);
     setGpsStatusMsg('Acquiring high-accuracy GPS fix...');
@@ -139,24 +168,28 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       if (result.status === 'ok') {
         const lat = result.latitude;
         const lng = result.longitude;
-        const nearest = nearestJaipurArea(lat, lng);
-        const resolvedArea = nearest?.area || 'Mansarovar';
-        setArea(resolvedArea);
-        setCity('Jaipur');
+        // Never silently default to Mansarovar: the ladder snaps to the real
+        // nearest locality and says when the answer is approximate.
+        const resolved = resolveLocationWithFallback({ coords: { latitude: lat, longitude: lng } });
+        setArea(resolved.area);
+        setCity(resolved.city);
         onUpdateUser({
           ...user,
-          locationArea: resolvedArea,
-          defaultLocality: resolvedArea,
-          city: 'Jaipur',
+          locationArea: resolved.area,
+          defaultLocality: resolved.area,
+          city: resolved.city,
         });
-        setGpsStatusMsg(`GPS fix locked: ${resolvedArea}, Jaipur (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
-        showToast(`Location updated to ${resolvedArea} via GPS`);
+        setGpsStatusMsg(
+          `${resolved.note} (${lat.toFixed(4)}, ${lng.toFixed(4)})`
+        );
+        showToast(`Location updated to ${resolved.area} via GPS`);
       } else {
+        // Keep the classified, actionable reason instead of one catch-all line.
+        setGpsStatusMsg(result.message);
         if (onOpenLocationModal) {
           onOpenLocationModal();
         } else {
-          setGpsStatusMsg('GPS fix timed out. Please select an area manually.');
-          showToast('GPS fix timed out. You can choose your area below.');
+          showToast('Could not use GPS. You can choose your area below.');
         }
       }
     } catch {
@@ -542,6 +575,79 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   <span>{gpsStatusMsg}</span>
                 </p>
               )}
+            </div>
+
+            {/* Google Maps grounding */}
+            <div
+              id="settings-maps-grounding"
+              className="pt-3 mt-1 border-t border-outline-variant/30 space-y-3"
+            >
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-[18px] text-primary">map</span>
+                <h3 className="text-[13px] font-bold text-on-surface">Maps grounding</h3>
+              </div>
+
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[13px] font-semibold text-on-surface">
+                    Google Maps grounded results
+                  </p>
+                  <p className="text-[11px] text-on-surface-variant leading-snug">
+                    {groundingCapability.groundedResults.reason}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  id="toggle-settings-grounded-results"
+                  role="switch"
+                  aria-checked={mapsGrounding.groundedResults}
+                  onClick={() => handleToggleGrounding('groundedResults')}
+                  className={`relative w-12 h-7 rounded-full transition-colors shrink-0 cursor-pointer ${
+                    mapsGrounding.groundedResults ? 'bg-primary' : 'bg-outline-variant'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-sm transition-all ${
+                      mapsGrounding.groundedResults ? 'left-6' : 'left-1'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[13px] font-semibold text-on-surface">AI Maps grounding</p>
+                  <p
+                    id="settings-ai-grounding-status"
+                    className="text-[11px] text-on-surface-variant leading-snug"
+                  >
+                    {groundingCapability.aiGrounding.reason}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  id="toggle-settings-ai-grounding"
+                  role="switch"
+                  aria-checked={mapsGrounding.aiGrounding && groundingCapability.aiGrounding.available}
+                  disabled={!groundingCapability.aiGrounding.available}
+                  onClick={() => handleToggleGrounding('aiGrounding')}
+                  className={`relative w-12 h-7 rounded-full transition-colors shrink-0 ${
+                    !groundingCapability.aiGrounding.available
+                      ? 'bg-outline-variant/60 cursor-not-allowed'
+                      : mapsGrounding.aiGrounding
+                        ? 'bg-nexora-pink cursor-pointer'
+                        : 'bg-outline-variant cursor-pointer'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-sm transition-all ${
+                      mapsGrounding.aiGrounding && groundingCapability.aiGrounding.available
+                        ? 'left-6'
+                        : 'left-1'
+                    }`}
+                  />
+                </button>
+              </div>
             </div>
           </div>
         </section>

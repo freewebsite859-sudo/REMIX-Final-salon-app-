@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Salon } from '../types';
+import { groundSalon } from '../lib/mapsGrounding';
 
 interface StaticMapPreviewProps {
   salon: Salon;
@@ -21,18 +22,11 @@ export const StaticMapPreview: React.FC<StaticMapPreviewProps> = ({
 }) => {
   const [isCopied, setIsCopied] = useState(false);
   const { latitude, longitude } = salon.location;
-  const hasCoordinates =
-    Number.isFinite(latitude) &&
-    Number.isFinite(longitude) &&
-    latitude >= -90 &&
-    latitude <= 90 &&
-    longitude >= -180 &&
-    longitude <= 180;
-
-  const mapsUrl = salon.location.mapsUrl ||
-    (hasCoordinates
-      ? `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`
-      : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${salon.name} ${salon.location.address}`)}`);
+  // One grounding helper decides everywhere whether a salon's coordinates are
+  // trustworthy, so the badge here and in search can never disagree.
+  const grounding = groundSalon(salon);
+  const hasCoordinates = grounding.hasCoordinates;
+  const mapsUrl = grounding.directionsUrl;
 
   const handleCopyAddress = async () => {
     try {
@@ -66,9 +60,18 @@ export const StaticMapPreview: React.FC<StaticMapPreviewProps> = ({
           <span className="material-symbols-outlined text-[36px] text-primary mb-2">location_on</span>
           <p className="text-[13px] font-bold text-on-surface">Verified map hand-off</p>
           {hasCoordinates ? (
-            <p className="mt-1 text-[11px] font-mono text-on-surface-variant">
-              {latitude.toFixed(6)}, {longitude.toFixed(6)}
-            </p>
+            <>
+              <p className="mt-1 text-[11px] font-mono text-on-surface-variant">
+                {latitude.toFixed(6)}, {longitude.toFixed(6)}
+              </p>
+              <p
+                id="salon-map-grounding-status"
+                data-grounding-status={grounding.status}
+                className="mt-1 text-[10px] font-bold uppercase tracking-wider text-on-surface-variant"
+              >
+                {grounding.label}
+              </p>
+            </>
           ) : (
             <p className="mt-1 text-[11px] text-amber-800">This salon has no valid coordinates yet.</p>
           )}

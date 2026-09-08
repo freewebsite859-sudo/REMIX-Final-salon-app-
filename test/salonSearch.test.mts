@@ -232,6 +232,7 @@ function compactIncludesHaircut(name: string): boolean {
     matchedService: null,
     fromPrice: Math.min(...salon.services.map((s) => s.discountPrice || s.price)),
     score: 0,
+    fuzzy: false,
   }));
 
   const nearest = sortResults(base, 'nearest');
