@@ -22,6 +22,7 @@
     "test:booking-status": "tsx test/bookingStatus.test.mts",
     "test:my-bookings": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/myBookings.test.tsx",
     "test:booking-detail": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/bookingDetail.test.tsx",
+    "test:booking-modal": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/bookingModal.test.tsx",
     "test:rewards": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/rewardsWallet.test.tsx",
     "test:rewards-service": "tsx test/rewardsService.test.mts",
     "test:membership": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/membershipPage.test.tsx",
