@@ -251,7 +251,7 @@ async function testDemoStore() {
   check('demo booking row persisted locally', storedBookings.length === 1);
   check('demo line items persisted locally (one row per service)', storedLines.length === 2);
 
-  const invalid = await createDemoBooking({ ...(request as never), services: [] } as never);
+  const invalid = await createDemoBooking({ ...request, services: [] } as never);
   check('demo store still refuses an empty service list', !invalid.ok, invalid.error);
 }
 

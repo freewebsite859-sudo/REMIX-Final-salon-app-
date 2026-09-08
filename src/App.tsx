@@ -43,6 +43,7 @@ import {
   type BookingCreateRequest,
 } from './lib/bookingContract';
 import { computeBookingTotals } from './lib/bookingCore';
+import { syncBookingRewards } from './lib/rewardsService';
 import { createBooking } from './lib/createBookingClient';
 import { isRealtimeEnabled, subscribeToTable } from './lib/realtimeService';
 import { currentPath, isAuthRoute, isSignupRoute, redirectToApp } from './lib/authRoutes';
@@ -1003,6 +1004,29 @@ export default function App() {
       saveJson(scopedStorageKey(STORAGE_KEYS.profile, userId), user);
     }
   }, [user, userId]);
+
+  /**
+   * Loyalty accrual — the wallet is the ledger, the profile shows the balance.
+   *
+   * Every COMPLETED booking credits floor(bill × 10%) reward points exactly
+   * once (`syncBookingRewards` is idempotent per booking id), and the profile's
+   * `loyaltyPoints` always mirrors the wallet's current balance so the
+   * membership tier, Profile header and Rewards page can never disagree.
+   */
+  useEffect(() => {
+    if (!userId || hydratedUserIdRef.current !== userId) return;
+    const { summary, awarded, pointsAwarded } = syncBookingRewards(userId, appointments);
+    if (awarded.length > 0) {
+      console.info(
+        `[Nexora] Loyalty: credited ${pointsAwarded} points for ${awarded.length} completed booking(s).`
+      );
+    }
+    setUser((prev) =>
+      prev.loyaltyPoints === summary.currentPoints
+        ? prev
+        : { ...prev, loyaltyPoints: summary.currentPoints }
+    );
+  }, [appointments, userId]);
 
   // Handlers
   const handleOpenSalonDetails = (salon: Salon) => {

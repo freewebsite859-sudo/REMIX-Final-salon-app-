@@ -15,10 +15,14 @@
  * - Expired: Not redeemed within the validity window.
  */
 
+import type { Appointment } from '../types';
+import { BOOKING_POINTS_PERCENT, POINTS_EXPIRY_DAYS, bookingRewardPoints } from './engagement';
+
 export type RewardStatus = 'Pending' | 'Approved' | 'Redeemed' | 'Expired';
 
 export type RewardType =
   | 'qr_payment'
+  | 'booking'
   | 'referral'
   | 'redemption'
   | 'expired'
@@ -40,6 +44,10 @@ export interface RewardTransaction {
   friendName?: string; // For referral rewards
   qrTransactionRef?: string; // QR reference code
   qualifyingPaymentMade?: boolean;
+  /** Booking this transaction was earned on / redeemed against. */
+  bookingId?: string;
+  /** Human booking reference (NX-XXXXXXXX) shown on the ledger row. */
+  bookingRef?: string;
 }
 
 export interface RewardWalletSummary {
@@ -47,6 +55,8 @@ export interface RewardWalletSummary {
   lifetimeEarned: number;
   lifetimeRedeemed: number;
   qrPaymentRewards: number;
+  /** Points earned from completed bookings (10% of the paid bill). */
+  bookingRewards: number;
   referralRewards: number;
   expiringPoints: number;
   nextExpiryDate?: string;
@@ -59,6 +69,20 @@ export const MIN_QR_PAYMENT_INR = 100;
 export const QR_CASHBACK_PERCENT = 10; // 10% cashback on qualifying QR payments
 export const REFERRAL_BONUS_POINTS = 150; // Points awarded for friend's qualifying ₹100+ QR payment
 export const POINTS_TO_INR_RATIO = 1; // 1 Point = ₹1 discount at partner shop
+
+/**
+ * Booking loyalty rules (mirrors `src/lib/engagement.ts` and the SQL trigger in
+ * supabase/setup.sql so code, schema and UI cannot drift):
+ *  - Earn: floor(final bill × 10%) once a booking reaches `completed`.
+ *  - A booking under ₹100 earns nothing (same qualifying floor as QR).
+ *  - Awarded points expire 90 days after they are credited.
+ *  - Redeem: points can be spent against a completed booking's balance, never
+ *    more than the bill and never more than 50% of it (no cash withdrawal).
+ */
+export const BOOKING_CASHBACK_PERCENT = BOOKING_POINTS_PERCENT;
+export const MIN_BOOKING_AMOUNT_INR = 100;
+export const MAX_REDEEM_PERCENT_OF_BILL = 50;
+export const REWARD_EXPIRY_DAYS = POINTS_EXPIRY_DAYS;
 
 const STORAGE_KEY_PREFIX = 'nexora-rewards-wallet';
 
@@ -286,6 +310,7 @@ export function calculateWalletSummary(
   let lifetimeEarned = 0;
   let lifetimeRedeemed = 0;
   let qrPaymentRewards = 0;
+  let bookingRewards = 0;
   let referralRewards = 0;
   let pendingPoints = 0;
   let expiredPoints = 0;
@@ -298,6 +323,8 @@ export function calculateWalletSummary(
         lifetimeEarned += tx.points;
         if (tx.type === 'qr_payment') {
           qrPaymentRewards += tx.points;
+        } else if (tx.type === 'booking') {
+          bookingRewards += tx.points;
         } else if (tx.type === 'referral') {
           referralRewards += tx.points;
         } else if (tx.type === 'bonus') {
@@ -329,6 +356,7 @@ export function calculateWalletSummary(
     lifetimeEarned,
     lifetimeRedeemed,
     qrPaymentRewards,
+    bookingRewards,
     referralRewards,
     expiringPoints,
     nextExpiryDate: nextExpiryDate || '30 Sep 2026',
@@ -571,12 +599,351 @@ export function redeemRewardsViaQr(params: {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Booking loyalty — earn on completion, redeem against a completed booking
+// ---------------------------------------------------------------------------
+
+/** Deterministic ids make every booking award/redemption idempotent. */
+export function bookingRewardId(bookingId: string): string {
+  return `rwd-booking-${bookingId}`;
+}
+
+export function bookingRedemptionId(bookingId: string): string {
+  return `rwd-booking-redeem-${bookingId}`;
+}
+
+/** Bill actually used for loyalty math on a booking. */
+export function bookingBillAmount(appointment: Pick<Appointment, 'totalPrice'>): number {
+  const total = Number(appointment?.totalPrice);
+  return Number.isFinite(total) && total > 0 ? Math.round(total) : 0;
+}
+
+/** A booking qualifies for points only when completed and ≥ ₹100. */
+export function isBookingRewardEligible(
+  appointment: Pick<Appointment, 'status' | 'totalPrice'> | null | undefined
+): boolean {
+  if (!appointment) return false;
+  const status = String(appointment.status || '').toLowerCase();
+  if (status !== 'completed') return false;
+  return bookingBillAmount(appointment) >= MIN_BOOKING_AMOUNT_INR;
+}
+
+/** Points a completed booking earns = floor(bill × 10%), 0 below ₹100. */
+export function calculateBookingPoints(totalInr: number): number {
+  const bill = Number(totalInr);
+  if (!Number.isFinite(bill) || bill < MIN_BOOKING_AMOUNT_INR) return 0;
+  return bookingRewardPoints(bill);
+}
+
+/** Points already credited for a booking (0 when it has not been awarded). */
+export function bookingRewardAlreadyAwarded(
+  transactions: RewardTransaction[],
+  bookingId: string
+): RewardTransaction | undefined {
+  const id = bookingRewardId(bookingId);
+  return transactions.find((tx) => tx.id === id || (tx.type === 'booking' && tx.bookingId === bookingId));
+}
+
+function expiryStringFrom(now: Date): string {
+  const expiry = new Date(now);
+  expiry.setDate(expiry.getDate() + REWARD_EXPIRY_DAYS);
+  return formatRewardDate(expiry);
+}
+
+/**
+ * Build (but do not persist) the reward transaction for a completed booking.
+ * Returns null when the booking is not eligible.
+ */
+export function buildBookingRewardTransaction(
+  appointment: Appointment,
+  now: Date = new Date()
+): RewardTransaction | null {
+  if (!isBookingRewardEligible(appointment)) return null;
+  const bill = bookingBillAmount(appointment);
+  const points = calculateBookingPoints(bill);
+  if (points <= 0) return null;
+
+  const serviceNames = (appointment.services || []).map((s) => s.name).filter(Boolean);
+  const serviceLabel =
+    serviceNames.length === 0
+      ? 'salon services'
+      : serviceNames.length <= 2
+        ? serviceNames.join(' + ')
+        : `${serviceNames.slice(0, 2).join(' + ')} +${serviceNames.length - 2} more`;
+
+  return {
+    id: bookingRewardId(appointment.id),
+    type: 'booking',
+    typeLabel: 'Booking Reward',
+    points,
+    date: formatRewardDate(now),
+    createdAt: now.toISOString(),
+    salonName: appointment.salonName || 'Nexora Partner Salon',
+    salonId: appointment.salonId,
+    status: 'Approved',
+    billAmount: bill,
+    description: `${BOOKING_CASHBACK_PERCENT}% loyalty points on ₹${bill} completed booking (${serviceLabel})`,
+    expiresAt: expiryStringFrom(now),
+    bookingId: appointment.id,
+    bookingRef: appointment.bookingRef,
+    qualifyingPaymentMade: true,
+  };
+}
+
+export interface BookingRewardResult {
+  success: boolean;
+  transaction?: RewardTransaction;
+  pointsEarned: number;
+  eligible: boolean;
+  alreadyAwarded: boolean;
+  message: string;
+}
+
+/**
+ * Credit the loyalty points for ONE completed booking.
+ *
+ * Idempotent: calling it twice for the same booking never double-credits
+ * (the transaction id is derived from the booking id).
+ */
+export function addBookingCompletionReward(params: {
+  userId?: string;
+  appointment: Appointment;
+  now?: Date;
+}): BookingRewardResult {
+  const { userId, appointment, now = new Date() } = params;
+
+  if (!appointment?.id) {
+    return {
+      success: false,
+      pointsEarned: 0,
+      eligible: false,
+      alreadyAwarded: false,
+      message: 'A booking record is required to credit loyalty points.',
+    };
+  }
+
+  const stored = getStoredRewardTransactions(userId);
+  const existing = bookingRewardAlreadyAwarded(stored, appointment.id);
+  if (existing) {
+    return {
+      success: false,
+      transaction: existing,
+      pointsEarned: 0,
+      eligible: true,
+      alreadyAwarded: true,
+      message: `Loyalty points for booking ${appointment.bookingRef || appointment.id} were already credited.`,
+    };
+  }
+
+  if (!isBookingRewardEligible(appointment)) {
+    const bill = bookingBillAmount(appointment);
+    return {
+      success: false,
+      pointsEarned: 0,
+      eligible: false,
+      alreadyAwarded: false,
+      message:
+        String(appointment.status || '').toLowerCase() !== 'completed'
+          ? 'Loyalty points are credited only after the appointment is completed at the salon.'
+          : `Bookings under ₹${MIN_BOOKING_AMOUNT_INR} (this one is ₹${bill}) do not earn loyalty points.`,
+    };
+  }
+
+  const tx = buildBookingRewardTransaction(appointment, now);
+  if (!tx) {
+    return {
+      success: false,
+      pointsEarned: 0,
+      eligible: false,
+      alreadyAwarded: false,
+      message: 'This booking does not qualify for loyalty points.',
+    };
+  }
+
+  saveRewardTransactions(userId, [tx, ...stored]);
+
+  return {
+    success: true,
+    transaction: tx,
+    pointsEarned: tx.points,
+    eligible: true,
+    alreadyAwarded: false,
+    message: `Earned ${tx.points} loyalty points for your completed booking at ${tx.salonName}.`,
+  };
+}
+
+export interface BookingRewardSyncResult {
+  transactions: RewardTransaction[];
+  awarded: RewardTransaction[];
+  pointsAwarded: number;
+  summary: RewardWalletSummary;
+}
+
+/**
+ * Reconcile the wallet against the booking history.
+ *
+ * Every completed booking that has not been credited yet gets exactly one
+ * `booking` transaction. Safe to run on every appointments change — already
+ * credited bookings are skipped, so the ledger never double-counts.
+ */
+export function syncBookingRewards(
+  userId: string | undefined,
+  appointments: readonly Appointment[] | null | undefined,
+  now: Date = new Date()
+): BookingRewardSyncResult {
+  const stored = getStoredRewardTransactions(userId);
+  const list = Array.isArray(appointments) ? appointments : [];
+  const awarded: RewardTransaction[] = [];
+  const seen = new Set<string>();
+
+  for (const appointment of list) {
+    if (!appointment?.id || seen.has(appointment.id)) continue;
+    seen.add(appointment.id);
+    if (bookingRewardAlreadyAwarded([...stored, ...awarded], appointment.id)) continue;
+    const tx = buildBookingRewardTransaction(appointment, now);
+    if (tx) awarded.push(tx);
+  }
+
+  const transactions = awarded.length > 0 ? [...awarded, ...stored] : stored;
+  if (awarded.length > 0) {
+    saveRewardTransactions(userId, transactions);
+  }
+
+  return {
+    transactions,
+    awarded,
+    pointsAwarded: awarded.reduce((sum, tx) => sum + tx.points, 0),
+    summary: calculateWalletSummary(transactions),
+  };
+}
+
+/**
+ * Maximum points that may be spent on a bill:
+ * balance-capped and never more than 50% of the bill (house rule so a salon
+ * always receives a real payment — points are a discount, not a withdrawal).
+ */
+export function maxRedeemablePoints(currentPoints: number, billAmount: number): number {
+  const balance = Math.max(0, Math.floor(Number(currentPoints) || 0));
+  const bill = Math.max(0, Math.floor(Number(billAmount) || 0));
+  if (bill < MIN_BOOKING_AMOUNT_INR) return 0;
+  const billCap = Math.floor((bill * MAX_REDEEM_PERCENT_OF_BILL) / 100);
+  return Math.max(0, Math.min(balance, billCap));
+}
+
+export interface BookingRedemptionResult {
+  success: boolean;
+  transaction?: RewardTransaction;
+  error?: string;
+  pointsRedeemed?: number;
+  discountInr?: number;
+  remainingPoints?: number;
+  netPayableInr?: number;
+}
+
+/**
+ * Redeem points against a COMPLETED booking's bill.
+ *
+ * Rules enforced here (never in the UI alone):
+ *  - the booking must be completed and at least ₹100
+ *  - one redemption per booking (idempotent id)
+ *  - points ≤ balance and ≤ 50% of the bill
+ *  - points are a discount on the salon bill; no cash is ever paid out
+ */
+export function redeemPointsForBooking(params: {
+  userId?: string;
+  appointment: Appointment;
+  pointsToRedeem: number;
+  now?: Date;
+}): BookingRedemptionResult {
+  const { userId, appointment, pointsToRedeem, now = new Date() } = params;
+
+  if (!appointment?.id) {
+    return { success: false, error: 'A booking is required to redeem loyalty points.' };
+  }
+
+  const status = String(appointment.status || '').toLowerCase();
+  if (status !== 'completed') {
+    return {
+      success: false,
+      error: 'Points can be redeemed only against a completed appointment.',
+    };
+  }
+
+  const bill = bookingBillAmount(appointment);
+  if (bill < MIN_BOOKING_AMOUNT_INR) {
+    return {
+      success: false,
+      error: `Redemption requires a minimum ₹${MIN_BOOKING_AMOUNT_INR} bill (this booking is ₹${bill}).`,
+    };
+  }
+
+  const points = Math.floor(Number(pointsToRedeem));
+  if (!Number.isFinite(points) || points <= 0) {
+    return { success: false, error: 'Enter a valid number of points to redeem (greater than 0).' };
+  }
+
+  const stored = getStoredRewardTransactions(userId);
+  const redemptionId = bookingRedemptionId(appointment.id);
+  if (stored.some((tx) => tx.id === redemptionId)) {
+    return {
+      success: false,
+      error: `Points were already redeemed against booking ${appointment.bookingRef || appointment.id}.`,
+    };
+  }
+
+  const summary = calculateWalletSummary(stored);
+  if (points > summary.currentPoints) {
+    return {
+      success: false,
+      error: `Insufficient balance. You have ${summary.currentPoints} points available.`,
+    };
+  }
+
+  const cap = maxRedeemablePoints(summary.currentPoints, bill);
+  if (points > cap) {
+    return {
+      success: false,
+      error: `You can redeem up to ${cap} points on this ₹${bill} bill (max ${MAX_REDEEM_PERCENT_OF_BILL}% of the bill).`,
+    };
+  }
+
+  const discountInr = points * POINTS_TO_INR_RATIO;
+  const tx: RewardTransaction = {
+    id: redemptionId,
+    type: 'redemption',
+    typeLabel: 'Booking Redemption',
+    points: -Math.abs(points),
+    date: formatRewardDate(now),
+    createdAt: now.toISOString(),
+    salonName: appointment.salonName || 'Nexora Partner Salon',
+    salonId: appointment.salonId,
+    status: 'Redeemed',
+    billAmount: bill,
+    description: `Redeemed ${points} points (₹${discountInr} off) on booking ${appointment.bookingRef || appointment.id}`,
+    bookingId: appointment.id,
+    bookingRef: appointment.bookingRef,
+    qrTransactionRef: `NX-QR-${Math.floor(10000 + Math.random() * 90000)}`,
+  };
+
+  const updated = [tx, ...stored];
+  saveRewardTransactions(userId, updated);
+
+  return {
+    success: true,
+    transaction: tx,
+    pointsRedeemed: points,
+    discountInr,
+    remainingPoints: calculateWalletSummary(updated).currentPoints,
+    netPayableInr: Math.max(0, bill - discountInr),
+  };
+}
+
 /**
  * Filter and search transactions
  */
 export function filterRewardTransactions(
   transactions: RewardTransaction[],
-  filter: 'all' | 'qr_payment' | 'referral' | 'redeemed' | 'expired' | 'pending',
+  filter: 'all' | 'qr_payment' | 'booking' | 'referral' | 'redeemed' | 'expired' | 'pending',
   searchQuery: string = ''
 ): RewardTransaction[] {
   const query = searchQuery.trim().toLowerCase();
@@ -584,6 +951,7 @@ export function filterRewardTransactions(
   return transactions.filter((tx) => {
     // Category / status filter
     if (filter === 'qr_payment' && tx.type !== 'qr_payment') return false;
+    if (filter === 'booking' && tx.type !== 'booking' && !tx.bookingId) return false;
     if (filter === 'referral' && tx.type !== 'referral') return false;
     if (filter === 'redeemed' && tx.status !== 'Redeemed' && tx.type !== 'redemption') {
       return false;
@@ -601,6 +969,7 @@ export function filterRewardTransactions(
       const matchFriend = (tx.friendName || '').toLowerCase().includes(query);
       const matchStatus = (tx.status || '').toLowerCase().includes(query);
       const matchRef = (tx.qrTransactionRef || '').toLowerCase().includes(query);
+      const matchBooking = (tx.bookingRef || '').toLowerCase().includes(query);
 
       return (
         matchSalon ||
@@ -608,7 +977,8 @@ export function filterRewardTransactions(
         matchDesc ||
         matchFriend ||
         matchStatus ||
-        matchRef
+        matchRef ||
+        matchBooking
       );
     }
 
@@ -676,6 +1046,12 @@ export function getTypeBadgeMeta(type: RewardType): {
         label: 'QR Payment Reward',
         icon: 'qr_code_scanner',
         colorClass: 'text-primary bg-primary/10',
+      };
+    case 'booking':
+      return {
+        label: 'Booking Reward',
+        icon: 'event_available',
+        colorClass: 'text-emerald-700 bg-emerald-500/10',
       };
     case 'referral':
       return {
