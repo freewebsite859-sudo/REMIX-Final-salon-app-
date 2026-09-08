@@ -132,13 +132,10 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
     return filterRewardTransactions(transactions, historyFilter, historySearch);
   }, [transactions, historyFilter, historySearch]);
 
-  // Selected salon for redemption
+  // Selected salon for redemption. No fabricated salon is injected when the
+  // live catalog has no matching partner salon.
   const selectedRedeemSalon = useMemo(() => {
-    return salons.find((s) => s.id === redeemSalonId) || {
-      id: 'salon-1',
-      name: 'Nexora Signature C-Scheme',
-      location: { address: 'C-Scheme, Jaipur' },
-    };
+    return salons.find((s) => s.id === redeemSalonId) || null;
   }, [salons, redeemSalonId]);
 
   // Handle QR Redemption submission
@@ -164,6 +161,11 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
 
     if (pts > bill) {
       setRedeemError(`Cannot redeem more points (${pts}) than the total bill amount (₹${bill}).`);
+      return;
+    }
+
+    if (!isLiveCustomerDataEnabled && !selectedRedeemSalon) {
+      setRedeemError('Select a partner salon to redeem rewards.');
       return;
     }
 
@@ -199,10 +201,12 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
   // Handle QR Payment simulation submission
   const handleExecuteQrPayment = async () => {
     const bill = Number(simBillAmount);
-    const targetSalon = salons.find((s) => s.id === simSalonId) || {
-      id: 'salon-1',
-      name: 'Nexora Signature C-Scheme',
-    };
+    const targetSalon = salons.find((s) => s.id === simSalonId) || null;
+
+    if (!isLiveCustomerDataEnabled && !targetSalon) {
+      showToast('Select a partner salon to simulate a QR payment.', 'error');
+      return;
+    }
 
     const result = isLiveCustomerDataEnabled && userId
       ? {
@@ -435,6 +439,13 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
               type="button"
               id="wallet-redeem-qr-btn"
               onClick={() => {
+                if (isLiveCustomerDataEnabled) {
+                  showToast(
+                    'Reward redemption is confirmed by the backend/QR terminal at the salon. Points are never debited by this app.',
+                    'info'
+                  );
+                  return;
+                }
                 setRedeemError(null);
                 setRedeemSuccessTx(null);
                 setIsRedeemModalOpen(true);
@@ -445,15 +456,17 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
               <span>Redeem via Partner QR</span>
             </button>
 
-            <button
-              type="button"
-              id="wallet-simulate-qr-btn"
-              onClick={() => setIsQrSimulateModalOpen(true)}
-              className="flex-1 py-2.5 px-3.5 bg-white/15 hover:bg-white/25 border border-white/30 text-white text-[13px] font-bold rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
-            >
-              <span className="material-symbols-outlined text-[18px]">add_card</span>
-              <span>Pay via QR & Earn (Min ₹100)</span>
-            </button>
+            {!isLiveCustomerDataEnabled && (
+              <button
+                type="button"
+                id="wallet-simulate-qr-btn"
+                onClick={() => setIsQrSimulateModalOpen(true)}
+                className="flex-1 py-2.5 px-3.5 bg-white/15 hover:bg-white/25 border border-white/30 text-white text-[13px] font-bold rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-[18px]">add_card</span>
+                <span>Pay via QR & Earn (Min ₹100)</span>
+              </button>
+            )}
 
             <button
               type="button"
@@ -573,14 +586,20 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setIsQrSimulateModalOpen(true)}
-            className="w-full py-2 px-3 bg-primary/10 hover:bg-primary/15 text-primary text-[12px] font-bold rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-          >
-            <span className="material-symbols-outlined text-[16px]">qr_code</span>
-            <span>Simulate Partner QR Payment</span>
-          </button>
+          {!isLiveCustomerDataEnabled ? (
+            <button
+              type="button"
+              onClick={() => setIsQrSimulateModalOpen(true)}
+              className="w-full py-2 px-3 bg-primary/10 hover:bg-primary/15 text-primary text-[12px] font-bold rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[16px]">qr_code</span>
+              <span>Simulate Partner QR Payment</span>
+            </button>
+          ) : (
+            <p className="text-[11px] text-on-surface-variant leading-relaxed bg-surface-container-lowest border border-outline-variant/40 rounded-xl p-2.5">
+              QR rewards are credited only after the backend/QR terminal confirms a real payment.
+            </p>
+          )}
         </div>
 
         {/* Referral Rewards Section */}
@@ -694,7 +713,7 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
             </div>
           </div>
 
-          {summary.expiringPoints > 0 && (
+          {summary.expiringPoints > 0 && !isLiveCustomerDataEnabled && (
             <button
               type="button"
               onClick={() => setIsRedeemModalOpen(true)}

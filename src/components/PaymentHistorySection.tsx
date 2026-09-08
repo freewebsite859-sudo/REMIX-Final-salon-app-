@@ -6,6 +6,7 @@ import {
   processAdvancePayment,
 } from '../lib/PaymentService';
 import { PaymentFailureDialog } from './PaymentFailureDialog';
+import { isLiveCustomerDataEnabled } from '../lib/supabase';
 
 interface PaymentHistorySectionProps {
   user: UserProfile;
@@ -40,8 +41,11 @@ export const PaymentHistorySection: React.FC<PaymentHistorySectionProps> = ({
   const [transactionsVersion, setTransactionsVersion] = useState(0);
 
   const transactions = useMemo(() => {
-    // Calling getPaymentHistory reads both stored transactions and appointments
-    return paymentService.getPaymentHistory(appointments);
+    // Live Supabase uses the DB-backed appointments only; local storage is
+    // used for the unconfigured demo preview.
+    return paymentService.getPaymentHistory(appointments, {
+      includeStored: !isLiveCustomerDataEnabled,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appointments, transactionsVersion]);
 
@@ -216,42 +220,46 @@ export const PaymentHistorySection: React.FC<PaymentHistorySectionProps> = ({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap w-full sm:w-auto">
-          {/* Test Failure Dialog Trigger */}
-          <button
-            type="button"
-            id="test-payment-failure-dialog-btn"
-            onClick={() => {
-              setTestFailureReason('Bank authorization timeout: UPI transaction was not approved within 3 minutes.');
-              setShowTestFailureDialog(true);
-            }}
-            className="flex-1 sm:flex-initial px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-700 dark:text-red-300 border border-red-500/30 rounded-xl text-[12px] font-bold shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
-            title="Preview the dedicated Payment Failure & Retry Alert Dialog"
-          >
-            <span className="material-symbols-outlined text-[15px]">error_outline</span>
-            <span>Test Failure Alert</span>
-          </button>
+          {/* Test-only controls are hidden in live Supabase mode. A real
+              payment uses the Razorpay/QR adapter owned by the booking flow. */}
+          {!isLiveCustomerDataEnabled && (
+            <>
+              <button
+                type="button"
+                id="test-payment-failure-dialog-btn"
+                onClick={() => {
+                  setTestFailureReason('Bank authorization timeout: UPI transaction was not approved within 3 minutes.');
+                  setShowTestFailureDialog(true);
+                }}
+                className="flex-1 sm:flex-initial px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-700 dark:text-red-300 border border-red-500/30 rounded-xl text-[12px] font-bold shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+                title="Preview the dedicated Payment Failure & Retry Alert Dialog"
+              >
+                <span className="material-symbols-outlined text-[15px]">error_outline</span>
+                <span>Test Failure Alert</span>
+              </button>
 
-          {/* Live Simulator Test Button */}
-          <button
-            type="button"
-            id="simulate-advance-payment-btn"
-            onClick={handleRunSimulator}
-            disabled={isSimulatingPayment}
-            className="flex-1 sm:flex-initial px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white rounded-xl text-[12px] font-bold shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 shrink-0"
-            title="Simulates 3-second live Razorpay payment processing"
-          >
-            {isSimulatingPayment ? (
-              <>
-                <div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                <span>Simulating ({simulationCountdown}s)...</span>
-              </>
-            ) : (
-              <>
-                <span className="material-symbols-outlined text-[15px]">credit_score</span>
-                <span>Test Payment (3s Simulation)</span>
-              </>
-            )}
-          </button>
+              <button
+                type="button"
+                id="simulate-advance-payment-btn"
+                onClick={handleRunSimulator}
+                disabled={isSimulatingPayment}
+                className="flex-1 sm:flex-initial px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white rounded-xl text-[12px] font-bold shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 shrink-0"
+                title="Simulates 3-second live Razorpay payment processing"
+              >
+                {isSimulatingPayment ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                    <span>Simulating ({simulationCountdown}s)...</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="material-symbols-outlined text-[15px]">credit_score</span>
+                    <span>Test Payment (3s Simulation)</span>
+                  </>
+                )}
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -716,8 +724,9 @@ export const PaymentHistorySection: React.FC<PaymentHistorySectionProps> = ({
         </div>
       )}
 
-      {/* Test / Interactive Payment Failure Alert Dialog */}
-      <PaymentFailureDialog
+      {/* Test / Interactive Payment Failure Alert Dialog (hidden in live mode) */}
+      {!isLiveCustomerDataEnabled && (
+        <PaymentFailureDialog
         isOpen={showTestFailureDialog}
         onClose={() => setShowTestFailureDialog(false)}
         onRetryPayment={async () => {
@@ -772,7 +781,8 @@ export const PaymentHistorySection: React.FC<PaymentHistorySectionProps> = ({
         date="Tomorrow, 2:30 PM"
         time="2:30 PM"
         isRetrying={isRetryingTest}
-      />
+        />
+      )}
     </div>
   );
 };

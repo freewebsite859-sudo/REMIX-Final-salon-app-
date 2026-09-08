@@ -387,10 +387,17 @@ export class PaymentService {
   }
 
   /**
-   * Get complete payment transaction history merged with appointments
+   * Get complete payment transaction history merged with appointments.
+   *
+   * In live Supabase mode `includeStored` is false so a stale local demo ledger
+   * never leaks into the real payment history; the compatible view is built
+   * from the live `appointments` only.
    */
-  public getPaymentHistory(appointments: Appointment[] = []): PaymentTransaction[] {
-    const stored = this.getStoredTransactions();
+  public getPaymentHistory(
+    appointments: Appointment[] = [],
+    options: { includeStored?: boolean } = {}
+  ): PaymentTransaction[] {
+    const stored = options.includeStored === false ? [] : this.getStoredTransactions();
     const storedMap = new Map(stored.map((t) => [t.id, t]));
     const appointmentMap = new Map(stored.map((t) => [t.appointmentId, t]));
 
