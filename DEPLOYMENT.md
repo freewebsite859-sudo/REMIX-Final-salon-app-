@@ -110,23 +110,30 @@ missing. The same detection is also implemented at runtime in
 
 ## 3. Required canonical backend work before release
 
-This checkout contains only the customer-web shell and the `user_locations`
-RLS contract. It does not contain the ecosystem's claimed organization,
-membership, salon catalog, availability, booking, payment-order, or webhook
-migrations/API. Do not mark a deployment production-ready until the existing
-canonical Nexora backend is connected and these contracts are verified:
+This checkout includes the customer-web shell, the location/notification RLS
+contracts, and the server-side booking payment backend
+(`server/payments.ts`). The browser never creates a Razorpay order or claims a
+payment is verified. Before marking a deployment production-ready, confirm the
+existing canonical Supabase catalog is connected and these contracts are
+verified:
 
 - salon/service/location reads come from the canonical catalog;
 - profile → organization membership → salon ownership resolves from Supabase;
 - availability holds and booking mutations are server-side and idempotent;
 - Razorpay order creation, signature verification, webhook reconciliation, and
-  duplicate protection run server-side; and
+  duplicate protection run server-side in `/api/payments/*`; and
 - RLS policies cover every tenant-owned table and reject cross-tenant reads and
   writes.
 
-The booking UI intentionally refuses to create local appointments when that
-adapter is absent. It does not display a static QR code or claim a payment
-succeeded.
+The required server-only payment variables are `RAZORPAY_KEY_ID`,
+`RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`, `SUPABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY` (see `.env.example`). None of the secret values
+may be prefixed with `VITE_`, or they will be inlined in the browser bundle.
+
+The booking UI deliberately shows `payment_service_unavailable` when the
+backend or a required server variable is missing. It never fabricates an order
+id, payment id, or a successful appointment, and it never displays a static QR
+code or claims a payment succeeded from the client.
 
 ## 4. Run live end-to-end verification
 

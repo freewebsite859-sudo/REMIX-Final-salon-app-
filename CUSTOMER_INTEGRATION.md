@@ -117,9 +117,15 @@ mode is not forced) the customer app:
 - Never fabricates "slots today" counts; availability always comes from
   `staff_slots`.
 - Never applies a client-side promo discount. Offer codes are matched against
-  active `offers` rows and passed to the booking service, which is the only
-  discount authority.
-- Hides demo-only payment/reward/wallet simulation and reset controls.
+  active `offers` rows and the secure payment backend is the only discount
+  authority.
+- Never creates or verifies a payment in the browser. Checkout calls
+  `/api/payments/config` → `/api/payments/order` → Razorpay → `/api/payments/verify`;
+  the server creates the pending_payment draft, verifies the Razorpay signature
+  and capture, then confirms the booking and inserts `booking_services`.
+- Hides demo-only payment/reward/wallet simulation and reset controls, and the
+  booking checkout no longer contains fake order/payment id generators or a
+  simulated QR-scan success path.
 - Keeps rewards, QR payments and offer redemptions read-only for the app; the
   backend/QR terminal confirms credits and redemptions.
 

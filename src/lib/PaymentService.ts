@@ -1,12 +1,11 @@
 import {
   getRazorpayKeyId,
   loadRazorpayScript,
-  generateRazorpayPaymentId,
-  generateRazorpayOrderId,
   RazorpayPaymentSuccessResponse,
   RazorpayOptions,
 } from './razorpay';
 import { Salon, SalonService, Stylist, Appointment } from '../types';
+import { isLiveCustomerDataEnabled } from './supabase';
 
 export interface AdvanceCalculation {
   totalAmount: number;
@@ -70,31 +69,6 @@ export interface PaymentTransaction {
 
 const STORAGE_KEY_PAYMENT_HISTORY = 'nexora-payment-history';
 
-/**
- * Simulates a Razorpay checkout process for advance payment.
- * Returns a Promise that resolves with a generated Razorpay payment ID after a 3-second delay,
- * mimicking a successful live transaction.
- *
- * @param amount - The advance amount to process in INR
- * @returns Promise resolving to the payment ID string (e.g., "pay_rzp_...")
- */
-export const processAdvancePayment = async (amount: number): Promise<string> => {
-  return new Promise<string>((resolve, reject) => {
-    if (amount <= 0) {
-      setTimeout(() => {
-        reject(new Error('Invalid advance payment amount. Amount must be greater than 0.'));
-      }, 500);
-      return;
-    }
-
-    // 3-second simulation delay mimicking bank gateway & Razorpay authorization
-    setTimeout(() => {
-      const generatedPaymentId = generateRazorpayPaymentId();
-      resolve(generatedPaymentId);
-    }, 3000);
-  });
-};
-
 export class PaymentService {
   private static instance: PaymentService;
 
@@ -105,13 +79,6 @@ export class PaymentService {
       PaymentService.instance = new PaymentService();
     }
     return PaymentService.instance;
-  }
-
-  /**
-   * Process advance payment with a 3-second simulation delay
-   */
-  public async processAdvancePayment(amount: number): Promise<string> {
-    return processAdvancePayment(amount);
   }
 
   /**
@@ -147,10 +114,16 @@ export class PaymentService {
   /**
    * Launches standard Razorpay Checkout popup if SDK is loaded in window
    */
+  /**
+   * Launch a Razorpay order that was created by the secure backend. The browser
+   * never generates an order id or claims a payment succeeded.
+   */
   public async launchRazorpayStandardCheckout(params: {
     salon: Salon;
     advanceAmount: number;
     totalAmount: number;
+    orderId: string;
+    keyId?: string;
     customer?: PaymentCustomerDetails;
     description?: string;
     onSuccess: (response: RazorpayPaymentSuccessResponse) => void;
@@ -158,34 +131,40 @@ export class PaymentService {
     onDismiss?: () => void;
   }): Promise<boolean> {
     const isLoaded = await loadRazorpayScript();
-    const key = this.getKeyId();
+    const key = params.keyId || this.getKeyId();
 
     if (!isLoaded || typeof window === 'undefined' || !window.Razorpay) {
-      return false; // Fallback to integrated in-app Razorpay modal
+      params.onFailure('Razorpay checkout could not be loaded. No appointment was created.');
+      return false;
+    }
+    if (!key) {
+      params.onFailure('Razorpay key is not configured. No appointment was created.');
+      return false;
+    }
+    if (!params.orderId) {
+      params.onFailure('Payment order was not created by the secure backend. No appointment was created.');
+      return false;
     }
 
     try {
-      const orderId = generateRazorpayOrderId();
       const amountInPaise = Math.round(params.advanceAmount * 100);
-
       const options: RazorpayOptions = {
         key,
         amount: amountInPaise,
         currency: 'INR',
         name: params.salon.name || 'Nexora Salon Experience',
         description: params.description || `25% Advance Booking Deposit for ${params.salon.name}`,
-        image: params.salon.image || 'https://images.unsplash.com/photo-1560066984-138dadb4c035?w=150&auto=format&fit=crop&q=80',
-        order_id: orderId,
+        order_id: params.orderId,
         handler: (response: RazorpayPaymentSuccessResponse) => {
           params.onSuccess({
             ...response,
-            razorpay_order_id: response.razorpay_order_id || orderId,
+            razorpay_order_id: response.razorpay_order_id || params.orderId,
           });
         },
         prefill: {
-          name: params.customer?.name || 'Salon Guest',
-          email: params.customer?.email || 'guest@nexorasalon.com',
-          contact: params.customer?.phone || '9876543210',
+          name: params.customer?.name,
+          email: params.customer?.email,
+          contact: params.customer?.phone,
         },
         notes: {
           salon_id: params.salon.id,
@@ -199,11 +178,7 @@ export class PaymentService {
           color: '#d63384',
         },
         modal: {
-          ondismiss: () => {
-            if (params.onDismiss) {
-              params.onDismiss();
-            }
-          },
+          ondismiss: () => params.onDismiss?.(),
           escape: true,
           backdropclose: false,
         },
@@ -218,6 +193,7 @@ export class PaymentService {
       return true;
     } catch (err: any) {
       console.warn('Standard Razorpay initialization encountered an error:', err);
+      params.onFailure('Razorpay checkout could not be opened. No appointment was created.');
       return false;
     }
   }
@@ -232,7 +208,22 @@ export class PaymentService {
   }): Promise<PaymentVerificationResult> {
     const { paymentResponse, expectedAdvance, totalAmount } = params;
 
-    // Simulate cryptographic verification & ledger recording
+    if (isLiveCustomerDataEnabled) {
+      // Live verification happens only on the secure payment backend using the
+      // Razorpay signature + payment API. This client helper must not claim a
+      // payment is verified.
+      return {
+        verified: false,
+        paymentId: paymentResponse.razorpay_payment_id || '',
+        orderId: paymentResponse.razorpay_order_id,
+        advancePaid: 0,
+        remainingDue: totalAmount,
+        timestamp: new Date().toISOString(),
+        errorMessage: 'Payment verification must be completed by the secure backend. No appointment was created.',
+      };
+    }
+
+    // Demo/QA only.
     await new Promise((resolve) => setTimeout(resolve, 600));
 
     if (!paymentResponse.razorpay_payment_id) {
@@ -251,7 +242,7 @@ export class PaymentService {
     return {
       verified: true,
       paymentId: paymentResponse.razorpay_payment_id,
-      orderId: paymentResponse.razorpay_order_id || generateRazorpayOrderId(),
+      orderId: paymentResponse.razorpay_order_id,
       advancePaid: expectedAdvance,
       remainingDue,
       timestamp: new Date().toISOString(),
@@ -274,6 +265,9 @@ export class PaymentService {
     paymentResponse: RazorpayPaymentSuccessResponse;
     notes?: string;
   }): Appointment {
+    if (isLiveCustomerDataEnabled) {
+      throw new Error('Confirmed appointments are created only by the secure booking backend. No appointment was created.');
+    }
     const {
       salon,
       services,
@@ -325,7 +319,7 @@ export class PaymentService {
 
     // Auto-record transaction in payment history ledger
     this.recordTransaction({
-      id: paymentResponse.razorpay_payment_id || generateRazorpayPaymentId(),
+      id: paymentResponse.razorpay_payment_id || '',
       orderId: paymentResponse.razorpay_order_id,
       bookingId: bookingRef,
       appointmentId,

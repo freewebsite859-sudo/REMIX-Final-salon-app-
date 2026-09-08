@@ -37,11 +37,18 @@ import {
 } from './lib/customerLocation';
 import { isAppointmentUpcoming } from './lib/appointments';
 import {
-  createCustomerBooking,
   fetchCustomerBookings,
   cancelCustomerBooking,
   subscribeToCustomerBookings,
 } from './lib/bookingService';
+import {
+  createPaymentOrder,
+  getPaymentConfig,
+  openRazorpayCheckout,
+  verifyPayment,
+  PaymentFlowError,
+  type PaymentFlowResult,
+} from './lib/paymentClient';
 import { fetchCustomerFavourites, toggleCustomerFavourite } from './lib/favouritesService';
 import { loadRewardWallet } from './lib/rewardsService';
 import { loadMembership } from './lib/membershipService';
@@ -376,6 +383,13 @@ export default function App() {
     time: string;
     notes?: string;
   } | null>(null);
+  /**
+   * Booking draft reference used for safe retries within this session. The
+   * backend reuses the authenticated customer's existing pending draft (for
+   * example NX-JPR-53682) when present; a successful booking clears this so
+   * future bookings get a fresh server-generated reference.
+   */
+  const [paymentDraftRef, setPaymentDraftRef] = useState('');
 
   // Modals state
   const [showAuthScreen, setShowAuthScreen] = useState<boolean>(() => isAuthRoute());
@@ -1143,52 +1157,117 @@ export default function App() {
   };
 
   /**
-   * Transactional booking creation used by the summary/payment screen.
-   * Creates the `bookings` row plus every `booking_services` row, then returns
-   * the refreshed booking so the confirmation ticket comes from the DB.
+   * End-to-end secure booking payment orchestration used by the summary screen:
+   *
+   *   1. GET  /api/payments/config  → public Razorpay key/readiness
+   *   2. POST /api/payments/order   → backend validates slot/catalogue/staff,
+   *      creates/updates the pending_payment draft and the Razorpay order
+   *   3. Browser opens Razorpay checkout with the server-created order id
+   *   4. POST /api/payments/verify  → server verifies signature + capture, then
+   *      confirms the booking and inserts booking_services
+   *
+   * No step in this function creates an appointment or marks payment paid from
+   * the browser; the backend does both only after provider verification.
    */
-  const handlePayDepositBooking = async (request: BookingPaymentRequest): Promise<Appointment> => {
+  const handlePayDepositBooking = async (request: BookingPaymentRequest): Promise<PaymentFlowResult> => {
     if (!userId || !isLiveCustomerDataEnabled) {
-      throw new Error('Online booking is available only when the live Supabase database is configured.');
+      return {
+        state: 'payment_service_unavailable',
+        message: 'Online booking is available only when the live Supabase database is configured.',
+      };
     }
+    if (!session?.access_token) {
+      return { state: 'payment_failed', message: 'Authentication required to start secure payment.' };
+    }
+
     const draft = bookingSummaryDraft;
     const salon = draft?.salon || salons.find((item) => item.id === request.salonId) || null;
-    if (!salon) throw new Error('Salon record not found for booking.');
+    if (!salon) {
+      return { state: 'payment_failed', message: 'Salon record not found for booking.' };
+    }
 
     const selectedIds = new Set(request.serviceIds);
     const services = draft?.services?.length
       ? draft.services.filter((service) => selectedIds.has(service.id))
       : salon.services.filter((service) => selectedIds.has(service.id));
-    if (!services.length) throw new Error('No services selected for booking.');
-
-    const stylist =
-      draft?.stylist ||
-      salon.stylists.find((member) => member.id === request.stylistId) ||
-      null;
-
-    const totalPrice = services.reduce((sum, s) => sum + (s.discountPrice || s.price || 0), 0);
-    const advancePaid = request.amount || Math.round(totalPrice * 0.25);
-    const { appointment, error } = await createCustomerBooking({
-      userId,
-      salonId: salon.id,
-      staffId: stylist?.id || null,
-      date: request.date,
-      time: request.time,
-      services,
-      totalPrice,
-      advancePaid,
-      remainingAmount: Math.max(0, totalPrice - advancePaid),
-      paymentMode: 'advance_25',
-      paymentStatus: 'paid',
-      discountApplied: null,
-      notes: request.notes,
-      couponCode: request.couponCode,
-      paymentMethodUsed: 'qr',
-    });
-    if (error || !appointment) {
-      throw new Error(error || 'Booking could not be created.');
+    if (!services.length) {
+      return { state: 'payment_failed', message: 'No services selected for booking.' };
     }
-    return appointment;
+
+    try {
+      // 1. Non-secret readiness check.
+      const config = await getPaymentConfig();
+      if (!config.configured || !config.keyId) {
+        return {
+          state: 'payment_service_unavailable',
+          message: config.message || 'Secure payment service is not configured. No appointment was created.',
+        };
+      }
+
+      // 2. Server-side order + draft creation.
+      const order = await createPaymentOrder({
+        salonId: salon.id,
+        serviceIds: services.map((service) => service.id),
+        stylistId: draft?.stylist?.id || request.stylistId,
+        date: request.date,
+        time: request.time,
+        amount: request.amount,
+        couponCode: request.couponCode,
+        notes: request.notes,
+        draftBookingRef: paymentDraftRef || undefined,
+      });
+      if (order.state !== 'payment_ready' || !order.orderId || !order.keyId || order.amountPaise == null) {
+        return {
+          state: order.state === 'payment_service_unavailable' ? 'payment_service_unavailable' : 'payment_failed',
+          message: order.message || 'Payment order could not be created. No appointment was created.',
+        };
+      }
+      if (order.draftBookingRef) {
+        setPaymentDraftRef(order.draftBookingRef);
+      }
+
+      // 3. Browser-side checkout with the server order id only.
+      const checkout = await openRazorpayCheckout({
+        keyId: order.keyId,
+        orderId: order.orderId,
+        amountPaise: order.amountPaise,
+        currency: order.currency || 'INR',
+        customerName: user?.name || undefined,
+        customerEmail: user?.email || undefined,
+        customerPhone: user?.phone || undefined,
+        bookingRef: order.draftBookingRef,
+      });
+      if (checkout.action !== 'success' || !checkout.response) {
+        return {
+          state: 'payment_failed',
+          message: checkout.message || 'Payment was cancelled or failed. No appointment was created.',
+        };
+      }
+
+      // 4. Server-side signature + capture verification, then booking creation.
+      const verified = await verifyPayment({
+        razorpayPaymentId: checkout.response.razorpay_payment_id,
+        razorpayOrderId: checkout.response.razorpay_order_id || order.orderId,
+        razorpaySignature: checkout.response.razorpay_signature || '',
+        bookingId: order.bookingId,
+        draftBookingRef: order.draftBookingRef,
+        method: checkout.response.method,
+      });
+      if (verified.state === 'payment_successful' && verified.appointment) {
+        setPaymentDraftRef('');
+        return verified;
+      }
+      return {
+        state: verified.state === 'payment_service_unavailable' ? 'payment_service_unavailable' : 'payment_failed',
+        message: verified.message || 'Payment verification failed. No appointment was created.',
+      };
+    } catch (err) {
+      const unavailable = err instanceof PaymentFlowError && err.state === 'payment_service_unavailable';
+      return {
+        state: unavailable ? 'payment_service_unavailable' : 'payment_failed',
+        message: err instanceof Error ? err.message : 'Payment failed. No appointment was created.',
+      };
+    }
   };
 
   const handleViewAppointments = () => {

@@ -46,34 +46,31 @@ declare global {
 }
 
 const RAZORPAY_STORAGE_KEY = 'nexora-razorpay-key-id';
-export const DEFAULT_RAZORPAY_TEST_KEY = 'rzp_test_NEXORA_SALON_7788';
 
 /**
- * Get active Razorpay Key ID
+ * Optional public Razorpay key id for non-core/demo UI. The live booking flow
+ * always takes the key id from GET /api/payments/config; this is only a
+ * build-time convenience for the unused checkout shell.
  */
 export function getRazorpayKeyId(): string {
-  if (typeof window !== 'undefined') {
-    const customKey = localStorage.getItem(RAZORPAY_STORAGE_KEY);
-    if (customKey && customKey.trim().length > 5) {
-      return customKey.trim();
-    }
-  }
   const envKey = (import.meta as any).env?.VITE_RAZORPAY_KEY_ID;
   if (envKey && typeof envKey === 'string' && envKey.trim().length > 5) {
     return envKey.trim();
   }
-  return DEFAULT_RAZORPAY_TEST_KEY;
+  const stored = typeof window !== 'undefined' ? window.localStorage.getItem(RAZORPAY_STORAGE_KEY) : null;
+  return stored && stored.trim().length > 5 ? stored.trim() : '';
 }
 
 /**
- * Save custom Razorpay Key ID for merchant/user
+ * Save a public Razorpay key id for the unused checkout shell. This is not a
+ * secret and is never required by the live booking flow.
  */
 export function saveRazorpayKeyId(key: string): void {
   if (typeof window !== 'undefined') {
     if (!key.trim()) {
-      localStorage.removeItem(RAZORPAY_STORAGE_KEY);
+      window.localStorage.removeItem(RAZORPAY_STORAGE_KEY);
     } else {
-      localStorage.setItem(RAZORPAY_STORAGE_KEY, key.trim());
+      window.localStorage.setItem(RAZORPAY_STORAGE_KEY, key.trim());
     }
   }
 }
@@ -110,26 +107,6 @@ export function loadRazorpayScript(): Promise<boolean> {
   });
 }
 
-/**
- * Generate a unique Razorpay Payment ID
- */
-export function generateRazorpayPaymentId(prefix = 'pay_'): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let result = prefix;
-  for (let i = 0; i < 14; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
-}
-
-/**
- * Generate a unique Razorpay Order ID
- */
-export function generateRazorpayOrderId(prefix = 'order_'): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let result = prefix;
-  for (let i = 0; i < 14; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
-}
+// Payment identifiers are never fabricated in the browser. Razorpay order and
+// payment ids come from the secure backend order creation and from the Razorpay
+// checkout response, and are verified server-side before a booking is created.

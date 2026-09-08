@@ -5,6 +5,7 @@ import { BookingConfirmationPage } from './BookingConfirmationPage';
 import { fetchActiveOffers } from '../lib/offersService';
 import type { OfferSummary } from '../lib/customerCatalogService';
 import { isLiveCustomerDataEnabled } from '../lib/supabase';
+import { PaymentFlowError, type PaymentFlowResult, type PaymentFlowStatus } from '../lib/paymentClient';
 
 export interface BookingPaymentRequest {
   salonId: string;
@@ -31,7 +32,7 @@ export interface BookingSummaryModalProps {
    * gateway signature, enforce availability/ownership, and return the
    * canonical booking. There is intentionally no browser fallback.
    */
-  onPayDeposit?: (request: BookingPaymentRequest) => Promise<Appointment>;
+  onPayDeposit?: (request: BookingPaymentRequest) => Promise<PaymentFlowResult>;
   onConfirmBooking?: (appointment: Appointment) => void;
   onChangeSalon?: () => void;
   onChangeServices?: () => void;
@@ -133,6 +134,7 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
   const [confirmedBooking, setConfirmedBooking] = useState<Appointment | null>(null);
   const [isEditingNotes, setIsEditingNotes] = useState<boolean>(false);
   const [buttonState, setButtonState] = useState<'idle' | 'loading' | 'success'>('idle');
+  const [paymentState, setPaymentState] = useState<PaymentFlowStatus>('payment_ready');
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [showFailureDialog, setShowFailureDialog] = useState<boolean>(false);
   const [isRetryingPayment, setIsRetryingPayment] = useState<boolean>(false);
@@ -157,6 +159,7 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
     setConfirmedBooking(null);
     setIsEditingNotes(false);
     setButtonState('idle');
+    setPaymentState('payment_ready');
     setPaymentError(null);
     setShowFailureDialog(false);
     setIsRetryingPayment(false);
@@ -243,11 +246,12 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
   const handleConfirm = async () => {
     if (buttonState !== 'idle' || !salon) return;
     setPaymentError(null);
+    setShowFailureDialog(false);
 
     if (!onPayDeposit) {
-      // This build has no Razorpay/order/signature adapter. Do not display a
-      // success state or create a local appointment that the backend does not
-      // know about.
+      // No browser fallback exists. If the secure adapter is missing the user
+      // gets an explicit unavailable state, never a fake success.
+      setPaymentState('payment_service_unavailable');
       const errorMsg = 'Online booking is temporarily unavailable because the secure payment and booking service is not configured. No appointment was created.';
       setPaymentError(errorMsg);
       setShowFailureDialog(true);
@@ -255,8 +259,9 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
     }
 
     setButtonState('loading');
+    setPaymentState('payment_processing');
     try {
-      const appointment = await onPayDeposit({
+      const result = await onPayDeposit({
         salonId: salon.id,
         serviceIds: services.map((service) => service.id),
         stylistId: stylist?.id,
@@ -267,33 +272,38 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
         notes: notes || undefined,
       });
 
-      if (!appointment?.id) {
-        throw new Error('The booking service returned an invalid confirmation. No appointment was created.');
-      }
-      // Accept confirmed or pending — both mean the booking was submitted.
-      const status = (appointment.status || '').toLowerCase();
-      if (status !== 'confirmed' && status !== 'pending' && status !== 'in_progress') {
-        throw new Error('The booking service returned an invalid confirmation. No appointment was created.');
+      if (result.state === 'payment_successful' && result.appointment?.id) {
+        const appointment = result.appointment;
+        // Accept confirmed only after server-side signature verification.
+        const status = (appointment.status || '').toLowerCase();
+        if (status !== 'confirmed' && status !== 'in_progress') {
+          throw new PaymentFlowError('Payment verification did not produce a confirmed booking. No appointment was created.');
+        }
+
+        // The contract returns the booking exactly as the backend persisted it.
+        // The UI may infer downstream delivery state, but the browser never
+        // claims that a WhatsApp message was already sent.
+        setPaymentState('payment_successful');
+        setButtonState('success');
+        setConfirmedBooking(appointment);
+        setIsSuccess(true);
+        setShowFailureDialog(false);
+        onConfirmBooking?.(appointment);
+        return;
       }
 
-      // Ensure WhatsApp status is visible on the confirmation ticket.
-      const enriched: Appointment = {
-        ...appointment,
-        whatsappConfirmationStatus:
-          appointment.whatsappConfirmationStatus ||
-          (status === 'confirmed' ? 'sent' : 'queued'),
-        whatsappSentAt:
-          appointment.whatsappSentAt ||
-          (status === 'confirmed' ? new Date().toISOString() : undefined),
-      };
-
-      setButtonState('success');
-      setConfirmedBooking(enriched);
-      setIsSuccess(true);
-      setShowFailureDialog(false);
-      onConfirmBooking?.(enriched);
+      const unavailable = result.state === 'payment_service_unavailable';
+      setPaymentState(unavailable ? 'payment_service_unavailable' : 'payment_failed');
+      const errorMsg = result.message || (unavailable
+        ? 'Secure payment service is not configured. No appointment was created.'
+        : 'Payment verification failed. No appointment was created.');
+      setPaymentError(errorMsg);
+      setShowFailureDialog(true);
+      setButtonState('idle');
     } catch (err) {
       console.error('[Nexora] Payment/booking request failed:', err);
+      const unavailable = err instanceof PaymentFlowError && err.state === 'payment_service_unavailable';
+      setPaymentState(unavailable ? 'payment_service_unavailable' : 'payment_failed');
       const errorMsg = err instanceof Error
         ? err.message
         : 'Payment verification failed. No appointment was created.';

@@ -176,9 +176,25 @@ create table if not exists public.bookings (
   updated_at       timestamptz not null default now()
 );
 
+-- Non-destructive payment/booking additions. These let an existing deployment
+-- support server-verified Razorpay payments without dropping/recreating the
+-- bookings table.
+alter table public.bookings add column if not exists customer_id uuid references auth.users (id) on delete cascade;
+alter table public.bookings add column if not exists stylist_id text;
+alter table public.bookings add column if not exists razorpay_order_id text;
+alter table public.bookings add column if not exists razorpay_payment_id text;
+alter table public.bookings add column if not exists razorpay_signature text;
+alter table public.bookings add column if not exists payment_method_used text;
+alter table public.bookings add column if not exists payment_verified_at timestamptz;
+alter table public.bookings add column if not exists paid_at timestamptz;
+alter table public.bookings add column if not exists request_metadata jsonb;
+alter table public.bookings add column if not exists payment_valid_until timestamptz;
+
 create index if not exists bookings_user_idx on public.bookings (user_id, created_at desc);
 create index if not exists bookings_salon_idx on public.bookings (salon_id);
 create index if not exists bookings_staff_idx on public.bookings (staff_id);
+create index if not exists bookings_ref_idx on public.bookings (booking_ref, ref_code);
+create index if not exists bookings_order_idx on public.bookings (razorpay_order_id);
 
 create table if not exists public.booking_services (
   id               uuid primary key default gen_random_uuid(),
@@ -195,6 +211,10 @@ create table if not exists public.booking_services (
 );
 
 create index if not exists booking_services_booking_idx on public.booking_services (booking_id);
+-- The trusted payment backend attaches each service exactly once per booking.
+create unique index if not exists booking_services_booking_service_unique
+  on public.booking_services (booking_id, service_id)
+  where service_id is not null;
 
 create table if not exists public.favourites (
   id         uuid primary key default gen_random_uuid(),
@@ -405,12 +425,32 @@ create policy "customer_bookings_select_own"
 drop policy if exists "customer_bookings_insert_own" on public.bookings;
 create policy "customer_bookings_insert_own"
   on public.bookings for insert to authenticated
-  with check (auth.uid() = user_id);
+  with check (
+    auth.uid() = user_id
+    and coalesce(status, 'pending') in ('pending', 'pending_payment')
+    and coalesce(booking_status, 'pending') in ('pending', 'pending_payment')
+    and coalesce(payment_status, 'pending') in ('pending', 'failed')
+    and (advance_paid is null or advance_paid = 0)
+    and (advance_amount is null or advance_amount = 0)
+  );
 
 drop policy if exists "customer_bookings_update_own" on public.bookings;
 create policy "customer_bookings_update_own"
   on public.bookings for update to authenticated
-  using (auth.uid() = user_id);
+  using (auth.uid() = user_id)
+  with check (
+    auth.uid() = user_id
+    and (
+      status = 'cancelled'
+      or (
+        coalesce(status, 'pending') in ('pending', 'pending_payment')
+        and coalesce(booking_status, 'pending') in ('pending', 'pending_payment')
+        and coalesce(payment_status, 'pending') in ('pending', 'failed')
+        and (advance_paid is null or advance_paid = 0)
+        and (advance_amount is null or advance_amount = 0)
+      )
+    )
+  );
 
 drop policy if exists "customer_booking_services_select_own" on public.booking_services;
 create policy "customer_booking_services_select_own"
@@ -419,12 +459,9 @@ create policy "customer_booking_services_select_own"
     exists (select 1 from public.bookings b where b.id = booking_id and b.user_id = auth.uid())
   );
 
+-- Booking service rows are created ONLY by the trusted payment backend after a
+-- verified gateway capture. The customer browser has no insert policy here.
 drop policy if exists "customer_booking_services_insert_own" on public.booking_services;
-create policy "customer_booking_services_insert_own"
-  on public.booking_services for insert to authenticated
-  with check (
-    exists (select 1 from public.bookings b where b.id = booking_id and b.user_id = auth.uid())
-  );
 
 drop policy if exists "customer_favourites_select_own" on public.favourites;
 create policy "customer_favourites_select_own"

@@ -116,12 +116,15 @@ never been applied to a live database. Inspect first; these are non-destructive
 (`create … if not exists`, `drop policy if exists`) but must be reviewed against
 whatever already exists. *Expected:* RPCs callable, RLS rejecting foreign rows.
 
-**B3. Booking and payment backend does not exist.**
-There is no availability hold, no duplicate protection, no server-side order
-creation, and no signature verification. Server routes today are only
-`/api/health`, four `/api/salons/*` AI endpoints, and `/api/notifications/*`.
-A booking must not be confirmable from client state. *Expected:* two concurrent
-clients cannot reserve one slot; a booking is confirmed only after verified payment.
+**B3. Booking and payment backend is server-side in `/api/payments/*`; no**
+**client-side confirmation.** `server/payments.ts` creates the Razorpay order
+from the authenticated customer's Supabase JWT, validates catalogue/slot/amount,
+writes a `pending_payment` draft, verifies the Razorpay signature + capture
+server-side, and only then confirms the booking and inserts `booking_services`.
+It has not yet been exercised against a live Razorpay project, so real
+end-to-end checkout and webhook reconciliation still need a live run. *Expected:*
+two concurrent clients cannot reserve one slot; a booking is confirmed only
+after verified payment.
 
 **B4. Account deletion is not implemented.**
 `App.tsx` `handleDeleteAccount` deliberately returns `false` and logs a warning rather
@@ -175,7 +178,9 @@ and refuses to construct the client.
 | `VITE_NEXORA_SUPPORT_EMAIL` | no | Profile → Support contact; hidden if unset |
 | `GEMINI_API_KEY` | server only | never `VITE_` |
 | `SUPABASE_SERVICE_ROLE_KEY` | server only | never `VITE_` |
-| `RAZORPAY_*` | server only | not yet consumed — see B3 |
+| `RAZORPAY_KEY_ID` | server only | public key id, exposed via `/api/payments/config` |
+| `RAZORPAY_KEY_SECRET` | server only | never `VITE_` |
+| `RAZORPAY_WEBHOOK_SECRET` | server only | never `VITE_` |
 
 `.env` is gitignored. `.env.example` documents every variable.
 

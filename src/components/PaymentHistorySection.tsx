@@ -1,10 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Appointment, UserProfile } from '../types';
-import {
-  paymentService,
-  PaymentTransaction,
-  processAdvancePayment,
-} from '../lib/PaymentService';
+import { paymentService, PaymentTransaction } from '../lib/PaymentService';
 import { PaymentFailureDialog } from './PaymentFailureDialog';
 import { isLiveCustomerDataEnabled } from '../lib/supabase';
 
@@ -24,11 +20,6 @@ export const PaymentHistorySection: React.FC<PaymentHistorySectionProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [selectedReceipt, setSelectedReceipt] = useState<PaymentTransaction | null>(null);
-
-  // Simulation test state for processAdvancePayment
-  const [isSimulatingPayment, setIsSimulatingPayment] = useState(false);
-  const [simulatedPaymentSuccess, setSimulatedPaymentSuccess] = useState<string | null>(null);
-  const [simulationCountdown, setSimulationCountdown] = useState<number>(3);
 
   // Test state for Payment Failure Alert Dialog
   const [showTestFailureDialog, setShowTestFailureDialog] = useState(false);
@@ -104,75 +95,6 @@ export const PaymentHistorySection: React.FC<PaymentHistorySectionProps> = ({
     }
   };
 
-  // Trigger simulated 3-second advance payment test using processAdvancePayment
-  const handleRunSimulator = async () => {
-    if (isSimulatingPayment) return;
-    setIsSimulatingPayment(true);
-    setSimulatedPaymentSuccess(null);
-    setSimulationCountdown(3);
-
-    const timer = setInterval(() => {
-      setSimulationCountdown((prev) => (prev > 1 ? prev - 1 : 1));
-    }, 1000);
-
-    try {
-      const testAmount = 350;
-      // Uses the exact 3-second simulation function
-      const paymentId = await processAdvancePayment(testAmount);
-      clearInterval(timer);
-
-      const simBookingRef = `NX-${Math.floor(10000 + Math.random() * 90000)}`;
-      const simAppointmentId = `apt-sim-${Date.now()}`;
-      const nowIso = new Date().toISOString();
-
-      const newTx: PaymentTransaction = {
-        id: paymentId,
-        orderId: `order_sim_${Date.now()}`,
-        bookingId: simBookingRef,
-        appointmentId: simAppointmentId,
-        salonId: 'salon-1',
-        salonName: 'Scissors & Shears Salon',
-        salonImage:
-          'https://images.unsplash.com/photo-1560066984-138dadb4c035?auto=format&fit=crop&w=600&q=80',
-        salonAddress: 'Plot 42, Madhyam Marg, Mansarovar, Jaipur',
-        salonPhone: '+91 141 278 9901',
-        serviceNames: ['Signature Hair Cut & Wash', 'Express Hair Spa'],
-        stylistName: 'Aarav Sharma',
-        amount: testAmount,
-        totalBill: 1400,
-        remainingDue: 1050,
-        paymentMethod: 'upi',
-        status: 'successful',
-        date: new Date().toLocaleDateString('en-US', {
-          day: 'numeric',
-          month: 'short',
-          year: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-        }),
-        appointmentDate: nowIso.split('T')[0],
-        appointmentTime: '4:00 PM',
-        createdAt: nowIso,
-        notes: 'Simulated live advance payment via PaymentService',
-      };
-
-      paymentService.recordTransaction(newTx);
-      setTransactionsVersion((v) => v + 1);
-      setIsSimulatingPayment(false);
-      setSimulatedPaymentSuccess(
-        `Advance of ₹${testAmount} paid successfully! Payment ID: ${paymentId} (Booking ID: ${simBookingRef})`
-      );
-
-      setTimeout(() => {
-        setSimulatedPaymentSuccess(null);
-      }, 5000);
-    } catch (err: any) {
-      clearInterval(timer);
-      setIsSimulatingPayment(false);
-      alert(err?.message || 'Payment simulation failed');
-    }
-  };
-
   // WhatsApp share receipt
   const handleShareWhatsApp = (tx: PaymentTransaction) => {
     const text = encodeURIComponent(
@@ -237,50 +159,10 @@ export const PaymentHistorySection: React.FC<PaymentHistorySectionProps> = ({
                 <span className="material-symbols-outlined text-[15px]">error_outline</span>
                 <span>Test Failure Alert</span>
               </button>
-
-              <button
-                type="button"
-                id="simulate-advance-payment-btn"
-                onClick={handleRunSimulator}
-                disabled={isSimulatingPayment}
-                className="flex-1 sm:flex-initial px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white rounded-xl text-[12px] font-bold shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 shrink-0"
-                title="Simulates 3-second live Razorpay payment processing"
-              >
-                {isSimulatingPayment ? (
-                  <>
-                    <div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                    <span>Simulating ({simulationCountdown}s)...</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="material-symbols-outlined text-[15px]">credit_score</span>
-                    <span>Test Payment (3s Simulation)</span>
-                  </>
-                )}
-              </button>
             </>
           )}
         </div>
       </div>
-
-      {/* Simulation Feedback Alert */}
-      {simulatedPaymentSuccess && (
-        <div className="p-3 mb-4 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-900 dark:text-emerald-100 flex items-center justify-between gap-2 text-[12px] animate-in fade-in slide-in-from-top-2 duration-200">
-          <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-[18px] text-emerald-600">
-              check_circle
-            </span>
-            <span className="font-semibold">{simulatedPaymentSuccess}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setSimulatedPaymentSuccess(null)}
-            className="text-emerald-700 hover:text-emerald-900 text-[14px] cursor-pointer"
-          >
-            ✕
-          </button>
-        </div>
-      )}
 
       {/* ========================================================================= */}
       {/* FINANCIAL METRICS SUMMARY STRIP                                            */}
@@ -729,11 +611,13 @@ export const PaymentHistorySection: React.FC<PaymentHistorySectionProps> = ({
         <PaymentFailureDialog
         isOpen={showTestFailureDialog}
         onClose={() => setShowTestFailureDialog(false)}
-        onRetryPayment={async () => {
+        onRetryPayment={() => {
+          // The failure/retry dialog is a preview of the live error state. In
+          // the real flow the customer returns to the secure checkout; this
+          // demo never fabricates a successful payment.
           setIsRetryingTest(true);
           setShowTestFailureDialog(false);
           setIsRetryingTest(false);
-          await handleRunSimulator();
         }}
         errorMessage={testFailureReason}
         salon={{
