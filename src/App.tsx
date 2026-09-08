@@ -21,7 +21,7 @@ import { BookingModal } from './components/BookingModal';
 import { SalonDetailModal } from './components/SalonDetailModal';
 import { NotificationsModal } from './components/NotificationsModal';
 import { ChooseProfessionalScreen } from './components/ChooseProfessionalScreen';
-import { BookingSummaryModal } from './components/BookingSummaryModal';
+import { BookingSummaryModal, type BookingPaymentRequest } from './components/BookingSummaryModal';
 import { AuthPage } from './components/auth/AuthPage';
 import { PasswordUpdatePage } from './components/auth/PasswordUpdatePage';
 import { isSupabaseConfigured, getSupabaseConfigStatus } from './lib/supabase';
@@ -36,6 +36,13 @@ import {
   type CustomerLocationPreference,
 } from './lib/customerLocation';
 import { isAppointmentUpcoming } from './lib/appointments';
+import {
+  buildBookingMetadataServices,
+  toBookingSalonSnapshot,
+  toBookingStylistSnapshot,
+  type BookingCreateRequest,
+} from './lib/bookingContract';
+import { createBooking } from './lib/createBookingClient';
 import { currentPath, isAuthRoute, isSignupRoute, redirectToApp } from './lib/authRoutes';
 import {
   CUSTOMER_BOOKINGS,
@@ -1020,6 +1027,44 @@ export default function App() {
     handleOpenBooking(salon, appointment.services[0], appointment.stylist, appointment.services);
   };
 
+  /**
+   * Server-side booking creation used as BookingSummaryModal.onPayDeposit.
+   *
+   * Every appointment is created by the Node booking service
+   * (server/bookings.ts → POST /api/bookings) which validates the line items,
+   * recomputes totals and persists `metadata.services[]` + booking_services
+   * rows. The browser never fabricates an appointment: when the service is not
+   * configured the request is forwarded anyway so the modal surfaces the
+   * server's honest 503 instead of inventing a local success state.
+   */
+  const handleServerBooking = useCallback(
+    async (request: BookingPaymentRequest): Promise<Appointment> => {
+      const body: BookingCreateRequest = {
+        salon: toBookingSalonSnapshot(bookingSummaryDraft?.salon ?? null),
+        services: buildBookingMetadataServices(bookingSummaryDraft?.services ?? []),
+        stylist: toBookingStylistSnapshot(bookingSummaryDraft?.stylist ?? null),
+        customer: {
+          ...(userId ? { id: userId } : {}),
+          ...(session?.user?.email ? { email: session.user.email } : {}),
+          ...(session?.user?.phone ? { phone: session.user.phone } : {}),
+        },
+        date: request.date,
+        time: request.time,
+        amount: request.amount,
+        ...(request.couponCode ? { couponCode: request.couponCode } : {}),
+        ...(request.discountAmount !== undefined ? { discountAmount: request.discountAmount } : {}),
+        notes: request.notes,
+      };
+
+      const result = await createBooking(body);
+      if (!result.ok || !result.appointment) {
+        throw new Error(result.error || 'Booking service returned no appointment.');
+      }
+      return result.appointment;
+    },
+    [bookingSummaryDraft, userId, session]
+  );
+
   const handleConfirmBooking = (newAppointment: Appointment) => {
     // The UI may receive a booking only from a future server-side payment
     // adapter. Keep the guard here as a second line of defence; appointment
@@ -1638,6 +1683,7 @@ export default function App() {
         time={bookingSummaryDraft?.time || '2:30 PM'}
         specialNotes={bookingSummaryDraft?.notes || ''}
         onConfirmBooking={handleConfirmBooking}
+        onPayDeposit={handleServerBooking}
         onViewAppointments={() => {
           setIsBookingConfirmationScreen(false);
           handleViewAppointments();

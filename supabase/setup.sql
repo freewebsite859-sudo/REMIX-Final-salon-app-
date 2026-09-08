@@ -475,3 +475,128 @@ revoke all on public.user_locations from anon;
 
 create index if not exists user_locations_updated_at_idx
   on public.user_locations (updated_at desc);
+
+-- ============================================================================
+-- NEXORA BOOKINGS — multi-service appointment persistence (reference DDL)
+-- ============================================================================
+-- Backed by `server/bookings.ts` (service-role, /api/bookings). Two tables:
+--
+--   bookings           — one row per appointment; `metadata` jsonb always
+--                        carries { services: [...] } so single-service AND
+--                        multi-service bookings share one clean shape and no
+--                        schema change is needed when a booking grows lines.
+--   booking_services   — one normalized child row per line item (pricing,
+--                        durations, category, ordering) for reporting.
+--
+-- All bookings are written server-side with the service_role key (bypasses
+-- RLS). No customer RLS policies are created here on purpose: browser clients
+-- must never insert directly into bookings/booking_services.
+-- ============================================================================
+
+create table if not exists public.bookings (
+  id               uuid primary key,
+  booking_ref      text not null unique check (booking_ref <> ''),
+  user_id          uuid references auth.users (id) on delete set null,
+  customer         jsonb,
+  salon_id         text not null,
+  salon_snapshot   jsonb not null default '{}'::jsonb,
+  stylist_snapshot jsonb,
+  slot_date        date not null,
+  slot_time        text not null check (slot_time ~* '^([01]?\d|2[0-3]):[0-5]\d( ?[AP]M)?$'),
+  status           text not null default 'pending'
+                   check (status in ('pending', 'confirmed', 'completed', 'cancelled', 'no_show', 'in_progress')),
+  subtotal         numeric(10,2) not null check (subtotal >= 0),
+  discount_amount  numeric(10,2) not null default 0 check (discount_amount >= 0),
+  total_amount     numeric(10,2) not null check (total_amount >= 0),
+  advance_amount   numeric(10,2) not null default 0 check (advance_amount >= 0),
+  currency         text not null default 'INR' check (currency = 'INR'),
+  payment_mode     text not null default 'advance_25'
+                   check (payment_mode in ('advance_25', 'full', 'pay_at_salon')),
+  payment_status   text not null default 'pending'
+                   check (payment_status in ('paid', 'pending', 'failed')),
+  coupon_code      text,
+  notes            text,
+  metadata         jsonb not null default '{"services":[]}'::jsonb
+                   check (jsonb_typeof(metadata) = 'object'),
+  created_at       timestamptz not null default now(),
+  updated_at       timestamptz not null default now()
+);
+
+create table if not exists public.booking_services (
+  booking_id       uuid not null references public.bookings (id) on delete cascade,
+  salon_id         text not null,
+  service_id       text not null,
+  service_name     text not null check (service_name <> ''),
+  category         text,
+  list_price       numeric(10,2) not null check (list_price >= 0),
+  unit_price       numeric(10,2) not null check (unit_price >= 0),
+  duration_minutes integer not null check (duration_minutes between 1 and 1440),
+  position         integer not null default 0,
+  primary key (booking_id, position)
+);
+
+create index if not exists bookings_user_created_idx
+  on public.bookings (user_id, created_at desc);
+create index if not exists booking_services_service_idx
+  on public.booking_services (service_id);
+
+-- Gate: every booking must carry at least one service line in metadata.
+create or replace function public.booking_metadata_has_services()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+begin
+  if not (
+    jsonb_typeof(new.metadata) = 'object'
+    and jsonb_typeof(new.metadata -> 'services') = 'array'
+    and jsonb_array_length(new.metadata -> 'services') > 0
+  ) then
+    raise exception 'bookings.metadata must contain a non-empty services array';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists bookings_metadata_has_services_trigger on public.bookings;
+create trigger bookings_metadata_has_services_trigger
+  before insert or update on public.bookings
+  for each row execute function public.booking_metadata_has_services();
+
+-- Gate: DB-side per-line price/duration must match the JSON metadata lines.
+create or replace function public.booking_lines_match_metadata()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  meta_lines jsonb := coalesce(new.metadata -> 'services', '[]'::jsonb);
+  expected int;
+  i int := 0;
+  line jsonb;
+begin
+  expected := jsonb_array_length(meta_lines);
+  if expected <> (select count(*) from public.booking_services where booking_id = new.id) then
+    raise exception 'booking_services row count does not match metadata.services';
+  end if;
+  while i < expected loop
+    line := meta_lines -> i;
+    if not exists (
+      select 1 from public.booking_services
+      where booking_id = new.id
+        and position = i
+        and service_id = coalesce(line ->> 'id', '')
+        and duration_minutes = coalesce((line ->> 'durationMinutes')::int, -1)
+    ) then
+      raise exception 'booking_services line % does not match metadata.services[%]', i, i;
+    end if;
+    i := i + 1;
+  end loop;
+  return new;
+end;
+$$;
+
+drop trigger if exists bookings_lines_match_metadata_trigger on public.bookings;
+create trigger bookings_lines_match_metadata_trigger
+  after insert or update on public.bookings
+  for each row execute function public.booking_lines_match_metadata();

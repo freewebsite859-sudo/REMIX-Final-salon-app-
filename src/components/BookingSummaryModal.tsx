@@ -11,6 +11,10 @@ export interface BookingPaymentRequest {
   time: string;
   amount: number;
   couponCode?: string;
+  /** Promo discount already applied to the subtotal (INR) so the booking
+   *  service can recompute and verify `amount` == 25% of the discounted
+   *  total without re-implementing coupon logic. */
+  discountAmount?: number;
   notes?: string;
 }
 
@@ -240,6 +244,7 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
         time,
         amount: advanceAmount,
         couponCode: couponCode.trim() || undefined,
+        discountAmount: discountAmount > 0 ? discountAmount : undefined,
         notes: notes || undefined,
       });
 
