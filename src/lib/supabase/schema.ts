@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { supabase, isRealSupabaseConfigured, isSupabaseConfigured } from './client';
+import { supabase, isRealSupabaseConfigured } from './client';
 import {
   CUSTOMER_APP_TABLES,
   CUSTOMER_APP_TABLE_COUNT,
@@ -67,7 +67,7 @@ export async function checkTable(client: SupabaseClient, table: string) {
 export async function detectSalonOSSchema(
   client: SupabaseClient | null = supabase
 ): Promise<SalonOSSchemaReport> {
-  if (!client || !isSupabaseConfigured) {
+  if (!client || !isRealSupabaseConfigured) {
     return {
       configured: false,
       checked: false,
