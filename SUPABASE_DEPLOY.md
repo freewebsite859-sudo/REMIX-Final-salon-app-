@@ -12,13 +12,15 @@ Repo me ye SQL files hain — koi bhi file kisi doosri file ko include nahi kart
 
 | # | File (repo path) | Kya karti hai | Kab chalani hai |
 |---|---|---|---|
-| 1 | `supabase/setup.sql` | **Poora baseline schema** — 14 tables (`profiles`, `bookings`, `booking_services`, `rewards`, `qr_check_ins`, `user_qr_codes`, `referrals`, `user_memberships`, `membership_tiers`, `notifications`*, `user_locations`*, waghera) + 16 RLS policies | **Sirf tab** jab live project bilkul fresh/khaali ho. Existing project par mat chalana (baseline already maujood hai) |
-| 2 | `supabase/migrations/20260908123000_complete_rewards_qr_referrals_backend.sql` | **Is session ki main deliverable.** 6 tables: `loyalty_config`, `loyalty_tiers`, `loyalty_point_transactions`, `reward_wallets`, `customer_qr_payments` create/repair karti hai + `referrals` upgrade karti hai. Backfill legacy data, RLS (4 policies/table), grants, triggers, realtime — sab isi ek file me | **Har project par — yaani aapka main deploy.** Idempotent hai, repeat kar sakte hain |
-| 3 | `supabase/policies/notifications.sql`, `supabase/policies/user_locations.sql` | Earlier stages ke reference snippets (in tables/policies ki documentation) | Inka content `setup.sql` me already included hai — **skip karein** unless wo tables policy-less exist karti hon |
+| ★ | `supabase/consolidated_cloud_sync.sql` | **CONSOLIDATED one-shot sync file** — Section A (`setup.sql` baseline) + Section B (rewards/QR/referrals migration) + Section C (read-only verification) ek hi transaction me | **Recommended** for Dashboard SQL Editor: fresh project **aur** already-running project dono par safe (idempotent) |
+| 1 | `supabase/setup.sql` | **Poora baseline schema** — 14 tables (`profiles`, `bookings`, `booking_services`, `rewards`, `qr_check_ins`, `user_qr_codes`, `referrals`, `user_memberships`, `membership_tiers`, `notifications`, `user_locations`, waghera) + 16 RLS policies + functions/triggers | Already `consolidated_cloud_sync.sql` me included — alag se sirf tab chalao agar sirf baseline chahiye |
+| 2 | `supabase/migrations/20260908123000_complete_rewards_qr_referrals_backend.sql` | Rewards/QR/referrals backend migration — 5 nayi tables + `referrals` upgrade, backfill, RLS, grants, triggers, realtime | Already `consolidated_cloud_sync.sql` me included — ya `supabase db push` ke liye migration folder me yehi file use hoti hai |
+| 3 | `supabase/policies/notifications.sql`, `supabase/policies/user_locations.sql` | Reference snippets (in tables/policies ki documentation) | Inka content `setup.sql` me already included hai — **skip** |
 
 **Rule of thumb:**
-- Project **pehle se data ke saath live hai** → sirf **file #2** deploy karo.
-- Project **bilkul naya** hai → pehle `setup.sql`, phir file #2 (isi order me).
+- SQL Editor me deploy karna hai → **`supabase/consolidated_cloud_sync.sql`** paste karo (ek hi baar, dono sections ke saath — fresh ya existing project, dono safe).
+- CLI `supabase db push` use karna hai → migration folder wali file (`20260908123000_*.sql`) push hoti hai (baseline already live hai to uski zaroorat nahi; naye project par pehle `setup.sql` push/apply karo).
+- Project **bilkul naya** hai → consolidated file poori chalao (Section A baseline bana degi, Section B uske upar migrate karegi).
 
 > ⚠️ File #2 ke backfill statements legacy tables (`rewards`, `qr_check_ins`, `user_qr_codes`, `user_memberships`, `membership_tiers`) ko directly read karte hain. Agar wo tables nahi hongi to error aayega — isliye upar wala rule. Niche **Pre-flight check** (section 2) dekho.
 
@@ -43,12 +45,12 @@ order by table_name;
 
 ## 3. File ka content kahaan se copy karein
 
-- Repo me (agar ye repo aapke machine par hai):
+- **SQL Editor ke liye (recommended):** repo → `supabase/consolidated_cloud_sync.sql` — poora content copy karo:
   ```bash
-  cat supabase/migrations/20260908123000_complete_rewards_qr_referrals_backend.sql
-  # ya browser me kholo aur Ctrl+A / Cmd+A karke copy karo
+  cat supabase/consolidated_cloud_sync.sql
+  # ya browser me kholo (GitHub: Raw button) → Ctrl+A / Cmd+A → Copy
   ```
-- GitHub par: repo → `supabase/migrations/20260908123000_complete_rewards_qr_referrals_backend.sql` → "Raw" button → Ctrl+A → Copy.
+- Sirf migration (e.g. `supabase db push`/local CLI ke liye): repo → `supabase/migrations/20260908123000_complete_rewards_qr_referrals_backend.sql`
 - **Poora content copy karo** — file ke andar `begin;` … `commit;` transaction hai, isliye **ek saath (single paste)** chalana zaroori hai, statement-by-statement nahi. Agar beech me koi error aaya to transaction poora rollback ho jayega (aadha-dehla apply nahi hoga).
 
 ---

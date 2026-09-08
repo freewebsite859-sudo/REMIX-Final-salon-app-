@@ -925,17 +925,31 @@ $$;
 -- 10. Realtime publication (live salon availability, bookings, rewards…)
 -- ---------------------------------------------------------------------------
 do $$
+declare
+  t text;
+  member_tables text[] := array[
+    'bookings', 'notifications', 'rewards', 'user_qr_codes', 'qr_check_ins',
+    'staff_availability'
+  ];
 begin
   -- Supabase projects ship the `supabase_realtime` publication by default;
   -- if it is absent (custom project), skip with a NOTICE instead of failing.
-  alter publication supabase_realtime add table public.bookings;
-  alter publication supabase_realtime add table public.notifications;
-  alter publication supabase_realtime add table public.rewards;
-  alter publication supabase_realtime add table public.user_qr_codes;
-  alter publication supabase_realtime add table public.qr_check_ins;
-  alter publication supabase_realtime add table public.staff_availability;
-exception when undefined_table then
-  raise notice 'supabase_realtime publication missing; realtime tables not added';
+  -- Each table is added only when it is not already a member, so re-running
+  -- this script (idempotent sync) never trips a duplicate_object error.
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    foreach t in array member_tables loop
+      if not exists (
+        select 1 from pg_publication_tables
+        where pubname = 'supabase_realtime'
+          and schemaname = 'public'
+          and tablename = t
+      ) then
+        execute format('alter publication supabase_realtime add table public.%I', t);
+      end if;
+    end loop;
+  else
+    raise notice 'supabase_realtime publication missing; realtime tables not added';
+  end if;
 end $$;
 
 -- Full replica identity so UPDATE payloads carry the whole row to clients.
