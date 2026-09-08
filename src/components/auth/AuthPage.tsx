@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Mail,
   Lock,
@@ -13,6 +13,7 @@ import {
   Sparkles,
   Settings,
   ShoppingBag,
+  CalendarDays,
 } from 'lucide-react';
 import { NexoraLogo } from './NexoraLogo';
 import { PasswordResetModal } from './PasswordResetModal';
@@ -25,6 +26,12 @@ import {
   CUSTOMER_SIGNUP,
   navigateCustomer,
 } from '../../lib/customerRoutes';
+import {
+  calculateAge,
+  maxDobInputValue,
+  minDobInputValue,
+  validateDateOfBirth,
+} from '../../lib/dobValidation';
 
 interface AuthPageProps {
   onAuthSuccess: (user: Partial<UserProfile> & { role?: UserRole }) => void;
@@ -45,6 +52,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   // Form fields
   const [fullName, setFullName] = useState('');
   const [mobile, setMobile] = useState('');
+  const [dateOfBirth, setDateOfBirth] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -64,6 +72,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   const [fieldErrors, setFieldErrors] = useState<{
     fullName?: string;
     mobile?: string;
+    dateOfBirth?: string;
     email?: string;
     password?: string;
     confirmPassword?: string;
@@ -71,6 +80,14 @@ export const AuthPage: React.FC<AuthPageProps> = ({
 
   // Forgot password modal
   const [isForgotModalOpen, setIsForgotModalOpen] = useState(false);
+
+  // DOB picker bounds (13–120 years old) and live age preview.
+  const dobMax = useMemo(() => maxDobInputValue(), []);
+  const dobMin = useMemo(() => minDobInputValue(), []);
+  const dobAge = useMemo(
+    () => (dateOfBirth ? calculateAge(dateOfBirth) : null),
+    [dateOfBirth]
+  );
 
   // Opening /auth/signup lands directly on the signup tab.
   useEffect(() => {
@@ -119,6 +136,15 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         errors.mobile = 'Mobile number is required.';
       } else if (!/^[0-9+()-\s]{8,15}$/.test(mobile.trim())) {
         errors.mobile = 'Please enter a valid mobile phone number.';
+      }
+
+      // Date of birth is MANDATORY for customers (birthday rewards +
+      // age-restricted services). Optional-but-validated for salon owners.
+      const dobError = validateDateOfBirth(dateOfBirth, {
+        required: selectedRole === 'customer',
+      });
+      if (dobError) {
+        errors.dateOfBirth = dobError;
       }
 
       if (!confirmPassword) {
@@ -203,9 +229,13 @@ export const AuthPage: React.FC<AuthPageProps> = ({
 
         // Load profile and role after successful login
         let userRole: UserRole = 'customer';
+        let profileDob: string | undefined;
         try {
           if (data.user?.id) {
             const { profile } = await fetchUserProfile(data.user.id);
+            if (profile?.date_of_birth) {
+              profileDob = profile.date_of_birth;
+            }
             if (profile?.role) {
               userRole = profile.role;
             } else {
@@ -231,6 +261,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({
           email: data.user?.email || email.trim(),
           name: data.user?.user_metadata?.full_name || email.split('@')[0],
           phone: data.user?.user_metadata?.mobile || '',
+          dateOfBirth:
+            profileDob || data.user?.user_metadata?.date_of_birth || undefined,
           role: userRole,
         });
       } else {
@@ -242,6 +274,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
             data: {
               full_name: fullName.trim(),
               mobile: mobile.trim(),
+              date_of_birth: dateOfBirth || null,
               role: selectedRole,
             },
           },
@@ -266,7 +299,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({
               data.user.id,
               email.trim(),
               selectedRole,
-              fullName.trim()
+              fullName.trim(),
+              { dateOfBirth: dateOfBirth || null }
             );
             if (!result.success) {
               console.warn('[Nexora] Profile creation warning:', result.error);
@@ -290,6 +324,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
             email: data.user?.email || email.trim(),
             name: fullName.trim(),
             phone: mobile.trim(),
+            dateOfBirth: dateOfBirth || undefined,
             role: selectedRole,
           });
         }
@@ -537,6 +572,63 @@ export const AuthPage: React.FC<AuthPageProps> = ({
               {fieldErrors.mobile && (
                 <p className="text-[12px] text-[#b90064] font-medium mt-1">
                   {fieldErrors.mobile}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Sign Up: Date of Birth — MANDATORY for customers */}
+          {authMode === 'signup' && (
+            <div className="animate-in fade-in slide-in-from-top-2 duration-200">
+              <label
+                htmlFor="signup-dob"
+                className="flex items-center gap-1 text-[13px] font-semibold text-[#1c1b1b] mb-1.5"
+              >
+                <span>Date of Birth</span>
+                {selectedRole === 'customer' ? (
+                  <span className="text-[#b90064]" aria-hidden="true">
+                    *
+                  </span>
+                ) : (
+                  <span className="text-[11px] font-normal text-[#594047]/70">(Optional)</span>
+                )}
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[#594047]/70">
+                  <CalendarDays className="w-4 h-4" />
+                </div>
+                <input
+                  id="signup-dob"
+                  type="date"
+                  autoComplete="bday"
+                  required={selectedRole === 'customer'}
+                  aria-required={selectedRole === 'customer'}
+                  aria-invalid={Boolean(fieldErrors.dateOfBirth)}
+                  max={dobMax}
+                  min={dobMin}
+                  value={dateOfBirth}
+                  onChange={(e) => {
+                    setDateOfBirth(e.target.value);
+                    if (fieldErrors.dateOfBirth) {
+                      setFieldErrors({ ...fieldErrors, dateOfBirth: undefined });
+                    }
+                  }}
+                  className={`w-full h-[52px] pl-10 pr-4 bg-white/80 focus:bg-white text-[#1c1b1b] placeholder:text-[#594047]/45 rounded-lg text-[14px] border ${
+                    fieldErrors.dateOfBirth
+                      ? 'border-[#b90064] ring-2 ring-[#b90064]/10'
+                      : 'border-[#e8e8e8]'
+                  } focus:border-[#b90064] focus:ring-4 focus:ring-[#b90064]/10 transition-all outline-none`}
+                />
+              </div>
+              {fieldErrors.dateOfBirth ? (
+                <p className="text-[12px] text-[#b90064] font-medium mt-1">
+                  {fieldErrors.dateOfBirth}
+                </p>
+              ) : (
+                <p className="text-[11px] text-[#594047]/70 mt-1">
+                  {dobAge !== null && dobAge >= 0
+                    ? `Age ${dobAge} — unlocks your birthday rewards every year.`
+                    : 'Required to unlock birthday rewards and age-appropriate services.'}
                 </p>
               )}
             </div>

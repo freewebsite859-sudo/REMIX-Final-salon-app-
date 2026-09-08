@@ -789,6 +789,10 @@ export default function App() {
         sessionUser?.email?.split('@')[0] ||
         '',
       phone: sessionUser?.user_metadata?.mobile || sessionUser?.phone || storedProfile?.phone || '',
+      dateOfBirth:
+        (sessionUser?.user_metadata?.date_of_birth as string | undefined) ||
+        storedProfile?.dateOfBirth ||
+        undefined,
       role: effectiveRole,
       locationArea:
         savedLocation?.area ||
@@ -818,6 +822,9 @@ export default function App() {
           const { profile } = await fetchUserProfile(userId);
           if (profile?.role) {
             setUser(prev => ({ ...prev, role: profile.role }));
+          }
+          if (profile?.date_of_birth) {
+            setUser(prev => ({ ...prev, dateOfBirth: prev.dateOfBirth || profile.date_of_birth! }));
           }
         }
       } catch (err) {
@@ -1238,6 +1245,7 @@ export default function App() {
             name: authData.name || prev.name,
             email: authData.email || prev.email,
             phone: authData.phone || prev.phone,
+            dateOfBirth: authData.dateOfBirth || prev.dateOfBirth,
             role: authData.role || prev.role || 'customer',
           }));
           setAuthInitialMode('login');
