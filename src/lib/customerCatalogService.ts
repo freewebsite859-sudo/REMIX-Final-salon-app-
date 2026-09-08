@@ -275,6 +275,25 @@ function rowsForSalon<T extends object>(rows: T[], salonId: string): T[] {
   });
 }
 
+function isActiveOfferRow(row: unknown): boolean {
+  if (!isRecord(row)) return false;
+  const active = row.is_active ?? row.isActive ?? row.active;
+  if (active === false) return false;
+  const now = Date.now();
+  const starts = pick(row, ['starts_at', 'valid_from', 'start_date']);
+  const ends = pick(row, ['ends_at', 'valid_until', 'end_date']);
+  if (typeof ends === 'string' && ends.trim()) {
+    const end = new Date(ends).getTime();
+    if (Number.isFinite(end) && end < now) return false;
+  }
+  if (row.is_active === true && typeof starts === 'string' && typeof ends === 'string') {
+    const start = new Date(starts).getTime();
+    const end = new Date(ends).getTime();
+    if (Number.isFinite(start) && Number.isFinite(end) && (start > now || end < now)) return false;
+  }
+  return true;
+}
+
 function normalizeSalon(
   row: Record<string, unknown>,
   services: ServiceRow[],
@@ -299,7 +318,7 @@ function normalizeSalon(
     .map((review) => normalizeReview(review as unknown as Record<string, unknown>))
     .filter((r): r is Review => r !== null);
   const salonSlots = rowsForSalon(slots, id);
-  const salonOffers = rowsForSalon(offers, id);
+  const salonOffers = rowsForSalon(offers, id).filter(isActiveOfferRow);
 
   const image = asTrimmedString(pick(row, ['image', 'image_url', 'cover_image', 'logo']));
   const gallery: string[] = asStringArray(pick(row, ['gallery', 'images', 'photos']));

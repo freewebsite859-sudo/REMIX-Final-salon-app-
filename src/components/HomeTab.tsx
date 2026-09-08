@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Salon, Appointment, SalonService, Stylist, UserProfile } from '../types';
 import { AppointmentCountdownBanner, parseAppointmentDateTime } from './AppointmentCountdownBanner';
 import { JAIPUR_AREA_CHIPS } from '../lib/jaipurAreas';
+import { isLiveCustomerDataEnabled } from '../lib/supabase';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -11,6 +12,7 @@ interface HomeTabProps {
   user: UserProfile;
   salons: Salon[];
   currentLocation: string;
+  currentLocationCoords?: { latitude: number; longitude: number } | null;
   upcomingAppointment: Appointment | null;
   savedSalonIds: string[];
   appointments?: Appointment[];
@@ -73,30 +75,47 @@ const QUICK_CATEGORIES: CategoryDef[] = [
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Parse "1.2 km"-style distance strings into numbers for sorting. */
-const distanceKm = (salon: Salon): number => {
+/** Real geospatial distance when both coords are known, else DB distance. */
+const distanceKm = (
+  salon: Salon,
+  origin?: { latitude: number; longitude: number } | null
+): number => {
+  if (origin && Number.isFinite(salon.location.latitude) && Number.isFinite(salon.location.longitude)) {
+    const toRad = (deg: number) => (deg * Math.PI) / 180;
+    const dLat = toRad(salon.location.latitude - origin.latitude);
+    const dLng = toRad(salon.location.longitude - origin.longitude);
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(origin.latitude)) *
+        Math.cos(toRad(salon.location.latitude)) *
+        Math.sin(dLng / 2) ** 2;
+    return 2 * 6371 * Math.asin(Math.sqrt(a));
+  }
   const parsed = parseFloat((salon.distance || '').replace(/[^0-9.]/g, ''));
   return Number.isFinite(parsed) ? parsed : 999;
 };
 
-const minPrice = (salon: Salon): number =>
+const minPrice = (salon: Salon): number | null =>
   !salon.services || salon.services.length === 0
-    ? 399
+    ? null
     : Math.min(...salon.services.map((s) => s.discountPrice || s.price));
 
 const servicePrice = (s: SalonService): number => s.discountPrice || s.price;
 
 const isVerified = (salon: Salon): boolean =>
-  salon.featured === true ||
-  salon.rating >= 4.5 ||
-  (salon.reviewCount || 0) >= 100 ||
-  (salon.amenities || []).some((a) => /verif/i.test(a));
+  typeof salon.isVerified === 'boolean'
+    ? salon.isVerified
+    : salon.featured === true ||
+      salon.rating >= 4.5 ||
+      (salon.reviewCount || 0) >= 100 ||
+      (salon.amenities || []).some((a) => /verif/i.test(a));
 
-/** Rough "slots left today" derived from open status + rating (no inventing real inventory). */
+/** Live slot counts are not exposed by `staff_slots`; never fabricate one. */
 const slotsTodayLabel = (salon: Salon): string | null => {
+  if (isLiveCustomerDataEnabled) return null;
   if (!salon.isOpen) return null;
-  // Deterministic pseudo-count from id so the UI is stable across re-renders
-  // without fabricating a real availability backend.
+  // Deterministic pseudo-count for the offline/demo preview only. Real data
+  // mode always returns null and uses the actual staff_slots in booking.
   let hash = 0;
   for (let i = 0; i < salon.id.length; i++) hash = (hash + salon.id.charCodeAt(i) * (i + 1)) % 97;
   const slots = 3 + (hash % 8); // 3–10
@@ -125,7 +144,8 @@ const salonMatchesText = (salon: Salon, raw: string): boolean => {
 
   if (!textHit) return false;
   if (maxPrice != null && Number.isFinite(maxPrice)) {
-    return minPrice(salon) <= maxPrice;
+    const price = minPrice(salon);
+    return price != null && price <= maxPrice;
   }
   return true;
 };
@@ -249,12 +269,15 @@ const SalonDiscoveryCard: React.FC<{
   onOpen: () => void;
   onBook: () => void;
   onToggleSave: () => void;
+  currentLocationCoords?: { latitude: number; longitude: number } | null;
   badge?: string;
-}> = ({ salon, isSaved, onOpen, onBook, onToggleSave, badge }) => {
+}> = ({ salon, isSaved, onOpen, onBook, onToggleSave, currentLocationCoords, badge }) => {
   const verified = isVerified(salon);
   const slots = slotsTodayLabel(salon);
   const category = salon.categories?.[0] || (salon.gender === 'men' ? 'Barber' : 'Salon');
   const price = minPrice(salon);
+  const km = distanceKm(salon, currentLocationCoords);
+  const distanceLabel = km >= 999 ? salon.distance || '—' : `${km.toFixed(1)} km`;
 
   return (
     <article
@@ -338,13 +361,15 @@ const SalonDiscoveryCard: React.FC<{
           <span className="text-on-surface-variant">·</span>
           <span className="text-on-surface-variant truncate">{salon.location.area}</span>
           <span className="text-on-surface-variant">·</span>
-          <span className="font-semibold text-primary">{salon.distance}</span>
+          <span className="font-semibold text-primary">{distanceLabel}</span>
         </div>
 
         <div className="flex items-center justify-between mt-auto pt-1">
           <div>
             <span className="text-[10px] text-on-surface-variant uppercase font-semibold">From</span>
-            <p className="text-[15px] font-extrabold text-on-surface leading-none">₹{price}</p>
+            <p className="text-[15px] font-extrabold text-on-surface leading-none">
+              {price == null ? '—' : `₹${price}`}
+            </p>
           </div>
           <div className="flex items-center gap-1.5">
             <button
@@ -377,6 +402,7 @@ const SalonRail: React.FC<{
   onOpen: (s: Salon) => void;
   onBook: (s: Salon) => void;
   onToggleSave: (id: string) => void;
+  currentLocationCoords?: { latitude: number; longitude: number } | null;
   badgeFor?: (s: Salon) => string | undefined;
   emptyLabel?: string;
 }> = ({
@@ -387,6 +413,7 @@ const SalonRail: React.FC<{
   onOpen,
   onBook,
   onToggleSave,
+  currentLocationCoords,
   badgeFor,
   emptyLabel = 'No salons in this section yet.',
 }) => (
@@ -407,6 +434,7 @@ const SalonRail: React.FC<{
             onOpen={() => onOpen(salon)}
             onBook={() => onBook(salon)}
             onToggleSave={() => onToggleSave(salon.id)}
+            currentLocationCoords={currentLocationCoords}
             badge={badgeFor?.(salon)}
           />
         ))}
@@ -423,6 +451,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
   user,
   salons,
   currentLocation,
+  currentLocationCoords,
   upcomingAppointment,
   savedSalonIds,
   appointments = [],
@@ -509,7 +538,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
     () =>
       [...filteredSalons]
         .filter((s) => isVerified(s))
-        .sort((a, b) => distanceKm(a) - distanceKm(b) || b.rating - a.rating)
+        .sort((a, b) => distanceKm(a, currentLocationCoords) - distanceKm(b, currentLocationCoords) || b.rating - a.rating)
         .slice(0, 12),
     [filteredSalons]
   );
@@ -517,7 +546,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
   // If filters wipe verified set, fall back to nearest overall so the section isn't empty.
   const nearbyDisplay = nearbyVerified.length
     ? nearbyVerified
-    : [...filteredSalons].sort((a, b) => distanceKm(a) - distanceKm(b)).slice(0, 12);
+    : [...filteredSalons].sort((a, b) => distanceKm(a, currentLocationCoords) - distanceKm(b, currentLocationCoords)).slice(0, 12);
 
   const topRated = useMemo(
     () =>
@@ -584,7 +613,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
       Boolean(user.favoriteStylist);
 
     return scored
-      .sort((a, b) => b.score - a.score || distanceKm(a.salon) - distanceKm(b.salon))
+      .sort((a, b) => b.score - a.score || distanceKm(a.salon, currentLocationCoords) - distanceKm(b.salon, currentLocationCoords))
       .slice(0, 10)
       .map((x) => x.salon)
       .filter((s, _i, arr) => {
@@ -1031,10 +1060,14 @@ export const HomeTab: React.FC<HomeTabProps> = ({
                       <span>·</span>
                       <span>{salon.location.area}</span>
                       <span>·</span>
-                      <span className="text-primary font-semibold">{salon.distance}</span>
+                      <span className="text-primary font-semibold">
+                        {distanceKm(salon, currentLocationCoords) >= 999
+                          ? salon.distance || '—'
+                          : `${distanceKm(salon, currentLocationCoords).toFixed(1)} km`}
+                      </span>
                     </div>
                     <p className="text-[12px] font-bold text-on-surface mt-0.5">
-                      From ₹{minPrice(salon)}
+                      {minPrice(salon) == null ? 'No services listed' : `From ₹${minPrice(salon)}`}
                     </p>
                   </div>
                   <button
@@ -1060,6 +1093,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           subtitle="Sorted by distance · verified partners first"
           salons={nearbyDisplay}
           savedSalonIds={savedSalonIds}
+          currentLocationCoords={currentLocationCoords}
           onOpen={onOpenSalonDetails}
           onBook={onBookSalon}
           onToggleSave={onToggleSaveSalon}
@@ -1076,6 +1110,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           subtitle="Highest-rated salons in your area"
           salons={topRated}
           savedSalonIds={savedSalonIds}
+          currentLocationCoords={currentLocationCoords}
           onOpen={onOpenSalonDetails}
           onBook={onBookSalon}
           onToggleSave={onToggleSaveSalon}
@@ -1089,9 +1124,10 @@ export const HomeTab: React.FC<HomeTabProps> = ({
       {!isSearching && (
         <SalonRail
           title="Trending This Week"
-          subtitle="Based on bookings, reviews, QR payments & repeat visits"
+          subtitle="What's hot in your area right now"
           salons={trending}
           savedSalonIds={savedSalonIds}
+          currentLocationCoords={currentLocationCoords}
           onOpen={onOpenSalonDetails}
           onBook={onBookSalon}
           onToggleSave={onToggleSaveSalon}
@@ -1140,7 +1176,10 @@ export const HomeTab: React.FC<HomeTabProps> = ({
                   at {deal.salon.name}
                 </p>
                 <p className="text-[11px] text-primary font-semibold mt-0.5">
-                  {deal.salon.location.area} · {deal.salon.distance}
+                  {deal.salon.location.area} ·{' '}
+                  {distanceKm(deal.salon, currentLocationCoords) >= 999
+                    ? deal.salon.distance || '—'
+                    : `${distanceKm(deal.salon, currentLocationCoords).toFixed(1)} km`}
                 </p>
               </button>
             ))}
@@ -1154,13 +1193,10 @@ export const HomeTab: React.FC<HomeTabProps> = ({
       {!isSearching && (
         <SalonRail
           title="Recommended For You"
-          subtitle={
-            appointments.length > 0 || (user.preferredServices || []).length > 0
-              ? 'Based on your bookings, favourites and area'
-              : 'Popular salons in Jaipur to get you started'
-          }
+          subtitle="Popular salons in Jaipur to get you started"
           salons={recommended}
           savedSalonIds={savedSalonIds}
+          currentLocationCoords={currentLocationCoords}
           onOpen={onOpenSalonDetails}
           onBook={onBookSalon}
           onToggleSave={onToggleSaveSalon}

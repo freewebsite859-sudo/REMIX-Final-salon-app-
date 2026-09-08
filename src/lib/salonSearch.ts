@@ -69,8 +69,8 @@ export interface SearchResult {
   salon: Salon;
   /** Best matching service when a service/price constraint applied. */
   matchedService: SalonService | null;
-  /** Starting price used for display / sort. */
-  fromPrice: number;
+  /** Starting price used for display / sort. Null when the salon has no services. */
+  fromPrice: number | null;
   score: number;
 }
 
@@ -176,7 +176,37 @@ export const MAX_RECENT_SEARCHES = 8;
 // Helpers
 // ---------------------------------------------------------------------------
 
-export function distanceKm(salon: Salon): number {
+export interface GeoOrigin {
+  latitude: number;
+  longitude: number;
+}
+
+function haversineKm(
+  aLat: number,
+  aLng: number,
+  bLat: number,
+  bLng: number
+): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const lat1 = toRad(aLat);
+  const lat2 = toRad(bLat);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6371 * Math.asin(Math.sqrt(h));
+}
+
+/**
+ * Real distance when both the salon and the caller have coordinates. Falls back
+ * to the DB-provided `distance` string and finally to an unknown-distance
+ * sentinel so results never fabricate a number.
+ */
+export function distanceKm(salon: Salon, origin?: GeoOrigin | null): number {
+  if (origin && Number.isFinite(salon.location.latitude) && Number.isFinite(salon.location.longitude)) {
+    return haversineKm(origin.latitude, origin.longitude, salon.location.latitude, salon.location.longitude);
+  }
   const parsed = parseFloat((salon.distance || '').replace(/[^0-9.]/g, ''));
   return Number.isFinite(parsed) ? parsed : 999;
 }
@@ -185,8 +215,8 @@ export function servicePrice(s: SalonService): number {
   return s.discountPrice && s.discountPrice > 0 ? s.discountPrice : s.price;
 }
 
-export function minSalonPrice(salon: Salon): number {
-  if (!salon.services || salon.services.length === 0) return 399;
+export function minSalonPrice(salon: Salon): number | null {
+  if (!salon.services || salon.services.length === 0) return null;
   return Math.min(...salon.services.map(servicePrice));
 }
 
@@ -687,8 +717,9 @@ export function countActiveFilters(f: SearchFilters): number {
 function passesFilters(
   salon: Salon,
   filters: SearchFilters,
-  textTokens: string[]
-): { ok: boolean; matchedService: SalonService | null; fromPrice: number } {
+  textTokens: string[],
+  origin?: GeoOrigin | null
+): { ok: boolean; matchedService: SalonService | null; fromPrice: number | null } {
   const fromPrice = minSalonPrice(salon);
   let matchedService: SalonService | null = null;
 
@@ -723,7 +754,7 @@ function passesFilters(
   }
 
   // Price constraints — use cheapest matching service when service filter set
-  let pricePoint = fromPrice;
+  let pricePoint: number | null = fromPrice;
   if (matchedService) {
     pricePoint = servicePrice(matchedService);
   } else if (filters.maxPrice != null || filters.minPrice != null) {
@@ -734,23 +765,21 @@ function passesFilters(
       if (filters.minPrice != null && p < filters.minPrice) return false;
       return true;
     });
-    if (inRange.length === 0 && (salon.services || []).length > 0) {
+    if (inRange.length === 0) {
       return { ok: false, matchedService: null, fromPrice };
     }
-    if (inRange.length > 0) {
-      matchedService = inRange.sort((a, b) => servicePrice(a) - servicePrice(b))[0];
-      pricePoint = servicePrice(matchedService);
-    }
+    matchedService = inRange.sort((a, b) => servicePrice(a) - servicePrice(b))[0];
+    pricePoint = servicePrice(matchedService);
   }
 
-  if (filters.maxPrice != null && pricePoint > filters.maxPrice) {
+  if (filters.maxPrice != null && (pricePoint == null || pricePoint > filters.maxPrice)) {
     return { ok: false, matchedService, fromPrice: pricePoint };
   }
-  if (filters.minPrice != null && pricePoint < filters.minPrice) {
+  if (filters.minPrice != null && (pricePoint == null || pricePoint < filters.minPrice)) {
     return { ok: false, matchedService, fromPrice: pricePoint };
   }
 
-  if (filters.maxDistanceKm != null && distanceKm(salon) > filters.maxDistanceKm) {
+  if (filters.maxDistanceKm != null && distanceKm(salon, origin) > filters.maxDistanceKm) {
     return { ok: false, matchedService, fromPrice: pricePoint };
   }
 
@@ -810,7 +839,8 @@ function relevanceScore(
   salon: Salon,
   textTokens: string[],
   filters: SearchFilters,
-  matchedService: SalonService | null
+  matchedService: SalonService | null,
+  origin?: GeoOrigin | null
 ): number {
   let score = salon.rating * 10 + Math.min(30, Math.log10((salon.reviewCount || 0) + 1) * 12);
   if (salon.featured) score += 8;
@@ -826,28 +856,34 @@ function relevanceScore(
   if (matchedService) score += 12;
   if (filters.serviceType && matchedService) score += 6;
   // Closer is better soft boost
-  score += Math.max(0, 15 - distanceKm(salon) * 2);
+  score += Math.max(0, 15 - distanceKm(salon, origin) * 2);
   return score;
 }
 
-export function sortResults(results: SearchResult[], sort: SearchSort): SearchResult[] {
+export function sortResults(
+  results: SearchResult[],
+  sort: SearchSort,
+  origin?: GeoOrigin | null
+): SearchResult[] {
   const list = [...results];
   switch (sort) {
     case 'nearest':
       return list.sort(
-        (a, b) => distanceKm(a.salon) - distanceKm(b.salon) || b.salon.rating - a.salon.rating
+        (a, b) => distanceKm(a.salon, origin) - distanceKm(b.salon, origin) || b.salon.rating - a.salon.rating
       );
     case 'top_rated':
       return list.sort(
         (a, b) =>
           b.salon.rating - a.salon.rating ||
           b.salon.reviewCount - a.salon.reviewCount ||
-          distanceKm(a.salon) - distanceKm(b.salon)
+          distanceKm(a.salon, origin) - distanceKm(b.salon, origin)
       );
     case 'lowest_price':
-      return list.sort(
-        (a, b) => a.fromPrice - b.fromPrice || b.salon.rating - a.salon.rating
-      );
+      return list.sort((a, b) => {
+        const ap = a.fromPrice == null ? Number.MAX_SAFE_INTEGER : a.fromPrice;
+        const bp = b.fromPrice == null ? Number.MAX_SAFE_INTEGER : b.fromPrice;
+        return ap - bp || b.salon.rating - a.salon.rating;
+      });
     case 'most_popular':
       return list.sort(
         (a, b) =>
@@ -860,7 +896,7 @@ export function sortResults(results: SearchResult[], sort: SearchSort): SearchRe
         const ao = a.salon.isOpen ? 0 : 1;
         const bo = b.salon.isOpen ? 0 : 1;
         if (ao !== bo) return ao - bo;
-        return distanceKm(a.salon) - distanceKm(b.salon) || b.salon.rating - a.salon.rating;
+        return distanceKm(a.salon, origin) - distanceKm(b.salon, origin) || b.salon.rating - a.salon.rating;
       });
     default:
       return list.sort((a, b) => b.score - a.score);
@@ -874,7 +910,8 @@ export function searchSalons(
   salons: Salon[],
   query: string,
   uiFilters: SearchFilters = DEFAULT_SEARCH_FILTERS,
-  uiSort: SearchSort | null = null
+  uiSort: SearchSort | null = null,
+  origin?: GeoOrigin | null
 ): {
   results: SearchResult[];
   parsed: ParsedSearchQuery;
@@ -896,18 +933,18 @@ export function searchSalons(
     // Real catalog rows have an explicit `is_active`; never serve an inactive
     // salon in the discovery/search surface.
     if (salon.isActive === false) continue;
-    const { ok, matchedService, fromPrice } = passesFilters(salon, filters, textTokens);
+    const { ok, matchedService, fromPrice } = passesFilters(salon, filters, textTokens, origin);
     if (!ok) continue;
     results.push({
       salon,
       matchedService,
       fromPrice,
-      score: relevanceScore(salon, textTokens, filters, matchedService),
+      score: relevanceScore(salon, textTokens, filters, matchedService, origin),
     });
   }
 
   return {
-    results: sortResults(results, sort),
+    results: sortResults(results, sort, origin),
     parsed,
     filters,
     sort,

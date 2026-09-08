@@ -2,6 +2,9 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { Salon, SalonService, Stylist, Appointment } from '../types';
 import { PaymentFailureDialog } from './PaymentFailureDialog';
 import { BookingConfirmationPage } from './BookingConfirmationPage';
+import { fetchActiveOffers } from '../lib/offersService';
+import type { OfferSummary } from '../lib/customerCatalogService';
+import { isLiveCustomerDataEnabled } from '../lib/supabase';
 
 export interface BookingPaymentRequest {
   salonId: string;
@@ -124,8 +127,8 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
 }) => {
   const [notes, setNotes] = useState<string>(specialNotes);
   const [couponCode, setCouponCode] = useState<string>('');
-  const [appliedDiscountPercent, setAppliedDiscountPercent] = useState<number>(0);
   const [couponMessage, setCouponMessage] = useState<string | null>(null);
+  const [liveOffers, setLiveOffers] = useState<OfferSummary[]>([]);
   const [isSuccess, setIsSuccess] = useState<boolean>(false);
   const [confirmedBooking, setConfirmedBooking] = useState<Appointment | null>(null);
   const [isEditingNotes, setIsEditingNotes] = useState<boolean>(false);
@@ -148,8 +151,8 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
     if (!isOpen) return;
     setNotes(specialNotes);
     setCouponCode('');
-    setAppliedDiscountPercent(0);
     setCouponMessage(null);
+    setLiveOffers([]);
     setIsSuccess(false);
     setConfirmedBooking(null);
     setIsEditingNotes(false);
@@ -158,6 +161,23 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
     setShowFailureDialog(false);
     setIsRetryingPayment(false);
   }, [isOpen, salon?.id, date, time, specialNotes]);
+
+  // Load the live offer catalogue so a promo code is matched only against an
+  // active backend offer. The client never converts a valid code into a price
+  // change; the booking/payment service is the only discount authority.
+  useEffect(() => {
+    if (!isOpen || !salon || !isLiveCustomerDataEnabled) {
+      setLiveOffers([]);
+      return;
+    }
+    let active = true;
+    void fetchActiveOffers().then((offers) => {
+      if (active) setLiveOffers(offers);
+    });
+    return () => {
+      active = false;
+    };
+  }, [isOpen, salon?.id, isLiveCustomerDataEnabled]);
 
   // Total duration & price calculations
   const totalDuration = useMemo(() => {
@@ -168,13 +188,10 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
     return services.reduce((sum, s) => sum + (s.discountPrice || s.price || 0), 0);
   }, [services]);
 
-  const discountAmount = useMemo(() => {
-    return Math.round((subtotal * appliedDiscountPercent) / 100);
-  }, [subtotal, appliedDiscountPercent]);
-
-  const finalTotal = useMemo(() => {
-    return Math.max(0, subtotal - discountAmount);
-  }, [subtotal, discountAmount]);
+  // The client never discounts a booking. Subtracting a promo amount here could
+  // let a customer alter the payment request, so the visible total is always
+  // the full service amount. The server/payment adapter applies real offers.
+  const finalTotal = useMemo(() => subtotal, [subtotal]);
 
   // Advance Payment (25%) & Remaining at Salon (75%)
   const advanceAmount = useMemo(() => {
@@ -188,20 +205,27 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
   const formattedDate = useMemo(() => formatReadableDate(date), [date]);
   const estimatedEndTime = useMemo(() => calculateEndTime(time, totalDuration), [time, totalDuration]);
 
-  // Handle promo code
+  // Validate a promo code against the active backend offer catalogue. The
+  // matched code is passed through to the payment adapter, which is the only
+  // component allowed to change the charged amount. No client-side discount is
+  // ever applied.
   const handleApplyCoupon = () => {
     const code = couponCode.trim().toUpperCase();
-    if (code === 'NEXORA20' || code === 'FIRST20' || code === 'STYLE20') {
-      setAppliedDiscountPercent(20);
-      setCouponMessage('🎉 Promo code applied: 20% Discount!');
-      setPaymentError(null);
-    } else if (code === 'SPA50') {
-      setAppliedDiscountPercent(30);
-      setCouponMessage('✨ VIP Discount: 30% Off Applied!');
+    if (!code) {
+      setCouponMessage('Enter an offer code to validate it.');
+      return;
+    }
+    const matched = liveOffers.find(
+      (offer) =>
+        offer.code?.trim().toUpperCase() === code &&
+        (!offer.salonId || offer.salonId === salon?.id)
+    );
+    if (matched) {
+      setCouponMessage(`✅ ${matched.title}: offer verified. The discount will be applied by the booking service.`);
       setPaymentError(null);
     } else {
-      setCouponMessage('❌ Invalid coupon code. Try NEXORA20 or SPA50');
-      setAppliedDiscountPercent(0);
+      setCouponMessage('❌ Offer code not found or not active for this salon.');
+      setCouponCode('');
     }
   };
 
@@ -726,7 +750,7 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
                     type="text"
                     value={couponCode}
                     onChange={(e) => setCouponCode(e.target.value)}
-                    placeholder="Coupon (e.g. NEXORA20 or SPA50)"
+                    placeholder="Offer code (from the Offers screen)"
                     className="flex-1 px-3 py-1.5 text-[12px] bg-surface text-on-surface rounded-lg border border-outline-variant uppercase font-mono"
                   />
                   <button
@@ -750,12 +774,6 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
                     <span>Services Subtotal</span>
                     <span className="font-semibold text-on-surface">₹{subtotal}</span>
                   </div>
-                  {discountAmount > 0 && (
-                    <div className="flex justify-between text-success-emerald font-semibold">
-                      <span>Coupon Discount ({appliedDiscountPercent}%)</span>
-                      <span>-₹{discountAmount}</span>
-                    </div>
-                  )}
                   <div className="flex justify-between text-[11px]">
                     <span>Convenience & Booking Fee</span>
                     <span className="text-emerald-700 font-bold">FREE (₹0)</span>

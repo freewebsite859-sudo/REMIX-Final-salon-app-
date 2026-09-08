@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Salon, SalonService, Stylist, UserProfile } from '../types';
 import { fetchSearchHistory } from '../lib/searchHistoryService';
+import type { GeoOrigin } from '../lib/salonSearch';
 import { isLiveCustomerDataEnabled } from '../lib/supabase';
 import {
   DEFAULT_SEARCH_FILTERS,
@@ -35,6 +36,7 @@ interface SearchTabProps {
   userId?: string | null;
   salons: Salon[];
   currentLocation: string;
+  currentLocationCoords?: GeoOrigin | null;
   savedSalonIds: string[];
   /** Prefill from `/customer/search?q=`. */
   initialSearchQuery?: string;
@@ -77,16 +79,19 @@ function getSpeechRecognitionCtor(): (new () => SpeechRec) | null {
 
 const SearchResultCard: React.FC<{
   salon: Salon;
-  fromPrice: number;
+  fromPrice: number | null;
   matchedService: SalonService | null;
   isSaved: boolean;
   onOpen: () => void;
   onBook: () => void;
   onToggleSave: () => void;
-}> = ({ salon, fromPrice, matchedService, isSaved, onOpen, onBook, onToggleSave }) => {
+  currentLocationCoords?: GeoOrigin | null;
+}> = ({ salon, fromPrice, matchedService, isSaved, onOpen, onBook, onToggleSave, currentLocationCoords }) => {
   const verified = isVerifiedSalon(salon);
   const category = salon.categories?.[0] || (salon.gender === 'men' ? 'Barber' : 'Salon');
   const offer = hasOffers(salon);
+  const km = distanceKm(salon, currentLocationCoords);
+  const distanceLabel = km >= 999 ? salon.distance || '—' : `${km.toFixed(1)} km`;
 
   return (
     <article
@@ -159,7 +164,7 @@ const SearchResultCard: React.FC<{
           <span className="text-on-surface-variant">·</span>
           <span className="text-on-surface-variant truncate">{salon.location.area}</span>
           <span className="text-on-surface-variant">·</span>
-          <span className="font-semibold text-primary">{salon.distance}</span>
+          <span className="font-semibold text-primary">{distanceLabel}</span>
         </div>
 
         {matchedService && (
@@ -190,7 +195,9 @@ const SearchResultCard: React.FC<{
         <div className="flex items-center justify-between mt-auto pt-1.5 gap-2">
           <div>
             <span className="text-[10px] text-on-surface-variant uppercase font-semibold">From</span>
-            <p className="text-[16px] font-extrabold text-on-surface leading-none">₹{fromPrice}</p>
+            <p className="text-[16px] font-extrabold text-on-surface leading-none">
+              {fromPrice == null ? '—' : `₹${fromPrice}`}
+            </p>
           </div>
           <div className="flex items-center gap-1.5">
             <button
@@ -250,6 +257,7 @@ export const SearchTab: React.FC<SearchTabProps> = ({
   userId,
   salons,
   currentLocation,
+  currentLocationCoords,
   savedSalonIds,
   initialSearchQuery,
   onSearchQueryChange,
@@ -368,7 +376,7 @@ export const SearchTab: React.FC<SearchTabProps> = ({
   // ---- Search pipeline ----------------------------------------------------
   const pipeline = useMemo(() => {
     const uiSort = sortTouched ? sort : null;
-    return searchSalons(salons, query, filters, uiSort);
+    return searchSalons(salons, query, filters, uiSort, currentLocationCoords);
   }, [salons, query, filters, sort, sortTouched]);
 
   const active = isSearchActive(query, filters);
@@ -1107,6 +1115,7 @@ export const SearchTab: React.FC<SearchTabProps> = ({
                   onOpen={() => onOpenSalonDetails(salon)}
                   onBook={() => onBookSalon(salon, matchedService || undefined)}
                   onToggleSave={() => onToggleSaveSalon(salon.id)}
+                  currentLocationCoords={currentLocationCoords}
                 />
               ))}
             </div>
@@ -1118,7 +1127,7 @@ export const SearchTab: React.FC<SearchTabProps> = ({
               Showing the closest matches within{' '}
               {pipeline.filters.maxDistanceKm
                 ? `${pipeline.filters.maxDistanceKm} km`
-                : `~${Math.ceil(Math.max(...results.map((r) => distanceKm(r.salon)), 1))} km`}
+                : `~${Math.ceil(Math.max(...results.map((r) => distanceKm(r.salon, currentLocationCoords)), 1))} km`}
               . Expand distance or clear price filters for more options.
             </p>
           )}

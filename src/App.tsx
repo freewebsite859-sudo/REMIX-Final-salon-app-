@@ -340,6 +340,7 @@ export default function App() {
   const [user, setUser] = useState<UserProfile>(EMPTY_USER);
   const isAuthenticated = Boolean(session?.user);
   const [currentLocation, setCurrentLocation] = useState<string>('Mansarovar, Jaipur');
+  const [currentLocationCoords, setCurrentLocationCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   /**
    * First-login location permission flow. Shown once per account until the
    * customer shares GPS or picks a Jaipur area (or explicitly skips).
@@ -814,6 +815,12 @@ export default function App() {
 
     // Restore a previously saved location preference for this account.
     const savedLocation = loadCustomerLocation(userId);
+    if (savedLocation && Number.isFinite(savedLocation.latitude) && Number.isFinite(savedLocation.longitude)) {
+      setCurrentLocationCoords({
+        latitude: Number(savedLocation.latitude),
+        longitude: Number(savedLocation.longitude),
+      });
+    }
 
     setUser({
       ...EMPTY_USER,
@@ -988,11 +995,15 @@ export default function App() {
   // Authenticated users only; one watcher; RLS-enforced writes; cleared on logout.
   // Reuses the existing header/location UI by feeding it the live label.
   // ---------------------------------------------------------------------------
-  const handleLivePosition = useCallback((_coords: unknown, liveLabel: string) => {
+  const handleLivePosition = useCallback((coords: unknown, liveLabel: string) => {
     // A successful device fix is more authoritative than the last manually
     // selected label. Keep the UI aligned with the coordinate written to the
     // backend instead of displaying a stale area name.
     setCurrentLocation(liveLabel);
+    const c = coords as { latitude?: unknown; longitude?: unknown } | null | undefined;
+    if (c && typeof c?.latitude === 'number' && typeof c?.longitude === 'number') {
+      setCurrentLocationCoords({ latitude: c.latitude, longitude: c.longitude });
+    }
   }, []);
 
   const locationSync = useLocationSync({
@@ -1485,6 +1496,7 @@ export default function App() {
                 user={user}
                 salons={salons}
                 currentLocation={currentLocation}
+                currentLocationCoords={currentLocationCoords}
                 upcomingAppointment={upcomingAppointment}
                 savedSalonIds={savedSalonIds}
                 appointments={appointments}
@@ -1535,6 +1547,7 @@ export default function App() {
                 userId={userId || undefined}
                 salons={salons}
                 currentLocation={currentLocation}
+                currentLocationCoords={currentLocationCoords}
                 savedSalonIds={savedSalonIds}
                 initialSearchQuery={routeSearchQuery}
                 onSearchQueryChange={(q) => {
@@ -1752,6 +1765,9 @@ export default function App() {
         isLiveSyncBlocked={locationSync.permissionDenied && !locationSync.isWatching}
         onSelectLocation={(loc, lat, lng, meta) => {
           setCurrentLocation(loc);
+          if (typeof lat === 'number' && typeof lng === 'number') {
+            setCurrentLocationCoords({ latitude: lat, longitude: lng });
+          }
           // Persist structured preference (lat/lng/city/area/pincode) when we
           // have enough detail — first-login and header picker share this path.
           if (userId && typeof lat === 'number' && typeof lng === 'number') {

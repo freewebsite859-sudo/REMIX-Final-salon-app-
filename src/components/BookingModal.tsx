@@ -44,9 +44,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
   const [selectedTime, setSelectedTime] = useState<string>('5:30 PM');
   const [specialNotes, setSpecialNotes] = useState<string>('');
-  const [couponCode, setCouponCode] = useState<string>('');
-  const [appliedDiscountPercent, setAppliedDiscountPercent] = useState<number>(0);
-  const [couponMessage, setCouponMessage] = useState<string | null>(null);
   const [bookingError, setBookingError] = useState<string | null>(null);
   const [isSuccess, setIsSuccess] = useState<boolean>(false);
   const [confirmedBooking, setConfirmedBooking] = useState<Appointment | null>(null);
@@ -68,9 +65,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     setSelectedDate(todayStr);
     setSelectedTime('5:30 PM');
     setSpecialNotes('');
-    setCouponCode('');
-    setAppliedDiscountPercent(0);
-    setCouponMessage(null);
     setBookingError(null);
     setIsSuccess(false);
     setConfirmedBooking(null);
@@ -143,23 +137,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     }
   };
 
-  const handleApplyCoupon = () => {
-    const code = couponCode.trim().toUpperCase();
-    if (code === 'NEXORA20' || code === 'FIRST20' || code === 'STYLE20') {
-      setAppliedDiscountPercent(20);
-      setCouponMessage('🎉 Promo code applied: 20% Discount!');
-    } else if (code === 'SPA50') {
-      setAppliedDiscountPercent(30);
-      setCouponMessage('✨ VIP Discount: 30% Off Applied!');
-    } else {
-      setCouponMessage('❌ Invalid coupon code. Try NEXORA20');
-      setAppliedDiscountPercent(0);
-    }
-  };
-
-  const subtotal = selectedServices.reduce((acc, s) => acc + (s.discountPrice || s.price), 0);
-  const discountAmount = Math.round((subtotal * appliedDiscountPercent) / 100);
-  const finalTotal = Math.max(0, subtotal - discountAmount);
+  // Promo codes are not evaluated here. The booking summary/payment service is
+  // the only place that accepts and verifies an offer code, and it never lets
+  // the client choose the final charge.
+  const finalTotal = selectedServices.reduce((acc, s) => acc + (s.discountPrice || s.price), 0);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -369,43 +350,20 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 </div>
               </div>
 
-              {/* Step 4: Promo Code & Price Summary */}
+              {/* Step 4: Price Summary (no client-side discounting) */}
               <div className="bg-surface-container-low p-3.5 rounded-xl border border-outline-variant/50">
-                <div className="flex gap-2 mb-2">
-                  <input
-                    type="text"
-                    value={couponCode}
-                    onChange={(e) => setCouponCode(e.target.value)}
-                    placeholder="Coupon (e.g. NEXORA20)"
-                    className="flex-1 px-3 py-1.5 text-[12px] bg-white rounded-lg border border-outline-variant uppercase font-mono"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleApplyCoupon}
-                    className="px-3 py-1.5 bg-secondary text-white text-[12px] font-semibold rounded-lg hover:bg-primary transition-colors"
-                  >
-                    Apply
-                  </button>
-                </div>
-                {couponMessage && (
-                  <p className="text-[11px] font-medium text-nexora-pink mb-2">{couponMessage}</p>
-                )}
-
-                <div className="flex flex-col gap-1 text-[12px] text-on-surface-variant pt-2 border-t border-outline-variant/40">
+                <div className="flex flex-col gap-1 text-[12px] text-on-surface-variant">
                   <div className="flex justify-between">
-                    <span>Subtotal</span>
-                    <span>₹{subtotal}</span>
+                    <span>Services Subtotal</span>
+                    <span>₹{finalTotal}</span>
                   </div>
-                  {discountAmount > 0 && (
-                    <div className="flex justify-between text-success-emerald font-medium">
-                      <span>Promo Discount ({appliedDiscountPercent}%)</span>
-                      <span>-₹{discountAmount}</span>
-                    </div>
-                  )}
                   <div className="flex justify-between font-bold text-on-surface text-[14px] pt-1 border-t border-outline-variant/30">
                     <span>Total Amount</span>
                     <span className="text-primary text-[16px]">₹{finalTotal}</span>
                   </div>
+                  <p className="text-[10px] text-on-surface-variant/80 italic mt-1">
+                    Offers are verified by the booking/payment service after you review the appointment.
+                  </p>
                 </div>
               </div>
 
