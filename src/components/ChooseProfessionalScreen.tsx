@@ -151,12 +151,11 @@ export const ChooseProfessionalScreen: React.FC<ChooseProfessionalScreenProps> =
   const [serviceCategoryFilter, setServiceCategoryFilter] = useState<string>('all');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Professional selection state
+  // Professional selection state. No time slot is preselected: a fabricated
+  // "Today at 2:30 PM" default would look real even though availability is
+  // resolved by the canonical booking service.
   const [selectedProfessionalId, setSelectedProfessionalId] = useState<string>('any');
-  const [selectedSlot, setSelectedSlot] = useState<{ day: string; time: string } | null>({
-    day: 'Today',
-    time: '2:30 PM',
-  });
+  const [selectedSlot, setSelectedSlot] = useState<{ day: string; time: string } | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   // Compute total service duration & total price
@@ -168,7 +167,7 @@ export const ChooseProfessionalScreen: React.FC<ChooseProfessionalScreenProps> =
     return selectedServices.reduce((sum, s) => sum + (s.discountPrice || s.price || 0), 0);
   }, [selectedServices]);
 
-  const salonName = salon?.name || 'Scissors & Shears';
+  const salonName = salon?.name || 'Selected salon';
 
   // Helper to show brief toast feedback
   const showToast = (msg: string) => {
