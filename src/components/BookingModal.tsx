@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Salon, SalonService, Stylist, Appointment } from '../types';
 import { BookingConfirmationPage } from './BookingConfirmationPage';
 
@@ -59,17 +59,54 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   // re-entries after "Change date/time" from the summary keep every service),
   // then fall back to the single service the user tapped "Book" on, or the
   // salon's first service. Once open, nothing resets between Steps 1–4.
+  //
+  // Guard rails so a *fix* can never look like a regression:
+  //  - Seeds are content-addressed (salon id + incoming service ids + stylist
+  //    id), NOT object-identity addressed. A parent re-render that passes a
+  //    brand-new array/object instance holding the SAME services no longer
+  //    wipes the user's in-progress multi-service selection, stylist pick,
+  //    date/time or notes (the old effect reset on every new array identity).
+  //  - The reset only fires on a closed→open transition, a salon change, or a
+  //    genuinely different incoming seed.
+  //  - Incoming selections are deduped and validated against the salon catalog
+  //    so duplicate line items (same service id twice) can never double-count
+  //    totals or render a checked card twice.
+  const prevOpenRef = useRef(false);
+  const seededContentRef = useRef('');
+
   useEffect(() => {
+    const openedNow = isOpen && !prevOpenRef.current;
+    prevOpenRef.current = isOpen;
     if (!isOpen || !salon) return;
 
-    if (initialServices && initialServices.length > 0) {
-      // Keep only services that actually belong to this salon's catalog so a
-      // stale summary cannot inject a service the salon does not offer.
-      setSelectedServices(
-        initialServices.filter((srv) => salon.services.some((s) => s.id === srv.id))
-      );
-    } else if (initialService) {
-      setSelectedServices([initialService]);
+    const incoming = initialServices?.length
+      ? initialServices.filter((srv) => salon.services.some((s) => s.id === srv.id))
+      : initialService
+        ? [initialService]
+        : [];
+    // Dedupe by service id so duplicate line items can never double-count.
+    const deduped = Array.from(new Map(incoming.map((srv) => [srv.id, srv])).values());
+    const contentKey = [
+      salon.id,
+      salon.services.map((s) => s.id).join(','),
+      deduped.map((s) => s.id).join(','),
+      initialStylist?.id ?? '',
+    ].join('|');
+
+    if (!openedNow && seededContentRef.current === contentKey) {
+      // Same salon, same incoming seed, modal still open: this is a plain
+      // parent re-render — never clobber what the user is doing.
+      return;
+    }
+    seededContentRef.current = contentKey;
+
+    if (deduped.length > 0) {
+      setSelectedServices(deduped);
+    } else if (initialServices?.length) {
+      // A non-empty incoming selection that does not belong to this salon's
+      // catalog resolves to the explicit zero-selection state — never to a
+      // silently reseeded default.
+      setSelectedServices([]);
     } else {
       setSelectedServices(salon.services.length > 0 ? [salon.services[0]] : []);
     }

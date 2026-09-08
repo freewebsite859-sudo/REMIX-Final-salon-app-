@@ -246,6 +246,104 @@ await act(async () => {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Regression: a parent re-render that passes a brand-new instance of IDENTICAL
+// seed content must NOT wipe the user's in-progress multi-service selection or
+// their step-4 notes (the old reset effect keyed on object identity).
+// ---------------------------------------------------------------------------
+await act(async () => {
+  renderModal({ initialService: { ...srvHaircut } });
+  await new Promise((r) => setTimeout(r, 0));
+});
+
+await act(async () => {
+  serviceCards(container)
+    .find((c) => c.dataset.serviceId === 'svc-balayage')
+    ?.dispatchEvent(new Event('click', { bubbles: true }));
+});
+
+// Type a note, then force a same-content parent re-render (new object refs).
+const ta = container.querySelector('textarea') as HTMLTextAreaElement;
+{
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+  await act(async () => {
+    setter?.call(ta, 'keep my note');
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+await act(async () => {
+  renderModal({ initialService: { ...srvHaircut } }); // same id, new instance
+  await new Promise((r) => setTimeout(r, 0));
+});
+
+{
+  const cards = serviceCards(container);
+  const checkedIds = cards
+    .filter((c) => c.getAttribute('aria-checked') === 'true')
+    .map((c) => c.dataset.serviceId)
+    .sort();
+  const txt = summaryBar(container)?.textContent ?? '';
+  const noteValue = (container.querySelector('textarea') as HTMLTextAreaElement).value;
+  check(
+    'same-content parent re-render does not clobber multi-selection or notes',
+    checkedIds.join(',') === 'svc-balayage,svc-cut' &&
+      txt.includes('₹3,100') &&
+      txt.includes('135 mins') &&
+      noteValue === 'keep my note',
+    `selected=${checkedIds.join(',')} notes="${noteValue}"`
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Regression: duplicate ids inside an incoming multi-service selection must be
+// deduped — never double-counted in the totals or rendered twice.
+// ---------------------------------------------------------------------------
+await act(async () => {
+  renderModal({ initialServices: [srvBalayage, { ...srvBalayage }, srvNails] });
+  await new Promise((r) => setTimeout(r, 0));
+});
+
+{
+  const cards = serviceCards(container);
+  const checkedIds = cards
+    .filter((c) => c.getAttribute('aria-checked') === 'true')
+    .map((c) => c.dataset.serviceId)
+    .sort();
+  const txt = summaryBar(container)?.textContent ?? '';
+  check(
+    'duplicate service ids in incoming selection are deduped (balayage+nails = ₹3,099 • 150 mins)',
+    checkedIds.length === 2 &&
+      checkedIds.join(',') === 'svc-balayage,svc-nails' &&
+      txt.includes('2 Services Selected') &&
+      txt.includes('₹3,099') &&
+      txt.includes('150 mins'),
+    `selected=${checkedIds.join(',')} bar="${txt.trim()}"`
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Regression: a non-empty incoming selection that belongs to no salon catalog
+// service resolves to the explicit zero-selection state — never a silent
+// reseed of the first default service.
+// ---------------------------------------------------------------------------
+await act(async () => {
+  renderModal({
+    initialServices: [{ ...srvHaircut, id: 'svc-ghost', name: 'Ghost Treatment' }],
+  });
+  await new Promise((r) => setTimeout(r, 0));
+});
+
+{
+  const cards = serviceCards(container);
+  const checked = cards.filter((c) => c.getAttribute('aria-checked') === 'true').length;
+  const hint = container.querySelector('#booking-no-services-hint');
+  check(
+    'stale incoming selection resolves to explicit empty state (no silent default reseed)',
+    checked === 0 && Boolean(hint),
+    `checked=${checked} hint=${Boolean(hint)}`
+  );
+}
+
 // Cleanup
 await act(async () => {
   root.unmount();
