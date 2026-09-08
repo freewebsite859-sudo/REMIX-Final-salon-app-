@@ -126,6 +126,58 @@ const anonKeyRole = supabaseAnonKey ? readJwtRole(supabaseAnonKey) : null;
 const anonKeyRef = supabaseAnonKey ? readJwtRef(supabaseAnonKey) : null;
 
 /**
+ * Placeholder guard — template values must never masquerade as real config.
+ * Catches the tokens people paste from READMEs / .env.example while
+ * scaffolding ("your-...", "<...>", "paste", "replace", "changeme", …).
+ * A real Supabase URL/key never contains these markers.
+ */
+function looksLikePlaceholder(value: string): boolean {
+  const v = value.trim().toLowerCase();
+  if (!v) return false;
+  const markers = [
+    '<',
+    '>',
+    'your_',
+    'your-',
+    'your ',
+    'paste',
+    'replace',
+    'changeme',
+    'change_me',
+    'placeholder',
+    'example',
+    'dummy',
+    'sample',
+    'insert',
+    'xxxx',
+    'todo',
+    'lorem',
+    'coming soon',
+  ];
+  return markers.some((m) => v.includes(m));
+}
+
+/**
+ * Real Supabase publishable/service keys are JWTs: three dot-separated
+ * segments whose payload decodes as JSON. A value that is not JWT-shaped
+ * (free-text placeholder, short scratch token) cannot be a real key, so the
+ * app treats it as missing and keeps the mock/demo fallback instead of
+ * constructing a live client that can only fail.
+ */
+function isJwtShaped(token: string): boolean {
+  const parts = token.split('.');
+  if (parts.length !== 3) return false;
+  try {
+    const normalized = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    const decoded = JSON.parse(atob(padded));
+    return decoded !== null && typeof decoded === 'object';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Hard security stop: a privileged key in frontend code would bypass RLS for
  * every visitor. Refuse to construct the client instead of leaking it.
  */
@@ -138,11 +190,25 @@ if (isPrivilegedKey && typeof console !== 'undefined') {
   );
 }
 
-// Validate URL format and anon key presence
+// Validate URL format and anon key presence. Placeholder-looking or non-JWT
+// values are treated as ABSENT: the app then falls back to the local mock
+// (demo) auth client instead of attempting live calls with tokens that cannot
+// work — so a scaffolded .env never produces blocking live-auth error banners.
+const urlLooksPlaceholder = looksLikePlaceholder(NEXORA_SUPABASE_URL);
+const anonLooksPlaceholder = supabaseAnonKey.length > 0 && looksLikePlaceholder(supabaseAnonKey);
+
 const hasValidUrl = Boolean(
-  NEXORA_SUPABASE_URL && NEXORA_SUPABASE_URL.startsWith('https://') && NEXORA_SUPABASE_URL.includes('.supabase.co')
+  NEXORA_SUPABASE_URL &&
+    !urlLooksPlaceholder &&
+    NEXORA_SUPABASE_URL.startsWith('https://') &&
+    NEXORA_SUPABASE_URL.includes('.supabase.co')
 );
-const hasAnonKey = Boolean(supabaseAnonKey && supabaseAnonKey.length > 20);
+const hasAnonKey = Boolean(
+  supabaseAnonKey &&
+    supabaseAnonKey.length > 20 &&
+    !anonLooksPlaceholder &&
+    isJwtShaped(supabaseAnonKey)
+);
 
 export const isRealSupabaseConfigured = Boolean(hasValidUrl && hasAnonKey && !isPrivilegedKey);
 
@@ -179,18 +245,26 @@ function logConfigDiagnostics(): void {
   }
   
   if (isLocalDemoMode) {
+    const placeholder = anonLooksPlaceholder || urlLooksPlaceholder
+      ? ' Note: the configured Supabase values look like placeholders — replace them with the real anon key/URL to go live.'
+      : '';
     console.info(
       '[Nexora] Local demo mode — accounts, bookings and notifications stay in this browser. ' +
-        'Add VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY to .env for live cloud auth.'
+        'Add VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY to .env for live cloud auth.' +
+        placeholder
     );
     return;
   }
 
   if (!isSupabaseConfigured) {
+    const placeholder = anonLooksPlaceholder || urlLooksPlaceholder
+      ? ' Detected placeholder/template values — replace them with the real keys from the Supabase dashboard.'
+      : '';
     console.warn(
       '[Nexora] Supabase not configured — live authentication unavailable. ' +
         `URL present: ${hasValidUrl}, anon key present: ${hasAnonKey}, privileged key: ${isPrivilegedKey}. ` +
-        'Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY then rebuild.'
+        'Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY then rebuild.' +
+        placeholder
     );
     return;
   }
@@ -270,8 +344,12 @@ export const supabase: SupabaseClient | null =
 /** Convenience guard for call-sites that need a non-null client. */
 export function requireSupabase(): SupabaseClient {
   if (!supabase) {
+    const placeholder = anonLooksPlaceholder || urlLooksPlaceholder
+      ? ' VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY currently hold placeholder values — replace them with the real keys.'
+      : '';
     throw new Error(
-      '[Nexora] Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.'
+      '[Nexora] Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.' +
+        placeholder
     );
   }
   return supabase;
@@ -289,6 +367,9 @@ export function getSupabaseConfigStatus(): {
   url: string;
   anonKeyRole: string | null;
   anonKeyRef: string | null;
+  /** Configured value looks like a template placeholder (e.g. "your-key"). */
+  urlPlaceholder: boolean;
+  anonKeyPlaceholder: boolean;
 } {
   return {
     isConfigured: isSupabaseConfigured,
@@ -298,5 +379,7 @@ export function getSupabaseConfigStatus(): {
     url: NEXORA_SUPABASE_URL,
     anonKeyRole,
     anonKeyRef,
+    urlPlaceholder: urlLooksPlaceholder,
+    anonKeyPlaceholder: anonLooksPlaceholder,
   };
 }

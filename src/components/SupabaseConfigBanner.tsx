@@ -59,22 +59,33 @@ export const SupabaseConfigBanner: React.FC<SupabaseConfigBannerProps> = ({
   if (!status.hasUrl) missing.push('VITE_SUPABASE_URL');
   if (!status.hasAnonKey) missing.push('VITE_SUPABASE_ANON_KEY');
 
+  const placeholderValues = status.anonKeyPlaceholder || status.urlPlaceholder;
   const headline = status.isPrivilegedKey
     ? 'Insecure key configured — authentication disabled'
-    : `Live authentication is not configured — you cannot ${action}`;
+    : placeholderValues
+      ? 'Placeholder Supabase values detected — demo auth is active'
+      : `Live authentication is not configured — you cannot ${action}`;
 
   const detail = status.isPrivilegedKey
     ? 'VITE_SUPABASE_ANON_KEY contains a service_role key. That key would bypass row-level security for every visitor, so the Supabase client is disabled on purpose. Replace it with the project anon (public) key.'
-    : missing.length
-      ? `Missing ${missing.join(' and ')}. Add ${missing.length === 1 ? 'it' : 'them'} to your .env, then rebuild (npm run build) or restart the dev server.`
-      : 'The Supabase URL or anon key is invalid. Check VITE_SUPABASE_URL is an https://<project>.supabase.co address and VITE_SUPABASE_ANON_KEY is the anon public key.';
+    : placeholderValues
+      ? `VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY hold template placeholders, so the app does not attempt live login (it falls back to mock auth in browsers). Replace ${missing.join(' and ')} with the real values from Supabase Dashboard → Project Settings → API.`
+      : missing.length
+        ? `Missing ${missing.join(' and ')}. Add ${missing.length === 1 ? 'it' : 'them'} to your .env, then rebuild (npm run build) or restart the dev server.`
+        : 'The Supabase URL or anon key is invalid. Check VITE_SUPABASE_URL is an https://<project>.supabase.co address and VITE_SUPABASE_ANON_KEY is the anon public key.';
 
   return (
     <div
       id="supabase-config-banner"
       role="alert"
       data-reason={
-        status.isPrivilegedKey ? 'privileged-key' : missing.length ? 'missing-env' : 'invalid-env'
+        status.isPrivilegedKey
+          ? 'privileged-key'
+          : placeholderValues
+            ? 'placeholder-env'
+            : missing.length
+              ? 'missing-env'
+              : 'invalid-env'
       }
       className={`rounded-2xl border border-amber-500/40 bg-amber-500/10 text-amber-900 ${
         compact ? 'p-3' : 'p-4'
