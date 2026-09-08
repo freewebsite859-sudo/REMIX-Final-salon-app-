@@ -106,10 +106,28 @@ The file `supabase/setup.sql` still contains the auth, location and
 notification backend; `supabase/customer_tables.sql` adds the customer
 catalogue/booking/reward/referral tables.
 
+## Live-mode hard guarantees
+
+When `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` are configured (and demo
+mode is not forced) the customer app:
+
+- Never falls back to the in-repo demo catalog on live catalog errors.
+- Uses real lat/lng distance from `salons.location.latitude/longitude` when a
+  geolocation origin is known.
+- Never fabricates "slots today" counts; availability always comes from
+  `staff_slots`.
+- Never applies a client-side promo discount. Offer codes are matched against
+  active `offers` rows and passed to the booking service, which is the only
+  discount authority.
+- Hides demo-only payment/reward/wallet simulation and reset controls.
+- Keeps rewards, QR payments and offer redemptions read-only for the app; the
+  backend/QR terminal confirms credits and redemptions.
+
 ## Verification
 
 `src/lib/supabase/schema.ts` performs runtime read-only schema detection for
-all 18 tables. There is also a Node verification script:
+all 18 tables (real Supabase project only). There is also a Node verification
+script:
 
 ```bash
 VITE_SUPABASE_URL=https://qwaehqsmodekbgvnaavz.supabase.co \
