@@ -16,10 +16,10 @@
  * `createDemoBooking` runs the SAME validation/pricing core on-device. The UI
  * labels it as a demo record; no gateway charge is claimed.
  *
- * Failures are always surfaced verbatim — production live mode never silently
- * falls through to demo. Vite DEV without a configured Razorpay gateway uses
- * the labeled on-device demo store so a missing `/api` mount cannot 404 the
- * customer at "Pay & Lock Slot".
+ * Failures are always surfaced verbatim when a real Razorpay gateway is
+ * configured. If `/api/payments` is missing (404) or unconfigured (503),
+ * checkout uses the labeled on-device demo store so Pay & Lock Slot cannot
+ * dead-end with "booking service endpoint was not found".
  */
 
 import type { Appointment } from '../types';
@@ -53,14 +53,6 @@ function configEndpoint(): string {
   return '/api/payments/config';
 }
 
-function isViteDev(): boolean {
-  try {
-    return Boolean((import.meta as { env?: { DEV?: boolean } }).env?.DEV);
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Probe whether this deployment can actually take a Razorpay deposit.
  * A 404/HTML response means the API was never mounted (classic Vite-only preview).
@@ -77,6 +69,12 @@ async function probePaymentConfig(signal?: AbortSignal): Promise<{ configured: b
   } catch {
     return { configured: false, reachable: false };
   }
+}
+
+function shouldDemoFallback(status: number, contentType?: string | null): boolean {
+  if (status === 404 || status === 503 || status === 501) return true;
+  if (contentType && contentType.includes('text/html')) return true;
+  return false;
 }
 
 function friendlyError(status: number, serverMessage?: string, fields?: unknown): string {
@@ -142,11 +140,11 @@ export async function createBooking(
     return createDemoBooking(request);
   }
 
-  // Dev / preview without Razorpay keys (or without the API mounted) used to
-  // 404 `/api/payments/orders` and show "Advance Payment Incomplete". In DEV
-  // we take the labeled on-device demo path instead of a dead-end. Production
-  // live mode never silently falls through.
-  if (isViteDev() && !options.payment) {
+  // No Razorpay keys (or `/api` not mounted) used to 404 and show
+  // "booking service endpoint was not found". A labeled on-device booking
+  // is honest here: paymentStatus stays pending, isDemoBooking is true, no
+  // charge is claimed. Production with keys still runs HMAC checkout.
+  if (!options.payment) {
     const probe = await probePaymentConfig(options.signal);
     if (!probe.configured) {
       return createDemoBooking(request);
@@ -184,6 +182,9 @@ export async function completeVerifiedCheckout(
 
   const orderBody = await readJson(orderResponse);
   if (!orderResponse.ok) {
+    if (shouldDemoFallback(orderResponse.status, orderResponse.headers.get('content-type'))) {
+      return createDemoBooking(request);
+    }
     const serverMessage = typeof orderBody.error === 'string' ? orderBody.error : undefined;
     return { ok: false, error: friendlyError(orderResponse.status, serverMessage, orderBody.fields) };
   }

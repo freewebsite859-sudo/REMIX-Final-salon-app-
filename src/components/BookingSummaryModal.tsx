@@ -142,7 +142,9 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
   const [cartMessage, setCartMessage] = useState<string | null>(null);
   const [showFailureDialog, setShowFailureDialog] = useState<boolean>(false);
   const [isRetryingPayment, setIsRetryingPayment] = useState<boolean>(false);
+  const [gatewayConfigured, setGatewayConfigured] = useState<boolean>(false);
   const isSubmitting = buttonState !== 'idle';
+  const showDemoCheckoutNotice = isLocalDemoMode || !gatewayConfigured;
 
   // Tell the parent when we enter/leave the confirmation screen so it can
   // hide the sticky bottom nav for a full-bleed ticket on mobile.
@@ -838,7 +840,7 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
                 </div>
 
                 {/* Payment contract status */}
-                {isLocalDemoMode ? (
+                {showDemoCheckoutNotice ? (
                   <div
                     role="status"
                     id="summary-demo-mode-notice"

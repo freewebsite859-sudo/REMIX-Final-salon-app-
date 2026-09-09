@@ -38,6 +38,7 @@ import {
   createBooking,
   validateBookingRequest,
 } from '../src/lib/bookingCore';
+import { isRazorpayConfigured } from '../src/lib/paymentCore';
 
 // Re-exported so existing importers (tests, tooling) keep one canonical entry
 // point for the booking contract implementation.
@@ -68,8 +69,43 @@ export function jsonError(res: Response, status: number, error: string, fields?:
 }
 
 // ---------------------------------------------------------------------------
-// Supabase-backed store
+// Stores
 // ---------------------------------------------------------------------------
+
+/** In-process store used when Razorpay/Supabase are not configured (preview / demo). */
+export function createMemoryBookingStore(): BookingStore {
+  const bookings: BookingDbRow[] = [];
+  const services: BookingServiceDbRow[] = [];
+  return {
+    async insertBooking(row) {
+      bookings.unshift(row);
+      return { ok: true };
+    },
+    async insertBookingServices(rows) {
+      if (rows.length === 0) return { ok: true };
+      services.unshift(...rows);
+      return { ok: true };
+    },
+    async deleteBooking(bookingId) {
+      const idx = bookings.findIndex((row) => row.id === bookingId);
+      if (idx >= 0) bookings.splice(idx, 1);
+      for (let i = services.length - 1; i >= 0; i--) {
+        if (services[i].booking_id === bookingId) services.splice(i, 1);
+      }
+      return { ok: true };
+    },
+    async findActiveSlot(salonId, slotDate, slotTime, stylistId) {
+      const wantChair = stylistId && stylistId.trim() ? stylistId.trim() : null;
+      return bookings.some((row) => {
+        if (row.salon_id !== salonId || row.slot_date !== slotDate || row.slot_time !== slotTime) return false;
+        if ((row.status as string) === 'cancelled' || (row.status as string) === 'no_show') return false;
+        const held = row.stylist_snapshot?.id ?? null;
+        if (!wantChair) return true;
+        return !held || held === wantChair;
+      });
+    },
+  };
+}
 
 export function createSupabaseBookingStore(client: SupabaseClient): BookingStore {
   return {
@@ -122,18 +158,21 @@ export function createBookingsRouter(
   const store: BookingStore | null =
     storeOverride !== undefined ? storeOverride : client ? createSupabaseBookingStore(client) : null;
 
-  // Public clients must not create a booking without a verified deposit.
-  // Persistence still lives in createBookingsHandler for tests and for the
-  // payments router, which calls createBooking() after HMAC verification.
-  router.post('/', (_req: Request, res: Response) => {
-    return jsonError(
-      res,
-      402,
-      'Secure deposit required to lock this slot. Create a gateway order at POST /api/payments/orders and confirm it at POST /api/payments/verify. Bookings are not created from this endpoint.'
-    );
+  router.post('/', (req: Request, res: Response) => {
+    // Live Razorpay deployments: this endpoint is not a payment shortcut.
+    if (isRazorpayConfigured(env)) {
+      return jsonError(
+        res,
+        402,
+        'Secure deposit required to lock this slot. Create a gateway order at POST /api/payments/orders and confirm it at POST /api/payments/verify. Bookings are not created from this endpoint.'
+      );
+    }
+    // Preview / demo (no gateway keys): persist a pending booking so older
+    // clients that still POST /api/bookings do not 404 with
+    // "booking service endpoint was not found".
+    const effectiveStore = store ?? createMemoryBookingStore();
+    return createBookingsHandler(effectiveStore, reason)(req, res);
   });
-  void store;
-  void reason;
   return router;
 }
 

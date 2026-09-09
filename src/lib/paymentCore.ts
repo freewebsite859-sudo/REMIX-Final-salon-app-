@@ -127,3 +127,10 @@ export interface GatewayOrder {
   currency: 'INR';
   receipt: string;
 }
+
+/** True when both public key id and signing secret are present. */
+export function isRazorpayConfigured(env: { RAZORPAY_KEY_ID?: string; RAZORPAY_KEY_SECRET?: string; PAYMENT_SIGNING_SECRET?: string } = {}): boolean {
+  const keyId = (env.RAZORPAY_KEY_ID || '').trim();
+  const keySecret = (env.RAZORPAY_KEY_SECRET || env.PAYMENT_SIGNING_SECRET || '').trim();
+  return Boolean(keyId && keySecret);
+}

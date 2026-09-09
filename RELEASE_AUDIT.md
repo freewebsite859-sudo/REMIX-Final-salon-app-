@@ -125,7 +125,10 @@ shortcut. Two concurrent checkouts on the same stylist/time receive 409.
 Missing Razorpay keys answer 503 (no fake QR, no simulated capture).
 The same `/api/*` surface is mounted from `tsx server.ts` **and** from the
 Vite `configureServer` plugin so a Vite-only preview cannot 404 the deposit
-endpoint. Vite DEV without Razorpay keys uses the labeled on-device demo store.
+endpoint. Without Razorpay keys, `POST /api/bookings` persists a pending
+booking (in-memory) and the client uses the labeled on-device demo store —
+the old "endpoint was not found" failure is gone. With keys, `/api/bookings`
+still answers 402.
 *Remaining:* live Razorpay keys + a real dual-client run against the project.
 
 **B4. Account deletion is not implemented.**

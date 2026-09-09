@@ -178,6 +178,29 @@ describe('paymentCore HMAC + slot keys', () => {
   });
 });
 
+describe('POST /api/bookings without Razorpay keys', () => {
+  it('creates a pending booking so preview checkout is not a 404', async () => {
+    const app = express();
+    app.use(express.json());
+    attachNexoraApi(app, { RAZORPAY_KEY_ID: '', RAZORPAY_KEY_SECRET: '' });
+    const { server, baseUrl } = await listen(app);
+    try {
+      const res = await fetch(`${baseUrl}/api/bookings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(validRequest()),
+      });
+      assert.equal(res.status, 201);
+      const body = (await res.json()) as { appointment: { id: string; paymentStatus: string; status: string } };
+      assert.ok(body.appointment.id);
+      assert.equal(body.appointment.status, 'pending');
+      assert.equal(body.appointment.paymentStatus, 'pending');
+    } finally {
+      await stop(server);
+    }
+  });
+});
+
 describe('POST /api/bookings is not a payment shortcut', () => {
   it('answers 402 even when a booking store is configured', async () => {
     const { server, baseUrl } = await startPayments({});
