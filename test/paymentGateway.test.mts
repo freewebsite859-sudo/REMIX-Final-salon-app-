@@ -18,10 +18,7 @@ import type { Server } from 'node:http';
 
 import { createPaymentsRouter, createMemoryPaymentOrderStore } from '../server/payments';
 import { createBookingsRouter } from '../server/bookings';
-<<<<<<< HEAD
-=======
 import { attachNexoraApi } from '../server/attachApi';
->>>>>>> 99ac21d (Fix checkout 404 by mounting /api on Vite and Express.)
 import {
   createBooking,
   validateBookingRequest,
