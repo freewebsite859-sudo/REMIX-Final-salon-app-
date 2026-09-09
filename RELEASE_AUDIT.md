@@ -1,6 +1,6 @@
 # Nexora SalonOS — Release Audit (single source of truth)
 
-**Last updated:** 2026-08-30 (Asia/Calcutta)
+**Last updated:** 2026-09-09 (UTC)
 **Branch:** `arena/01a051cc-remix-final-salon-app`
 **Supersedes:** `GAP_ANALYSIS_REPORT.md` and `FINAL_RELEASE_AUDIT.md`, both deleted.
 Those two documents overlapped and contradicted each other — the gap analysis still
@@ -116,12 +116,14 @@ never been applied to a live database. Inspect first; these are non-destructive
 (`create … if not exists`, `drop policy if exists`) but must be reviewed against
 whatever already exists. *Expected:* RPCs callable, RLS rejecting foreign rows.
 
-**B3. Booking and payment backend does not exist.**
-There is no availability hold, no duplicate protection, no server-side order
-creation, and no signature verification. Server routes today are only
-`/api/health`, four `/api/salons/*` AI endpoints, and `/api/notifications/*`.
-A booking must not be confirmable from client state. *Expected:* two concurrent
-clients cannot reserve one slot; a booking is confirmed only after verified payment.
+**B3. Booking and payment backend (implemented in this checkout).**
+`POST /api/payments/orders` creates a Razorpay order and holds the slot for
+10 minutes. `POST /api/payments/verify` HMAC-SHA256-verifies
+`order_id|payment_id` with `RAZORPAY_KEY_SECRET` and only then writes the
+booking. `POST /api/bookings` answers **402** — it is not a client payment
+shortcut. Two concurrent checkouts on the same stylist/time receive 409.
+Missing Razorpay keys answer 503 (no fake QR, no simulated capture).
+*Remaining:* live Razorpay keys + a real dual-client run against the project.
 
 **B4. Account deletion is not implemented.**
 `App.tsx` `handleDeleteAccount` deliberately returns `false` and logs a warning rather
@@ -175,7 +177,7 @@ and refuses to construct the client.
 | `VITE_NEXORA_SUPPORT_EMAIL` | no | Profile → Support contact; hidden if unset |
 | `GEMINI_API_KEY` | server only | never `VITE_` |
 | `SUPABASE_SERVICE_ROLE_KEY` | server only | never `VITE_` |
-| `RAZORPAY_*` | server only | not yet consumed — see B3 |
+| `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` | server only | consumed by `/api/payments/*` — never `VITE_` for the secret |
 
 `.env` is gitignored. `.env.example` documents every variable.
 

@@ -751,7 +751,7 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
                 )}
               </div>
 
-              {/* Price Breakdown, 25% Advance & Nexora SalonOS QR Code */}
+              {/* Price Breakdown & 25% slot-lock deposit */}
               <div className="bg-surface-container-low rounded-2xl p-4 border border-outline-variant/50 space-y-4">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">

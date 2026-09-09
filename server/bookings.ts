@@ -7,13 +7,13 @@
  * (see App.tsx handleConfirmBooking guard). The browser bundle only holds an
  * anon key; every booking write goes through this service-role endpoint:
  *
- *   POST /api/bookings   create booking + booking_services line items
+ *   POST /api/bookings   REJECTED (402) — bookings are created only after
+ *                        POST /api/payments/orders + POST /api/payments/verify
  *
- * The customer UI reaches it through `onPayDeposit` (BookingSummaryModal →
- * App.tsx). In production this endpoint is expected to sit BEHIND the payment
- * adapter: the caller verifies the Razorpay order/signature first and only
- * then creates the booking with a `pending` status. This module never claims
- * a payment happened — there is intentionally no server-side fake payment.
+ * The customer UI reaches checkout through `onPayDeposit` (BookingSummaryModal →
+ * App.tsx → createBookingClient). Direct inserts from the browser are refused.
+ * Persistence (`createBooking`) is still used by the payments router AFTER
+ * HMAC verification. This module never claims a payment happened.
  *
  * Validation, pricing and row building now live in the isomorphic core
  * (`src/lib/bookingCore.ts`) so the browser checkout, the local demo store and
@@ -86,6 +86,26 @@ export function createSupabaseBookingStore(client: SupabaseClient): BookingStore
       const { error } = await client.from('bookings').delete().eq('id', bookingId);
       return error ? { ok: false, error: error.message } : { ok: true };
     },
+    async findActiveSlot(salonId, slotDate, slotTime, stylistId) {
+      let query = client
+        .from('bookings')
+        .select('id, stylist_snapshot, status')
+        .eq('salon_id', salonId)
+        .eq('slot_date', slotDate)
+        .eq('slot_time', slotTime)
+        .in('status', ['pending', 'confirmed', 'in_progress']);
+      const { data, error } = await query;
+      if (error || !Array.isArray(data)) return false;
+      const wantChair = stylistId && stylistId.trim() ? stylistId.trim() : null;
+      return data.some((row) => {
+        const held =
+          row && typeof row === 'object'
+            ? (row as { stylist_snapshot?: { id?: string } | null }).stylist_snapshot?.id ?? null
+            : null;
+        if (!wantChair) return true;
+        return !held || held === wantChair;
+      });
+    },
   };
 }
 
@@ -102,7 +122,18 @@ export function createBookingsRouter(
   const store: BookingStore | null =
     storeOverride !== undefined ? storeOverride : client ? createSupabaseBookingStore(client) : null;
 
-  router.post('/', createBookingsHandler(store, reason));
+  // Public clients must not create a booking without a verified deposit.
+  // Persistence still lives in createBookingsHandler for tests and for the
+  // payments router, which calls createBooking() after HMAC verification.
+  router.post('/', (_req: Request, res: Response) => {
+    return jsonError(
+      res,
+      402,
+      'Secure deposit required to lock this slot. Create a gateway order at POST /api/payments/orders and confirm it at POST /api/payments/verify. Bookings are not created from this endpoint.'
+    );
+  });
+  void store;
+  void reason;
   return router;
 }
 
