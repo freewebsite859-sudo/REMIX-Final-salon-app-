@@ -596,9 +596,11 @@ begin
 end;
 $$;
 
+-- AFTER INSERT would fire before booking_services children exist (the server
+-- inserts parent then children). Enforce the match on UPDATE only.
 drop trigger if exists bookings_lines_match_metadata_trigger on public.bookings;
 create trigger bookings_lines_match_metadata_trigger
-  after insert or update on public.bookings
+  after update on public.bookings
   for each row execute function public.booking_lines_match_metadata();
 -- ============================================================================
 -- NEXORA ENGAGEMENT — QR CHECK-IN, REWARDS LEDGER, TIERS, REFERRALS

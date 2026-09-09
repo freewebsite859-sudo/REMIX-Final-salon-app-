@@ -1080,14 +1080,11 @@ export default function App() {
   };
 
   /**
-   * Server-side booking creation used as BookingSummaryModal.onPayDeposit.
+   * Server-side deposit checkout used as BookingSummaryModal.onPayDeposit.
    *
-   * Every appointment is created by the Node booking service
-   * (server/bookings.ts → POST /api/bookings) which validates the line items,
-   * recomputes totals and persists `metadata.services[]` + booking_services
-   * rows. The browser never fabricates an appointment: when the service is not
-   * configured the request is forwarded anyway so the modal surfaces the
-   * server's honest 503 instead of inventing a local success state.
+   * Live path: POST /api/payments/orders → official Razorpay Checkout →
+   * POST /api/payments/verify. The booking row is written only after HMAC
+   * verification. No merchant QR and no client-generated order/payment ids.
    */
   const handleServerBooking = useCallback(
     async (request: BookingPaymentRequest): Promise<Appointment> => {

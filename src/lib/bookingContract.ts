@@ -97,9 +97,19 @@ export interface BookingCreateRequest {
   notes?: string;
 }
 
+/** Verified gateway receipt stored on the booking after HMAC success. */
+export interface BookingPaymentProof {
+  orderId: string;
+  paymentId: string;
+  signature: string;
+  verifiedAt: string;
+}
+
 /** Metadata object persisted in `bookings.metadata` (jsonb). */
 export interface BookingMetadata {
   services: BookingServiceLine[];
+  /** Present only after server-side signature verification. */
+  payment?: BookingPaymentProof;
 }
 
 // ---------------------------------------------------------------------------

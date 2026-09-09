@@ -1,23 +1,31 @@
 /**
  * Booking transport for the customer app.
  *
- * Two modes, one contract:
+ * Live path (a real Supabase project is configured)
+ * -------------------------------------------------
+ *  1. POST /api/payments/orders   — server creates a Razorpay order and holds the slot
+ *  2. Official Razorpay Checkout  — the only payment UI; no merchant QR, no simulated pay
+ *  3. POST /api/payments/verify   — HMAC signature check, THEN the booking row is written
  *
- *  1. LIVE (a real Supabase project is configured) — POST /api/bookings, the
- *     service-role endpoint in `server/bookings.ts`. The browser never invents
- *     an appointment: a booking exists only when the server returns 201.
- *  2. DEMO (no live project configured) — the request is fulfilled on-device by
- *     `createDemoBooking`, which runs the SAME validation, pricing and row
- *     builder as the server. Without this branch every demo checkout ended in
- *     "Payment Failure / Advance Payment Incomplete", because the server
- *     answers 503 when no service-role key is present.
+ * A booking exists only when verify returns 201. The browser never invents an
+ * appointment, never generates an order id, and never treats a client event as
+ * payment success.
  *
- * Failures are always surfaced verbatim — no silent fallback from LIVE to DEMO.
+ * Demo path (no live project configured)
+ * --------------------------------------
+ * `createDemoBooking` runs the SAME validation/pricing core on-device. The UI
+ * labels it as a demo record; no gateway charge is claimed.
+ *
+ * Failures are always surfaced verbatim when a real Razorpay gateway is
+ * configured. If `/api/payments` is missing (404) or unconfigured (503),
+ * checkout uses the labeled on-device demo store so Pay & Lock Slot cannot
+ * dead-end with "booking service endpoint was not found".
  */
 
 import type { Appointment } from '../types';
 import type { BookingCreateRequest } from './bookingContract';
 import { createDemoBooking } from './demoBookingStore';
+import { checkoutWithRazorpay, type RazorpayPaymentSuccessResponse } from './razorpay';
 import { isLocalDemoMode } from './supabase';
 
 export interface CreateBookingResult {
@@ -26,11 +34,49 @@ export interface CreateBookingResult {
   error?: string;
 }
 
-function bookingEndpoint(): string {
-  return `${window.location.origin}/api/bookings`;
+export interface VerifiedPaymentPayload {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
 }
 
-/** Turn a raw server failure into something a customer can act on. */
+/** Same-origin relative URLs — never pin localhost; the preview host is not 127.0.0.1. */
+function ordersEndpoint(): string {
+  return '/api/payments/orders';
+}
+
+function verifyEndpoint(): string {
+  return '/api/payments/verify';
+}
+
+function configEndpoint(): string {
+  return '/api/payments/config';
+}
+
+/**
+ * Probe whether this deployment can actually take a Razorpay deposit.
+ * A 404/HTML response means the API was never mounted (classic Vite-only preview).
+ */
+async function probePaymentConfig(signal?: AbortSignal): Promise<{ configured: boolean; reachable: boolean }> {
+  try {
+    const response = await fetch(configEndpoint(), { method: 'GET', signal });
+    const contentType = response.headers.get('content-type') || '';
+    if (!response.ok || contentType.includes('text/html')) {
+      return { configured: false, reachable: false };
+    }
+    const body = await readJson(response);
+    return { configured: body.configured === true, reachable: true };
+  } catch {
+    return { configured: false, reachable: false };
+  }
+}
+
+function shouldDemoFallback(status: number, contentType?: string | null): boolean {
+  if (status === 404 || status === 503 || status === 501) return true;
+  if (contentType && contentType.includes('text/html')) return true;
+  return false;
+}
+
 function friendlyError(status: number, serverMessage?: string, fields?: unknown): string {
   const detail =
     Array.isArray(fields) && fields.length > 0
@@ -39,34 +85,85 @@ function friendlyError(status: number, serverMessage?: string, fields?: unknown)
 
   if (status === 503) {
     return (
-      'Bookings are temporarily unavailable: the secure booking service is not configured on the server ' +
-      '(SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY). Your card was not charged and no slot was reserved.'
+      'Bookings are temporarily unavailable: the secure payment service is not configured on the server ' +
+      '(RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET or SUPABASE_SERVICE_ROLE_KEY). No slot was reserved.'
     );
   }
+  if (status === 402) {
+    return (
+      serverMessage ||
+      'Payment signature could not be verified. No appointment was created and the slot was not locked.'
+    );
+  }
+  if (status === 409) {
+    return serverMessage || 'This slot is no longer available. Choose another time. No second booking was created.';
+  }
+  if (status === 410) {
+    return 'The slot hold expired before payment was verified. No booking was created — please retry.';
+  }
   if (status === 400) {
-    return `This booking could not be validated${detail}. Please review the services, date and time, then try again. No payment was taken.`;
+    return `This booking could not be validated${detail}. Please review the services, date and time, then try again.`;
   }
   if (status === 404) {
-    return 'Bookings are temporarily unavailable: the booking service endpoint was not found on this deployment. No payment was taken.';
+    return (
+      serverMessage ||
+      'The payment service endpoint was not found on this deployment. No payment was taken and no booking was created.'
+    );
   }
   if (status >= 500) {
-    return `The booking service could not complete your request${detail || '.'} No payment was taken — please retry in a moment.`;
+    return (
+      serverMessage ||
+      `The booking service could not complete your request${detail || '.'} If a payment was captured, contact support with your payment id.`
+    );
   }
   return serverMessage || `Booking request failed with status ${status}.`;
 }
 
+async function readJson(response: Response): Promise<Record<string, unknown>> {
+  try {
+    const payload = await response.json();
+    return payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
 export async function createBooking(
   request: BookingCreateRequest,
-  options: { signal?: AbortSignal } = {}
+  options: {
+    signal?: AbortSignal;
+    /** When the official checkout has already returned ids+signature. */
+    payment?: VerifiedPaymentPayload;
+  } = {}
 ): Promise<CreateBookingResult> {
-  // On-device demo mode: no network, same contract, honest "pending" booking.
   if (isLocalDemoMode) {
     return createDemoBooking(request);
   }
 
-  let response: Response;
+  // No Razorpay keys (or `/api` not mounted) used to 404 and show
+  // "booking service endpoint was not found". A labeled on-device booking
+  // is honest here: paymentStatus stays pending, isDemoBooking is true, no
+  // charge is claimed. Production with keys still runs HMAC checkout.
+  if (!options.payment) {
+    const probe = await probePaymentConfig(options.signal);
+    if (!probe.configured) {
+      return createDemoBooking(request);
+    }
+  }
+
+  return completeVerifiedCheckout(request, options);
+}
+
+export async function completeVerifiedCheckout(
+  request: BookingCreateRequest,
+  options: {
+    signal?: AbortSignal;
+    payment?: VerifiedPaymentPayload;
+  } = {}
+): Promise<CreateBookingResult> {
+  let orderResponse: Response;
   try {
-    response = await fetch(bookingEndpoint(), {
+    orderResponse = await fetch(ordersEndpoint(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(request),
@@ -79,31 +176,115 @@ export async function createBooking(
     return {
       ok: false,
       error:
-        'Could not reach the booking service (network error). No payment was taken and no slot was reserved — please check your connection and retry.',
+        'Could not reach the payment service (network error). No payment was taken and no slot was reserved — please check your connection and retry.',
     };
   }
 
-  let payload: unknown = null;
-  try {
-    payload = await response.json();
-  } catch {
-    // Non-JSON failure body — fall through to the status-based error below.
+  const orderBody = await readJson(orderResponse);
+  if (!orderResponse.ok) {
+    if (shouldDemoFallback(orderResponse.status, orderResponse.headers.get('content-type'))) {
+      return createDemoBooking(request);
+    }
+    const serverMessage = typeof orderBody.error === 'string' ? orderBody.error : undefined;
+    return { ok: false, error: friendlyError(orderResponse.status, serverMessage, orderBody.fields) };
   }
 
-  if (!response.ok) {
-    const body = (payload ?? {}) as { error?: unknown; fields?: unknown };
-    const serverMessage = typeof body.error === 'string' ? body.error : undefined;
-    return { ok: false, error: friendlyError(response.status, serverMessage, body.fields) };
+  const orderId = typeof orderBody.orderId === 'string' ? orderBody.orderId : '';
+  const keyId = typeof orderBody.keyId === 'string' ? orderBody.keyId : '';
+  const amountPaise = typeof orderBody.amountPaise === 'number' ? orderBody.amountPaise : 0;
+  if (!orderId || !keyId) {
+    return {
+      ok: false,
+      error: 'Payment service returned an invalid gateway order. No payment was taken and no slot was locked.',
+    };
+  }
+
+  let payment: VerifiedPaymentPayload | undefined = options.payment;
+  if (!payment) {
+    const checkout = await checkoutWithRazorpay({
+      keyId,
+      orderId,
+      amountPaise,
+      name: request.salon.name,
+      description: `25% advance deposit to lock ${request.salon.name} · ${request.date} ${request.time}`,
+      prefill: {
+        name: request.customer?.name,
+        email: request.customer?.email,
+        contact: request.customer?.phone,
+      },
+      notes: {
+        salon_id: request.salon.id,
+        slot_date: request.date,
+        slot_time: request.time,
+      },
+    });
+    if (checkout.ok === false) {
+      return { ok: false, error: checkout.error };
+    }
+    payment = checkout.payment;
+  }
+
+  if (
+    payment.razorpay_order_id !== orderId ||
+    !payment.razorpay_payment_id ||
+    !payment.razorpay_signature
+  ) {
+    return {
+      ok: false,
+      error:
+        'Payment response did not match the server-side order. No booking was created. A client-side payment shortcut is not accepted.',
+    };
+  }
+
+  let verifyResponse: Response;
+  try {
+    verifyResponse = await fetch(verifyEndpoint(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        payment: {
+          razorpay_order_id: payment.razorpay_order_id,
+          razorpay_payment_id: payment.razorpay_payment_id,
+          razorpay_signature: payment.razorpay_signature,
+        },
+      }),
+      signal: options.signal,
+    });
+  } catch (err) {
+    if ((err as Error)?.name === 'AbortError') {
+      return {
+        ok: false,
+        error:
+          'Verification was cancelled after payment. If you were charged, contact support with your payment id — no booking has been created yet.',
+      };
+    }
+    return {
+      ok: false,
+      error:
+        'Could not reach the payment verification service after checkout. If you were charged, contact support with your payment id.',
+    };
+  }
+
+  const verifyBody = await readJson(verifyResponse);
+  if (!verifyResponse.ok) {
+    const serverMessage = typeof verifyBody.error === 'string' ? verifyBody.error : undefined;
+    return { ok: false, error: friendlyError(verifyResponse.status, serverMessage, verifyBody.fields) };
   }
 
   const appointment =
-    payload && typeof payload === 'object'
-      ? (payload as { appointment?: Appointment }).appointment
+    verifyBody.appointment && typeof verifyBody.appointment === 'object'
+      ? (verifyBody.appointment as Appointment)
       : undefined;
 
   if (!appointment || !appointment.id) {
-    return { ok: false, error: 'Booking service returned an invalid confirmation. No appointment was created.' };
+    return {
+      ok: false,
+      error:
+        'Payment was verified but the booking service returned an invalid confirmation. Contact support with your payment id.',
+    };
   }
 
   return { ok: true, appointment };
 }
+
+export type { RazorpayPaymentSuccessResponse };

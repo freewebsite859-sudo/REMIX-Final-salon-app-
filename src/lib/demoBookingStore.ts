@@ -96,6 +96,19 @@ export function createDemoBookingStore(): BookingStore {
       writeRows('booking_services', services);
       return { ok: true };
     },
+    async findActiveSlot(salonId, slotDate, slotTime, stylistId) {
+      const rows = readRows<BookingDbRow>('bookings');
+      const wantChair = stylistId && stylistId.trim() ? stylistId.trim() : null;
+      return rows.some((row) => {
+        if (row.salon_id !== salonId || row.slot_date !== slotDate || row.slot_time !== slotTime) {
+          return false;
+        }
+        if ((row.status as string) === 'cancelled' || (row.status as string) === 'no_show') return false;
+        const held = row.stylist_snapshot?.id ?? null;
+        if (!wantChair) return true;
+        return !held || held === wantChair;
+      });
+    },
   };
 }
 

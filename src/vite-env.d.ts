@@ -11,6 +11,7 @@ interface ImportMetaEnv {
   readonly VITE_SUPABASE_STORAGE_KEY?: string;
   readonly VITE_NEXORA_LOCATION_TABLE?: string;
   readonly VITE_NEXORA_DEMO_MODE?: string;
+  readonly VITE_RAZORPAY_KEY_ID?: string;
   readonly VITE_NEXORA_SALONS_TABLE?: string;
   readonly VITE_NEXORA_SERVICES_TABLE?: string;
   readonly VITE_NEXORA_CATEGORIES_TABLE?: string;

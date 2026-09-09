@@ -21,6 +21,7 @@
 import {
   BookingCreateRequest,
   BookingMetadata,
+  BookingPaymentProof,
   BookingSalonSnapshot,
   BookingServiceLine,
   BookingStylistSnapshot,
@@ -94,7 +95,7 @@ export interface BookingDbRow {
   advance_amount: number;
   currency: 'INR';
   payment_mode: 'advance_25';
-  payment_status: 'pending';
+  payment_status: 'pending' | 'paid';
   coupon_code: string | null;
   notes: string | null;
   metadata: BookingMetadata;
@@ -122,6 +123,17 @@ export interface BookingStore {
   insertBooking(row: BookingDbRow): Promise<{ ok: boolean; error?: string }>;
   insertBookingServices(rows: BookingServiceDbRow[]): Promise<{ ok: boolean; error?: string }>;
   deleteBooking(bookingId: string): Promise<{ ok: boolean; error?: string }>;
+  /**
+   * Optional occupancy check used by the payment router AND createBooking so
+   * two verified deposits cannot land on one chair/time. Stores that omit it
+   * skip the database lookup (in-memory holds still apply).
+   */
+  findActiveSlot?(
+    salonId: string,
+    slotDate: string,
+    slotTime: string,
+    stylistId?: string | null
+  ): Promise<boolean>;
 }
 
 // ---------------------------------------------------------------------------
@@ -375,7 +387,10 @@ export function validateBookingRequest(body: unknown): ValidationResult {
 // Creation core — pure of express so tests can drive it through a fake store
 // ---------------------------------------------------------------------------
 
-export function buildBookingRows(input: BookingCreateRequest): {
+export function buildBookingRows(
+  input: BookingCreateRequest,
+  receipt?: BookingPaymentProof | null
+): {
   booking: BookingDbRow;
   serviceRows: BookingServiceDbRow[];
 } {
@@ -410,10 +425,22 @@ export function buildBookingRows(input: BookingCreateRequest): {
     advance_amount: advance,
     currency: 'INR',
     payment_mode: 'advance_25',
-    payment_status: 'pending',
+    payment_status: receipt ? 'paid' : 'pending',
     coupon_code: input.couponCode ?? null,
     notes: input.notes ?? null,
-    metadata: { services: input.services },
+    metadata: {
+      services: input.services,
+      ...(receipt
+        ? {
+            payment: {
+              orderId: receipt.orderId,
+              paymentId: receipt.paymentId,
+              signature: receipt.signature,
+              verifiedAt: receipt.verifiedAt,
+            },
+          }
+        : {}),
+    },
     created_at: now,
     updated_at: now,
   };
@@ -470,7 +497,14 @@ export function bookingToAppointment(input: BookingCreateRequest, booking: Booki
     advancePaid: round2(booking.advance_amount),
     remainingAmount: round2(Math.max(0, finalTotal - booking.advance_amount)),
     paymentMode: 'advance_25',
-    paymentStatus: 'pending',
+    paymentStatus: booking.payment_status,
+    ...(booking.metadata.payment
+      ? {
+          razorpayOrderId: booking.metadata.payment.orderId,
+          razorpayPaymentId: booking.metadata.payment.paymentId,
+          razorpaySignature: booking.metadata.payment.signature,
+        }
+      : {}),
     ...(booking.discount_amount > 0 ? { discountApplied: booking.discount_amount } : {}),
     ...(booking.notes ? { notes: booking.notes } : {}),
     createdAt: booking.created_at,
@@ -480,9 +514,22 @@ export function bookingToAppointment(input: BookingCreateRequest, booking: Booki
 
 export async function createBooking(
   store: BookingStore,
-  input: BookingCreateRequest
+  input: BookingCreateRequest,
+  receipt?: BookingPaymentProof | null
 ): Promise<{ appointment: Appointment | null; error?: string }> {
-  const { booking, serviceRows } = buildBookingRows(input);
+  if (typeof store.findActiveSlot === 'function') {
+    const taken = await store.findActiveSlot(
+      input.salon.id,
+      input.date,
+      input.time,
+      input.stylist?.id ?? null
+    );
+    if (taken) {
+      return { appointment: null, error: 'This slot is no longer available. Choose another time.' };
+    }
+  }
+
+  const { booking, serviceRows } = buildBookingRows(input, receipt);
 
   const parent = await store.insertBooking(booking);
   if (!parent.ok) {

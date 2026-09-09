@@ -163,7 +163,7 @@ export const PaymentFailureDialog: React.FC<PaymentFailureDialogProps> = ({
             <span>Tips to ensure successful payment:</span>
           </div>
           <p className="pl-4">
-            • Try UPI (Google Pay, PhonePe, Paytm QR) or a different Debit/Credit Card.
+            • Retry with UPI (Google Pay, PhonePe, Paytm) or a different Debit/Credit Card. No merchant QR is used.
           </p>
           <p className="pl-4">
             • Ensure sufficient bank balance and stable mobile network.
