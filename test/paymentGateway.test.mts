@@ -18,6 +18,10 @@ import type { Server } from 'node:http';
 
 import { createPaymentsRouter, createMemoryPaymentOrderStore } from '../server/payments';
 import { createBookingsRouter } from '../server/bookings';
+<<<<<<< HEAD
+=======
+import { attachNexoraApi } from '../server/attachApi';
+>>>>>>> 99ac21d (Fix checkout 404 by mounting /api on Vite and Express.)
 import {
   createBooking,
   validateBookingRequest,
@@ -131,6 +135,29 @@ async function startPayments(opts: {
 async function stop(server: Server) {
   await new Promise<void>((resolve) => server.close(() => resolve()));
 }
+
+describe('API is mounted for health + payment config', () => {
+  it('exposes GET /api/health and GET /api/payments/config', async () => {
+    const app = express();
+    app.use(express.json());
+    attachNexoraApi(app, { RAZORPAY_KEY_ID: '', RAZORPAY_KEY_SECRET: '' });
+    const { server, baseUrl } = await listen(app);
+    try {
+      const health = await fetch(`${baseUrl}/api/health`);
+      assert.equal(health.status, 200);
+      const healthBody = (await health.json()) as { status: string };
+      assert.equal(healthBody.status, 'ok');
+
+      const config = await fetch(`${baseUrl}/api/payments/config`);
+      assert.equal(config.status, 200);
+      const configBody = (await config.json()) as { configured: boolean; provider: string };
+      assert.equal(configBody.configured, false);
+      assert.equal(configBody.provider, 'razorpay');
+    } finally {
+      await stop(server);
+    }
+  });
+});
 
 describe('paymentCore HMAC + slot keys', () => {
   it('signs and verifies order_id|payment_id', () => {

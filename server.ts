@@ -2,10 +2,7 @@ import express, { Request, Response } from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
-import { createNotificationsRouter } from "./server/notifications";
-import { createBookingsRouter } from "./server/bookings";
-import { createPaymentsRouter } from "./server/payments";
-import { createEngagementRouter } from "./server/engagement";
+import { attachNexoraApi } from "./server/attachApi";
 
 dotenv.config();
 
@@ -14,26 +11,9 @@ const PORT = 3000;
 
 app.use(express.json({ limit: '32kb' }));
 
-// Notification channel dispatch + provider status webhooks.
-// This is how salon-side confirmations (booking_confirmed etc.) reach users.
-app.use("/api/notifications", createNotificationsRouter(process.env));
-
 // Direct booking inserts are refused (402). The payments router creates the
 // booking only after a server-side gateway order + HMAC signature verify.
-app.use("/api/bookings", createBookingsRouter(process.env));
-app.use("/api/payments", createPaymentsRouter(process.env));
-
-// Engagement: user QR codes, salon check-ins, rewards ledger summary.
-// Same trust model as bookings — service-role only.
-app.use("/api/engagement", createEngagementRouter(process.env));
-
-// Health check
-app.get("/api/health", (_req: Request, res: Response) => {
-  res.json({
-    status: "ok",
-    timestamp: new Date().toISOString(),
-  });
-});
+attachNexoraApi(app);
 
 // Start Server with Vite Middleware
 async function startServer() {

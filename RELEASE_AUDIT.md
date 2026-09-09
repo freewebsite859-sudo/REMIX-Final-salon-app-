@@ -123,6 +123,9 @@ whatever already exists. *Expected:* RPCs callable, RLS rejecting foreign rows.
 booking. `POST /api/bookings` answers **402** — it is not a client payment
 shortcut. Two concurrent checkouts on the same stylist/time receive 409.
 Missing Razorpay keys answer 503 (no fake QR, no simulated capture).
+The same `/api/*` surface is mounted from `tsx server.ts` **and** from the
+Vite `configureServer` plugin so a Vite-only preview cannot 404 the deposit
+endpoint. Vite DEV without Razorpay keys uses the labeled on-device demo store.
 *Remaining:* live Razorpay keys + a real dual-client run against the project.
 
 **B4. Account deletion is not implemented.**

@@ -16,7 +16,10 @@
  * `createDemoBooking` runs the SAME validation/pricing core on-device. The UI
  * labels it as a demo record; no gateway charge is claimed.
  *
- * Failures are always surfaced verbatim — no silent fallback from LIVE to DEMO.
+ * Failures are always surfaced verbatim — production live mode never silently
+ * falls through to demo. Vite DEV without a configured Razorpay gateway uses
+ * the labeled on-device demo store so a missing `/api` mount cannot 404 the
+ * customer at "Pay & Lock Slot".
  */
 
 import type { Appointment } from '../types';
@@ -37,18 +40,43 @@ export interface VerifiedPaymentPayload {
   razorpay_signature: string;
 }
 
-function origin(): string {
-  return typeof window !== 'undefined' && window.location?.origin
-    ? window.location.origin
-    : '';
-}
-
+/** Same-origin relative URLs — never pin localhost; the preview host is not 127.0.0.1. */
 function ordersEndpoint(): string {
-  return `${origin()}/api/payments/orders`;
+  return '/api/payments/orders';
 }
 
 function verifyEndpoint(): string {
-  return `${origin()}/api/payments/verify`;
+  return '/api/payments/verify';
+}
+
+function configEndpoint(): string {
+  return '/api/payments/config';
+}
+
+function isViteDev(): boolean {
+  try {
+    return Boolean((import.meta as { env?: { DEV?: boolean } }).env?.DEV);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Probe whether this deployment can actually take a Razorpay deposit.
+ * A 404/HTML response means the API was never mounted (classic Vite-only preview).
+ */
+async function probePaymentConfig(signal?: AbortSignal): Promise<{ configured: boolean; reachable: boolean }> {
+  try {
+    const response = await fetch(configEndpoint(), { method: 'GET', signal });
+    const contentType = response.headers.get('content-type') || '';
+    if (!response.ok || contentType.includes('text/html')) {
+      return { configured: false, reachable: false };
+    }
+    const body = await readJson(response);
+    return { configured: body.configured === true, reachable: true };
+  } catch {
+    return { configured: false, reachable: false };
+  }
 }
 
 function friendlyError(status: number, serverMessage?: string, fields?: unknown): string {
@@ -79,7 +107,10 @@ function friendlyError(status: number, serverMessage?: string, fields?: unknown)
     return `This booking could not be validated${detail}. Please review the services, date and time, then try again.`;
   }
   if (status === 404) {
-    return 'The payment order was not found. No booking was created.';
+    return (
+      serverMessage ||
+      'The payment service endpoint was not found on this deployment. No payment was taken and no booking was created.'
+    );
   }
   if (status >= 500) {
     return (
@@ -109,6 +140,17 @@ export async function createBooking(
 ): Promise<CreateBookingResult> {
   if (isLocalDemoMode) {
     return createDemoBooking(request);
+  }
+
+  // Dev / preview without Razorpay keys (or without the API mounted) used to
+  // 404 `/api/payments/orders` and show "Advance Payment Incomplete". In DEV
+  // we take the labeled on-device demo path instead of a dead-end. Production
+  // live mode never silently falls through.
+  if (isViteDev() && !options.payment) {
+    const probe = await probePaymentConfig(options.signal);
+    if (!probe.configured) {
+      return createDemoBooking(request);
+    }
   }
 
   return completeVerifiedCheckout(request, options);
