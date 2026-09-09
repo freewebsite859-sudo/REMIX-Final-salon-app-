@@ -37,6 +37,10 @@
     "test:reviews": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/reviewsPage.test.tsx",
     "test:reviews-service": "tsx test/reviewsService.test.mts",
     "test:notifications-page": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/notificationsPage.test.tsx",
+    "test:booking-rewards": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/bookingRewards.test.tsx",
+    "test:search-location": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/searchLocation.test.tsx",
+    "test:multi-service": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/multiServiceBooking.test.tsx",
+    "test:signup-dob": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/signupDob.test.tsx",
     "typecheck": "tsc --noEmit",
     "verify:live": "node scripts/verify-live.mjs"
   },

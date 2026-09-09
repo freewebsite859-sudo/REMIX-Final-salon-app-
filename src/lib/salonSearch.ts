@@ -3,6 +3,14 @@
  * recent-search persistence for the customer Search page.
  */
 import type { Salon, SalonService } from '../types';
+import {
+  compactForMatch,
+  correctWord,
+  matchInText,
+  normalizeForMatch,
+  rankFuzzyCandidates,
+  type WordCorrection,
+} from './fuzzyMatch';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -63,6 +71,15 @@ export interface ParsedSearchQuery {
   inferredSort: SearchSort | null;
   /** Human-readable chips explaining what the NL parser understood. */
   understanding: string[];
+  /**
+   * Spelling fixes the parser is willing to apply ("barbar" → "barber").
+   * They are NOT applied to `inferred`; `searchSalons` only falls back to the
+   * corrected query when the literal query finds nothing.
+   */
+  corrections: WordCorrection[];
+  /** The raw query with every correction applied, or the raw query unchanged. */
+  correctedQuery: string;
+
 }
 
 export interface SearchResult {
@@ -72,6 +89,8 @@ export interface SearchResult {
   /** Starting price used for display / sort. */
   fromPrice: number;
   score: number;
+  /** True when this salon only matched after typo tolerance was applied. */
+  fuzzy: boolean;
 }
 
 export const DEFAULT_SEARCH_FILTERS: SearchFilters = {
@@ -270,6 +289,8 @@ function textMatchesService(haystack: string, needle: string): boolean {
   // Token AND: every needle word appears in haystack
   const words = n.split(' ').filter((w) => w.length >= 2);
   if (words.length > 1 && words.every((w) => h.includes(w) || hc.includes(w))) return true;
+  // Typo tolerance last — "hiarcut" ≈ "haircut", "facail" ≈ "facial".
+  if (matchInText(h, n).hit) return true;
   return false;
 }
 
@@ -379,6 +400,112 @@ const SERVICE_PHRASES: Array<{ name: string; patterns: RegExp[] }> = [
 ];
 
 /**
+ * Vocabulary used for typo correction. Every word a customer could
+ * legitimately type to describe WHAT they want or WHERE they want it.
+ * Only single words are corrected — phrases are handled by the NL patterns
+ * once their words are spelled correctly.
+ */
+export const SEARCH_VOCABULARY: readonly string[] = Array.from(
+  new Set(
+    [
+      // categories + the words the category patterns look for
+      ...SEARCH_CATEGORIES.flatMap((c) => [c.label, ...c.match]),
+      'salon',
+      'saloon',
+      'barber',
+      'barbershop',
+      'beauty',
+      'parlour',
+      'parlor',
+      'spa',
+      'massage',
+      'tattoo',
+      'piercing',
+      'nail',
+      'nails',
+      'studio',
+      'shop',
+      'stylist',
+      'grooming',
+      'wellness',
+      // services
+      ...SERVICE_TYPE_OPTIONS,
+      'haircut',
+      'hair',
+      'cut',
+      'beard',
+      'shave',
+      'trim',
+      'facial',
+      'colour',
+      'color',
+      'highlights',
+      'balayage',
+      'keratin',
+      'bridal',
+      'makeup',
+      'manicure',
+      'pedicure',
+      'threading',
+      'waxing',
+      'hydra',
+      // qualifiers
+      'near',
+      'nearby',
+      'open',
+      'today',
+      'verified',
+      'offers',
+      'discount',
+      'cheapest',
+      'budget',
+      'best',
+      'popular',
+      'trending',
+      'ladies',
+      'gents',
+      'unisex',
+      'female',
+      'male',
+      'women',
+      'under',
+      'below',
+      'within',
+      // places
+      ...JAIPUR_AREAS,
+      'jaipur',
+      'scheme',
+      'nagar',
+      'road',
+      'park',
+      'city',
+      'colony',
+    ]
+      .flatMap((entry) => normalizeForMatch(entry).split(' '))
+      .filter((word) => word.length >= 3)
+  )
+);
+
+/**
+ * Spell-correct the alphabetic words of a query while preserving digits,
+ * currency symbols and spacing (so "haircut ₹300" keeps its price intact).
+ */
+export function correctSearchQuery(input: string): {
+  corrected: string;
+  corrections: WordCorrection[];
+} {
+  const corrections: WordCorrection[] = [];
+  const corrected = (input || '').replace(/[A-Za-z][A-Za-z']*/g, (word) => {
+    const fix = correctWord(word, SEARCH_VOCABULARY);
+    if (!fix) return word;
+    corrections.push({ from: word.toLowerCase(), to: fix.to, distance: fix.distance });
+    // Preserve the original capitalisation style loosely (all-caps stays caps).
+    return word === word.toUpperCase() && word.length > 1 ? fix.to.toUpperCase() : fix.to;
+  });
+  return { corrected, corrections };
+}
+
+/**
  * Parse a free-text / natural-language query into structured filters + residual text.
  * Examples handled:
  *  - "haircut under ₹300"
@@ -395,8 +522,21 @@ export function parseSearchQuery(rawInput: string): ParsedSearchQuery {
   let inferredSort: SearchSort | null = null;
 
   if (!raw) {
-    return { text: '', raw: '', inferred, inferredSort: null, understanding: [] };
+    return {
+      text: '',
+      raw: '',
+      inferred,
+      inferredSort: null,
+      understanding: [],
+      corrections: [],
+      correctedQuery: '',
+    };
   }
+
+  // Spelling fixes are computed but NOT applied here: a literal query always
+  // gets the first attempt. `searchSalons` re-runs with `correctedQuery` only
+  // when the literal attempt finds nothing.
+  const spelling = correctSearchQuery(raw);
 
   // Price: under/below/less than / max / up to ₹N
   const underRe =
@@ -609,6 +749,8 @@ export function parseSearchQuery(rawInput: string): ParsedSearchQuery {
     inferred,
     inferredSort,
     understanding: uniqueStrings(understanding),
+    corrections: spelling.corrections,
+    correctedQuery: spelling.corrections.length > 0 ? spelling.corrected : raw,
   };
 }
 
@@ -685,12 +827,12 @@ function passesFilters(
   salon: Salon,
   filters: SearchFilters,
   textTokens: string[]
-): { ok: boolean; matchedService: SalonService | null; fromPrice: number } {
+): { ok: boolean; matchedService: SalonService | null; fromPrice: number; fuzzy: boolean } {
   const fromPrice = minSalonPrice(salon);
   let matchedService: SalonService | null = null;
 
   if (!categoryMatch(salon, filters.category)) {
-    return { ok: false, matchedService: null, fromPrice };
+    return { ok: false, matchedService: null, fromPrice, fuzzy: false };
   }
 
   if (filters.serviceType.trim()) {
@@ -699,7 +841,7 @@ function passesFilters(
     const blob = salonBlob(salon);
     const soft = textMatchesService(blob, q) || compactToken(blob).includes(compactToken(q));
     if (typed.length === 0 && !soft) {
-      return { ok: false, matchedService: null, fromPrice };
+      return { ok: false, matchedService: null, fromPrice, fuzzy: false };
     }
 
     // Prefer a matching service inside the price window when both are set.
@@ -711,7 +853,7 @@ function passesFilters(
     });
     if (typed.length > 0 && (filters.maxPrice != null || filters.minPrice != null)) {
       if (priced.length === 0) {
-        return { ok: false, matchedService: typed[0], fromPrice: servicePrice(typed[0]) };
+        return { ok: false, matchedService: typed[0], fromPrice: servicePrice(typed[0]), fuzzy: false };
       }
       matchedService = priced[0];
     } else {
@@ -732,7 +874,7 @@ function passesFilters(
       return true;
     });
     if (inRange.length === 0 && (salon.services || []).length > 0) {
-      return { ok: false, matchedService: null, fromPrice };
+      return { ok: false, matchedService: null, fromPrice, fuzzy: false };
     }
     if (inRange.length > 0) {
       matchedService = inRange.sort((a, b) => servicePrice(a) - servicePrice(b))[0];
@@ -741,66 +883,83 @@ function passesFilters(
   }
 
   if (filters.maxPrice != null && pricePoint > filters.maxPrice) {
-    return { ok: false, matchedService, fromPrice: pricePoint };
+    return { ok: false, matchedService, fromPrice: pricePoint, fuzzy: false };
   }
   if (filters.minPrice != null && pricePoint < filters.minPrice) {
-    return { ok: false, matchedService, fromPrice: pricePoint };
+    return { ok: false, matchedService, fromPrice: pricePoint, fuzzy: false };
   }
 
   if (filters.maxDistanceKm != null && distanceKm(salon) > filters.maxDistanceKm) {
-    return { ok: false, matchedService, fromPrice: pricePoint };
+    return { ok: false, matchedService, fromPrice: pricePoint, fuzzy: false };
   }
 
   if (filters.minRating > 0 && salon.rating < filters.minRating) {
-    return { ok: false, matchedService, fromPrice: pricePoint };
+    return { ok: false, matchedService, fromPrice: pricePoint, fuzzy: false };
   }
 
   if (filters.openNow && !salon.isOpen) {
-    return { ok: false, matchedService, fromPrice: pricePoint };
+    return { ok: false, matchedService, fromPrice: pricePoint, fuzzy: false };
   }
 
   if (filters.gender !== 'all') {
     if (filters.gender === 'unisex') {
-      if (salon.gender !== 'unisex') return { ok: false, matchedService, fromPrice: pricePoint };
+      if (salon.gender !== 'unisex') return { ok: false, matchedService, fromPrice: pricePoint, fuzzy: false };
     } else if (salon.gender !== filters.gender && salon.gender !== 'unisex') {
       // Men/women filters also accept unisex salons
-      return { ok: false, matchedService, fromPrice: pricePoint };
+      return { ok: false, matchedService, fromPrice: pricePoint, fuzzy: false };
     }
   }
 
   if (filters.homeService && !hasHomeService(salon)) {
-    return { ok: false, matchedService, fromPrice: pricePoint };
+    return { ok: false, matchedService, fromPrice: pricePoint, fuzzy: false };
   }
 
   if (filters.verifiedOnly && !isVerifiedSalon(salon)) {
-    return { ok: false, matchedService, fromPrice: pricePoint };
+    return { ok: false, matchedService, fromPrice: pricePoint, fuzzy: false };
   }
 
   if (filters.offersOnly && !hasOffers(salon)) {
-    return { ok: false, matchedService, fromPrice: pricePoint };
+    return { ok: false, matchedService, fromPrice: pricePoint, fuzzy: false };
   }
+
+  let fuzzy = false;
 
   if (filters.area.trim()) {
     const area = filters.area.trim().toLowerCase();
-    const hit =
+    const exactHit =
       salon.location.area.toLowerCase().includes(area) ||
       salon.location.address.toLowerCase().includes(area) ||
       (salon.keywords || []).some((k) => k.toLowerCase().includes(area));
-    if (!hit) return { ok: false, matchedService, fromPrice: pricePoint };
-  }
-
-  // Residual free-text tokens — all must hit the blob (AND)
-  if (textTokens.length > 0) {
-    const blob = salonBlob(salon);
-    for (const t of textTokens) {
-      if (t.length < 2) continue;
-      if (!blob.includes(t)) {
-        return { ok: false, matchedService, fromPrice: pricePoint };
-      }
+    if (!exactHit) {
+      // "Mansarover" / "Vaishaali Nagar" still belong to the right locality.
+      const fuzzyHit =
+        matchInText(salon.location.area, area).hit ||
+        matchInText(salon.location.address, area).hit ||
+        (salon.keywords || []).some((k) => matchInText(k, area).hit);
+      if (!fuzzyHit) return { ok: false, matchedService, fromPrice: pricePoint, fuzzy: false };
+      fuzzy = true;
     }
   }
 
-  return { ok: true, matchedService, fromPrice: pricePoint };
+  // Residual free-text tokens — all must hit the blob (AND), exactly or with
+  // a tolerable typo. Without the fuzzy pass, "barbar" reads as "this city has
+  // no barbers" instead of "you misspelled barber".
+  if (textTokens.length > 0) {
+    const blob = salonBlob(salon);
+    const compactBlob = compactForMatch(blob);
+    for (const t of textTokens) {
+      if (t.length < 2) continue;
+      if (blob.includes(t)) continue;
+      if (t.length >= 5 && compactBlob.includes(compactForMatch(t))) continue;
+      if (matchInText(blob, t).hit) {
+        fuzzy = true;
+        continue;
+      }
+      return { ok: false, matchedService, fromPrice: pricePoint, fuzzy: false };
+    }
+  }
+
+  return { ok: true, matchedService, fromPrice: pricePoint, fuzzy };
 }
 
 function relevanceScore(
@@ -819,6 +978,10 @@ function relevanceScore(
   for (const t of textTokens) {
     if (salon.name.toLowerCase().includes(t)) score += 25;
     else if (blob.includes(t)) score += 8;
+    // A typo-tolerant hit still counts, but always below a literal one so an
+    // exact match can never be pushed under a corrected one.
+    else if (matchInText(salon.name, t).hit) score += 14;
+    else if (matchInText(blob, t).hit) score += 4;
   }
   if (matchedService) score += 12;
   if (filters.serviceType && matchedService) score += 6;
@@ -867,18 +1030,29 @@ export function sortResults(results: SearchResult[], sort: SearchSort): SearchRe
 /**
  * Run the full search pipeline: parse NL → merge filters → filter → score → sort.
  */
-export function searchSalons(
-  salons: Salon[],
-  query: string,
-  uiFilters: SearchFilters = DEFAULT_SEARCH_FILTERS,
-  uiSort: SearchSort | null = null
-): {
+export interface SalonSearchOutcome {
   results: SearchResult[];
   parsed: ParsedSearchQuery;
   filters: SearchFilters;
   sort: SearchSort;
-} {
-  const parsed = parseSearchQuery(query);
+  /**
+   * Set when the literal query found nothing and a spelling-corrected retry
+   * was used instead — e.g. "BARBAR SHOP" → "barber shop". The UI shows this
+   * as "Showing results for …".
+   */
+  didYouMean: string | null;
+  /** The corrections behind `didYouMean` (empty when none were applied). */
+  appliedCorrections: WordCorrection[];
+  /** True when at least one result matched only through typo tolerance. */
+  usedFuzzyMatching: boolean;
+}
+
+function runSearch(
+  salons: Salon[],
+  parsed: ParsedSearchQuery,
+  uiFilters: SearchFilters,
+  uiSort: SearchSort | null
+): { results: SearchResult[]; filters: SearchFilters; sort: SearchSort } {
   const filters = mergeFilters(uiFilters, parsed.inferred);
   const sort: SearchSort = uiSort || parsed.inferredSort || 'nearest';
 
@@ -890,21 +1064,91 @@ export function searchSalons(
 
   const results: SearchResult[] = [];
   for (const salon of salons) {
-    const { ok, matchedService, fromPrice } = passesFilters(salon, filters, textTokens);
+    const { ok, matchedService, fromPrice, fuzzy } = passesFilters(salon, filters, textTokens);
     if (!ok) continue;
     results.push({
       salon,
       matchedService,
       fromPrice,
-      score: relevanceScore(salon, textTokens, filters, matchedService),
+      fuzzy,
+      score: relevanceScore(salon, textTokens, filters, matchedService) - (fuzzy ? 6 : 0),
     });
   }
 
+  return { results: sortResults(results, sort), filters, sort };
+}
+
+export function searchSalons(
+  salons: Salon[],
+  query: string,
+  uiFilters: SearchFilters = DEFAULT_SEARCH_FILTERS,
+  uiSort: SearchSort | null = null
+): SalonSearchOutcome {
+  const parsed = parseSearchQuery(query);
+  const first = runSearch(salons, parsed, uiFilters, uiSort);
+
+  // The query is spelled with words we know — nothing to second-guess.
+  if (parsed.corrections.length === 0) {
+    return {
+      results: first.results,
+      parsed,
+      filters: first.filters,
+      sort: first.sort,
+      didYouMean: null,
+      appliedCorrections: [],
+      usedFuzzyMatching: first.results.some((r) => r.fuzzy),
+    };
+  }
+
+  // Misspelled words: run the corrected query too. "BARBAR SHOP" must reach
+  // the barber CATEGORY, not just the salons that happen to list the typo as
+  // an SEO keyword.
+  const correctedParsed = parseSearchQuery(parsed.correctedQuery);
+  const retry = runSearch(salons, correctedParsed, uiFilters, uiSort);
+
+  // Nothing found either way — report the literal attempt unchanged.
+  if (retry.results.length === 0) {
+    return {
+      results: first.results,
+      parsed,
+      filters: first.filters,
+      sort: first.sort,
+      didYouMean: null,
+      appliedCorrections: [],
+      usedFuzzyMatching: first.results.some((r) => r.fuzzy),
+    };
+  }
+
+  // The literal query found nothing: answer entirely with the corrected one,
+  // including its filters, so the UI chips explain the correction.
+  if (first.results.length === 0) {
+    return {
+      results: retry.results,
+      parsed: correctedParsed,
+      filters: retry.filters,
+      sort: retry.sort,
+      didYouMean: parsed.correctedQuery,
+      appliedCorrections: parsed.corrections,
+      usedFuzzyMatching: true,
+    };
+  }
+
+  // Both found something: keep every literal hit ranked as-is and append the
+  // corrected extras. Recall goes up, exact matches never lose their place.
+  const seen = new Set(first.results.map((r) => r.salon.id));
+  const extras = retry.results
+    .filter((r) => !seen.has(r.salon.id))
+    .map((r) => ({ ...r, fuzzy: true }));
+  const merged = extras.length > 0 ? [...first.results, ...extras] : first.results;
+
   return {
-    results: sortResults(results, sort),
+    results: merged,
     parsed,
-    filters,
-    sort,
+    filters: first.filters,
+    sort: first.sort,
+    didYouMean: extras.length > 0 ? parsed.correctedQuery : null,
+    appliedCorrections: extras.length > 0 ? parsed.corrections : [],
+    usedFuzzyMatching: merged.some((r) => r.fuzzy),
   };
 }
 

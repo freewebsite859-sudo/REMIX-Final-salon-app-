@@ -10,8 +10,12 @@ import { formatCoordsLabel } from '../lib/locationService';
 import {
   JAIPUR_AREA_CHIPS,
   formatAreaLabel,
-  nearestJaipurArea,
 } from '../lib/jaipurAreas';
+import {
+  resolveAreaQuery,
+  resolveLocationWithFallback,
+  suggestAreas,
+} from '../lib/areaResolver';
 
 /** Optional structured metadata passed with a location pick. */
 export interface LocationSelectionMeta {
@@ -46,6 +50,7 @@ export const LocationModal: React.FC<LocationModalProps> = ({
   isLiveSyncBlocked = false,
 }) => {
   const [customInput, setCustomInput] = useState('');
+  const [manualError, setManualError] = useState<string | null>(null);
   const [isDetectingGps, setIsDetectingGps] = useState(false);
   const [detectAttempt, setDetectAttempt] = useState(0);
   const [gpsFailure, setGpsFailure] = useState<DeviceLocationFailure | null>(null);
@@ -61,10 +66,12 @@ export const LocationModal: React.FC<LocationModalProps> = ({
       setGpsFailure(null);
       setIsDetectingGps(false);
       setDetectAttempt(0);
+      setManualError(null);
       return;
     }
 
     setGpsFailure(null);
+    setManualError(null);
     setDetectAttempt(0);
     let cancelled = false;
 
@@ -96,22 +103,25 @@ export const LocationModal: React.FC<LocationModalProps> = ({
     setDetectAttempt(0);
 
     if (result.status === 'ok') {
-      const nearest = nearestJaipurArea(result.latitude, result.longitude);
-      if (nearest) {
-        onSelectLocation(formatAreaLabel(nearest), result.latitude, result.longitude, {
-          area: nearest.area,
-          city: nearest.city,
-          pincode: nearest.pincode,
+      // One ladder for every fix: exact locality → nearest locality within a
+      // widened radius → honest raw-coordinate label. A fix never degrades
+      // into an unusable, coordinate-less selection.
+      const resolved = resolveLocationWithFallback({
+        coords: { latitude: result.latitude, longitude: result.longitude },
+      });
+      onSelectLocation(
+        resolved.area === 'Current location'
+          ? formatCoordsLabel(result.latitude, result.longitude)
+          : resolved.label,
+        result.latitude,
+        result.longitude,
+        {
+          area: resolved.area,
+          city: resolved.city,
+          pincode: resolved.pincode,
           source: 'gps',
-        });
-      } else {
-        onSelectLocation(
-          formatCoordsLabel(result.latitude, result.longitude),
-          result.latitude,
-          result.longitude,
-          { source: 'gps', city: 'Jaipur', area: 'Current location' }
-        );
-      }
+        }
+      );
       onClose();
       return;
     }
@@ -131,17 +141,39 @@ export const LocationModal: React.FC<LocationModalProps> = ({
 
   const popularAreas = JAIPUR_AREA_CHIPS;
 
+  /** Typo-tolerant suggestions for whatever is in the search box. */
+  const typedSuggestions = customInput.trim() ? suggestAreas(customInput, 4) : [];
+
+  const commitArea = (
+    area: { area: string; city: string; latitude: number; longitude: number; pincode?: string }
+  ) => {
+    onSelectLocation(
+      formatAreaLabel(area),
+      area.latitude,
+      area.longitude,
+      { source: 'manual', area: area.area, city: area.city, pincode: area.pincode }
+    );
+    setCustomInput('');
+    setManualError(null);
+    onClose();
+  };
+
   const handleCustomSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (customInput.trim()) {
-      onSelectLocation(customInput.trim(), undefined, undefined, {
-        source: 'manual',
-        area: customInput.trim(),
-        city: 'Jaipur',
-      });
-      setCustomInput('');
-      onClose();
+    const typed = customInput.trim();
+    if (!typed) return;
+
+    // Free text used to be saved verbatim WITHOUT coordinates, which the
+    // preference store rejects — the pick silently disappeared on reload.
+    // Resolve it to a real locality (typos and PIN codes included) first.
+    const resolved = resolveAreaQuery(typed);
+    if (resolved.match) {
+      commitArea(resolved.match);
+      return;
     }
+    setManualError(
+      `We could not match “${typed}” to a locality we serve. Pick one below, or try a PIN code.`
+    );
   };
 
   const gpsBlocked = gpsFailure?.code === 'blocked';
@@ -284,6 +316,42 @@ export const LocationModal: React.FC<LocationModalProps> = ({
               Set
             </button>
           </div>
+
+          {typedSuggestions.length > 0 && (
+            <ul id="location-suggestions" className="mt-2 flex flex-col gap-1">
+              {typedSuggestions.map((area) => (
+                <li key={area.name}>
+                  <button
+                    type="button"
+                    id={`location-suggestion-${area.name.toLowerCase().replace(/\s+/g, '-')}`}
+                    onClick={() => commitArea(area)}
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-xl border border-outline-variant/40 bg-surface-container-lowest hover:bg-surface-container text-left transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-[16px] text-nexora-pink">
+                      distance
+                    </span>
+                    <span className="text-[13px] font-medium text-on-surface flex-1 truncate">
+                      {area.area}
+                    </span>
+                    <span className="text-[10px] text-on-surface-variant">
+                      {area.city}
+                      {area.pincode ? ` · ${area.pincode}` : ''}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {manualError && (
+            <p
+              id="location-manual-error"
+              role="alert"
+              className="mt-2 text-[11px] text-error font-medium"
+            >
+              {manualError}
+            </p>
+          )}
         </form>
 
         {/* Popular Areas in Jaipur */}

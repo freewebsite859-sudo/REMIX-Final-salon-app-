@@ -27,6 +27,7 @@ import { PasswordUpdatePage } from './components/auth/PasswordUpdatePage';
 import { isSupabaseConfigured, getSupabaseConfigStatus } from './lib/supabase';
 import { useAuth } from './providers/AuthProvider';
 import { useLocationSync } from './hooks/useLocationSync';
+import { resolveLocationWithFallback } from './lib/areaResolver';
 import { clearUserLocation, syncUserLocation } from './lib/locationService';
 import {
   hasCompletedLocationSetup,
@@ -42,6 +43,8 @@ import {
   toBookingStylistSnapshot,
   type BookingCreateRequest,
 } from './lib/bookingContract';
+import { computeBookingTotals } from './lib/bookingCore';
+import { syncBookingRewards } from './lib/rewardsService';
 import { createBooking } from './lib/createBookingClient';
 import { isRealtimeEnabled, subscribeToTable } from './lib/realtimeService';
 import { currentPath, isAuthRoute, isSignupRoute, redirectToApp } from './lib/authRoutes';
@@ -789,6 +792,10 @@ export default function App() {
         sessionUser?.email?.split('@')[0] ||
         '',
       phone: sessionUser?.user_metadata?.mobile || sessionUser?.phone || storedProfile?.phone || '',
+      dateOfBirth:
+        (sessionUser?.user_metadata?.date_of_birth as string | undefined) ||
+        storedProfile?.dateOfBirth ||
+        undefined,
       role: effectiveRole,
       locationArea:
         savedLocation?.area ||
@@ -818,6 +825,9 @@ export default function App() {
           const { profile } = await fetchUserProfile(userId);
           if (profile?.role) {
             setUser(prev => ({ ...prev, role: profile.role }));
+          }
+          if (profile?.date_of_birth) {
+            setUser(prev => ({ ...prev, dateOfBirth: prev.dateOfBirth || profile.date_of_birth! }));
           }
         }
       } catch (err) {
@@ -996,6 +1006,29 @@ export default function App() {
     }
   }, [user, userId]);
 
+  /**
+   * Loyalty accrual — the wallet is the ledger, the profile shows the balance.
+   *
+   * Every COMPLETED booking credits floor(bill × 10%) reward points exactly
+   * once (`syncBookingRewards` is idempotent per booking id), and the profile's
+   * `loyaltyPoints` always mirrors the wallet's current balance so the
+   * membership tier, Profile header and Rewards page can never disagree.
+   */
+  useEffect(() => {
+    if (!userId || hydratedUserIdRef.current !== userId) return;
+    const { summary, awarded, pointsAwarded } = syncBookingRewards(userId, appointments);
+    if (awarded.length > 0) {
+      console.info(
+        `[Nexora] Loyalty: credited ${pointsAwarded} points for ${awarded.length} completed booking(s).`
+      );
+    }
+    setUser((prev) =>
+      prev.loyaltyPoints === summary.currentPoints
+        ? prev
+        : { ...prev, loyaltyPoints: summary.currentPoints }
+    );
+  }, [appointments, userId]);
+
   // Handlers
   const handleOpenSalonDetails = (salon: Salon) => {
     setSelectedSalonForDetail(salon);
@@ -1058,20 +1091,33 @@ export default function App() {
    */
   const handleServerBooking = useCallback(
     async (request: BookingPaymentRequest): Promise<Appointment> => {
+      // Canonical line items are the ONLY pricing input. Rebuilding them here
+      // (instead of trusting the amount the modal rendered) means a service
+      // the contract had to drop, or a stale draft, can never produce the
+      // "advance payment incomplete" mismatch the server rejects with 400.
+      const services = buildBookingMetadataServices(bookingSummaryDraft?.services ?? []);
+      if (services.length === 0) {
+        throw new Error(
+          'No valid services are selected for this booking. Add at least one service and try again.'
+        );
+      }
+      const totals = computeBookingTotals(services, request.discountAmount ?? 0);
+
       const body: BookingCreateRequest = {
         salon: toBookingSalonSnapshot(bookingSummaryDraft?.salon ?? null),
-        services: buildBookingMetadataServices(bookingSummaryDraft?.services ?? []),
+        services,
         stylist: toBookingStylistSnapshot(bookingSummaryDraft?.stylist ?? null),
         customer: {
           ...(userId ? { id: userId } : {}),
+          ...(user.name ? { name: user.name } : {}),
           ...(session?.user?.email ? { email: session.user.email } : {}),
-          ...(session?.user?.phone ? { phone: session.user.phone } : {}),
+          ...(session?.user?.phone || user.phone ? { phone: session?.user?.phone || user.phone } : {}),
         },
         date: request.date,
         time: request.time,
-        amount: request.amount,
+        amount: totals.advanceAmount,
         ...(request.couponCode ? { couponCode: request.couponCode } : {}),
-        ...(request.discountAmount !== undefined ? { discountAmount: request.discountAmount } : {}),
+        ...(totals.discountAmount > 0 ? { discountAmount: totals.discountAmount } : {}),
         notes: request.notes,
       };
 
@@ -1081,7 +1127,7 @@ export default function App() {
       }
       return result.appointment;
     },
-    [bookingSummaryDraft, userId, session]
+    [bookingSummaryDraft, userId, session, user.name, user.phone]
   );
 
   const handleConfirmBooking = (newAppointment: Appointment) => {
@@ -1238,6 +1284,7 @@ export default function App() {
             name: authData.name || prev.name,
             email: authData.email || prev.email,
             phone: authData.phone || prev.phone,
+            dateOfBirth: authData.dateOfBirth || prev.dateOfBirth,
             role: authData.role || prev.role || 'customer',
           }));
           setAuthInitialMode('login');
@@ -1637,19 +1684,42 @@ export default function App() {
         isLiveSyncBlocked={locationSync.permissionDenied && !locationSync.isWatching}
         onSelectLocation={(loc, lat, lng, meta) => {
           setCurrentLocation(loc);
-          // Persist structured preference (lat/lng/city/area/pincode) when we
-          // have enough detail — first-login and header picker share this path.
-          if (userId && typeof lat === 'number' && typeof lng === 'number') {
-            const area = meta?.area || loc.split(',')[0]?.trim() || loc;
-            const city = meta?.city || loc.split(',').slice(-1)[0]?.trim() || 'Jaipur';
+          // A selection without coordinates used to be dropped on the floor by
+          // the preference store, so the header label reverted on reload.
+          // Resolve one through the fallback ladder instead.
+          let latitude = lat;
+          let longitude = lng;
+          let resolvedMeta = meta;
+          if (typeof latitude !== 'number' || typeof longitude !== 'number') {
+            const resolved = resolveLocationWithFallback({
+              typedText: meta?.area || loc,
+              saved: userId ? loadCustomerLocation(userId) : null,
+              profileArea: user.locationArea || user.defaultLocality || null,
+              profileCity: user.city || null,
+            });
+            latitude = resolved.latitude;
+            longitude = resolved.longitude;
+            resolvedMeta = {
+              area: resolved.area,
+              city: resolved.city,
+              pincode: resolved.pincode,
+              source: resolved.preferenceSource,
+            };
+            setCurrentLocation(resolved.label);
+          }
+          if (userId && typeof latitude === 'number' && typeof longitude === 'number') {
+            const lat2 = latitude;
+            const lng2 = longitude;
+            const area = resolvedMeta?.area || loc.split(',')[0]?.trim() || loc;
+            const city = resolvedMeta?.city || loc.split(',').slice(-1)[0]?.trim() || 'Jaipur';
             void persistCustomerLocation(userId, {
-              latitude: lat,
-              longitude: lng,
+              latitude: lat2,
+              longitude: lng2,
               city,
               area,
-              pincode: meta?.pincode,
-              label: loc,
-              source: meta?.source || (meta?.area ? 'chip' : 'gps'),
+              pincode: resolvedMeta?.pincode,
+              label: resolvedMeta === meta ? loc : `${area}, ${city}`,
+              source: resolvedMeta?.source || (resolvedMeta?.area ? 'chip' : 'gps'),
             }).then((saved) => {
               if (saved) {
                 setUser((prev) => ({
@@ -1661,9 +1731,9 @@ export default function App() {
                 }));
               }
             });
-          } else if (typeof lat === 'number' && typeof lng === 'number') {
+          } else if (typeof latitude === 'number' && typeof longitude === 'number') {
             // Guest: push is a no-op without a session, but keep the label.
-            void handleManualLocationSync(lat, lng);
+            void handleManualLocationSync(latitude, longitude);
           }
         }}
       />
@@ -1789,9 +1859,12 @@ export default function App() {
             : []
         }
         onToggleSaveService={handleToggleSaveService}
-        onBookService={(salon, srv, st) => {
+        onBookService={(salon, srv, st, services) => {
           setIsSalonDetailModalOpen(false);
-          handleOpenBooking(salon, srv, st);
+          // `services` carries the salon page's multi-service cart so a bulk
+          // selection survives into the booking modal instead of collapsing
+          // to the single service that was tapped.
+          handleOpenBooking(salon, srv, st, services);
         }}
       />
 

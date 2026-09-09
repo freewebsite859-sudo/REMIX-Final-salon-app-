@@ -21,6 +21,7 @@ export interface UserProfileRow {
   user_id?: string;
   email?: string | null;
   full_name?: string | null;
+  date_of_birth?: string | null;
   role: UserRole;
   created_at?: string;
   updated_at?: string;
@@ -134,6 +135,7 @@ export async function upsertUserProfile(
   email: string,
   role: UserRole,
   fullName?: string,
+  extra: { dateOfBirth?: string | null } = {},
   client: SupabaseClient | null = supabase
 ): Promise<{ success: boolean; error: string | null }> {
   if (!client || !isSupabaseConfigured) {
@@ -159,12 +161,30 @@ export async function upsertUserProfile(
         updated_at: new Date().toISOString(),
       };
 
+      // Date of birth is mandatory at customer sign-up; persist it so the
+      // birthday bonus (profiles.date_of_birth) works from day one.
+      if (extra.dateOfBirth) {
+        payload.date_of_birth = extra.dateOfBirth;
+      }
+
       // For user_profiles that uses user_id
       if (table === 'user_profiles') {
         payload.user_id = userId;
       }
 
-      const { error } = await client.from(table).upsert(payload, { onConflict: 'id' });
+      let { error } = await client.from(table).upsert(payload, { onConflict: 'id' });
+
+      // Legacy deployments may not have the date_of_birth column yet — retry
+      // without it instead of losing the whole profile row.
+      if (
+        error &&
+        payload.date_of_birth &&
+        ((error as any).code === '42703' || error.message?.includes('date_of_birth'))
+      ) {
+        const { date_of_birth: _omitted, ...withoutDob } = payload;
+        const retry = await client.from(table).upsert(withoutDob, { onConflict: 'id' });
+        error = retry.error;
+      }
 
       if (!error) {
         return { success: true, error: null };

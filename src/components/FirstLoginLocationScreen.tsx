@@ -6,13 +6,8 @@ import {
   requestDeviceLocation,
   type DeviceLocationFailure,
 } from '../lib/deviceLocation';
-import {
-  JAIPUR_AREA_CHIPS,
-  formatAreaLabel,
-  isInsideJaipur,
-  nearestJaipurArea,
-  type JaipurArea,
-} from '../lib/jaipurAreas';
+import { JAIPUR_AREA_CHIPS, type JaipurArea } from '../lib/jaipurAreas';
+import { resolveLocationWithFallback, suggestAreas } from '../lib/areaResolver';
 import {
   persistCustomerLocation,
   preferenceFromChip,
@@ -57,6 +52,7 @@ export const FirstLoginLocationScreen: React.FC<FirstLoginLocationScreenProps> =
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [selectedChip, setSelectedChip] = useState<string | null>(null);
+  const [areaQuery, setAreaQuery] = useState('');
 
   const embedded = isEmbeddedFrame();
   const firstName = userName?.trim().split(/\s+/)[0] || '';
@@ -123,32 +119,17 @@ export const FirstLoginLocationScreen: React.FC<FirstLoginLocationScreenProps> =
       return;
     }
 
+    // Shared ladder: exact locality → nearest locality (widened radius) →
+    // honest raw coordinates. Always ends with a saveable preference.
     const { latitude, longitude } = result;
-    const nearest = nearestJaipurArea(latitude, longitude);
-    const inJaipur = isInsideJaipur(latitude, longitude);
-
-    if (nearest) {
-      await finishWithPreference({
-        latitude,
-        longitude,
-        city: nearest.city,
-        area: nearest.area,
-        pincode: nearest.pincode,
-        label: formatAreaLabel(nearest),
-        source: 'gps',
-      });
-      return;
-    }
-
-    // GPS fix outside chip radius — still save raw coords with a sensible label.
+    const resolved = resolveLocationWithFallback({ coords: { latitude, longitude } });
     await finishWithPreference({
       latitude,
       longitude,
-      city: inJaipur ? 'Jaipur' : 'Nearby',
-      area: inJaipur ? 'Current location' : 'Current location',
-      label: inJaipur
-        ? `Current location, Jaipur`
-        : `Current Location (${latitude.toFixed(3)}, ${longitude.toFixed(3)})`,
+      city: resolved.city,
+      area: resolved.area,
+      pincode: resolved.pincode,
+      label: resolved.label,
       source: 'gps',
     });
   }, [finishWithPreference]);
@@ -161,6 +142,11 @@ export const FirstLoginLocationScreen: React.FC<FirstLoginLocationScreenProps> =
     },
     [finishWithPreference]
   );
+
+  // Typo tolerant: "mansrovar" and "302020" both narrow to Mansarovar.
+  const visibleChips: readonly JaipurArea[] = areaQuery.trim()
+    ? suggestAreas(areaQuery, JAIPUR_AREA_CHIPS.length)
+    : JAIPUR_AREA_CHIPS;
 
   const openInNewTab = () => {
     if (typeof window === 'undefined') return;
@@ -328,9 +314,24 @@ export const FirstLoginLocationScreen: React.FC<FirstLoginLocationScreenProps> =
               </div>
             )}
 
+            <div className="relative">
+              <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-[#594047]/70">
+                search
+              </span>
+              <input
+                id="first-login-area-search"
+                type="text"
+                value={areaQuery}
+                onChange={(e) => setAreaQuery(e.target.value)}
+                placeholder="Search your area or PIN code"
+                aria-label="Search your area or PIN code"
+                className="w-full h-11 pl-10 pr-3 rounded-xl bg-white/90 border border-[#e8e8e8] text-[14px] text-on-surface focus:outline-none focus:border-[#b90064]/50"
+              />
+            </div>
+
             <div className="flex items-center justify-between">
               <h2 className="text-[13px] font-bold uppercase tracking-wider text-[#594047]">
-                Popular areas in Jaipur
+                {areaQuery.trim() ? 'Matching areas' : 'Popular areas in Jaipur'}
               </h2>
               <button
                 type="button"
@@ -351,7 +352,7 @@ export const FirstLoginLocationScreen: React.FC<FirstLoginLocationScreenProps> =
               id="first-login-jaipur-area-chips"
               className="grid grid-cols-2 gap-2 max-h-[42vh] overflow-y-auto pr-0.5"
             >
-              {JAIPUR_AREA_CHIPS.map((chip) => {
+              {visibleChips.map((chip) => {
                 const isSelected = selectedChip === chip.name;
                 return (
                   <button
@@ -388,6 +389,13 @@ export const FirstLoginLocationScreen: React.FC<FirstLoginLocationScreenProps> =
                 );
               })}
             </div>
+
+            {areaQuery.trim() && visibleChips.length === 0 && (
+              <p id="first-login-no-area-match" className="text-[12px] text-[#594047] text-center">
+                No locality matches “{areaQuery.trim()}”. Clear the search to see every area we
+                serve in Jaipur.
+              </p>
+            )}
 
             {isSaving && (
               <p className="text-[12px] text-center text-[#594047] flex items-center justify-center gap-1.5">

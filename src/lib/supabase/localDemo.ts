@@ -28,6 +28,7 @@ interface DemoUserRecord {
   hash: string;
   full_name: string;
   mobile: string;
+  date_of_birth?: string | null;
   role: string;
   created_at: string;
 }
@@ -42,6 +43,10 @@ const DEMO_TABLES = new Set([
   'notifications',
   'notification_preferences',
   'notification_deliveries',
+  // Written by src/lib/demoBookingStore.ts so a demo checkout persists real
+  // booking rows instead of failing on the unconfigured server endpoint.
+  'bookings',
+  'booking_services',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -126,7 +131,12 @@ function toAuthUser(rec: DemoUserRecord) {
     confirmed_at: rec.created_at,
     last_sign_in_at: new Date().toISOString(),
     app_metadata: { provider: 'email', providers: ['email'] },
-    user_metadata: { full_name: rec.full_name, mobile: rec.mobile, role: rec.role },
+    user_metadata: {
+      full_name: rec.full_name,
+      mobile: rec.mobile,
+      date_of_birth: rec.date_of_birth ?? null,
+      role: rec.role,
+    },
     identities: [{ id: rec.id, user_id: rec.id, provider: 'email' }],
     created_at: rec.created_at,
     updated_at: new Date().toISOString(),
@@ -349,7 +359,7 @@ export interface LocalDemoClient {
   auth: {
     getSession: () => Promise<{ data: { session: unknown }; error: null }>;
     signInWithPassword: (c: { email: string; password: string }) => Promise<{ data: { user: unknown; session: unknown }; error: { message: string; status?: number } | null }>;
-    signUp: (c: { email: string; password: string; options?: { data?: Record<string, string> } }) => Promise<{ data: { user: unknown; session: unknown }; error: { message: string } | null }>;
+    signUp: (c: { email: string; password: string; options?: { data?: Record<string, string | null | undefined> } }) => Promise<{ data: { user: unknown; session: unknown }; error: { message: string } | null }>;
     signOut: () => Promise<{ error: null }>;
     updateUser: (attrs: Record<string, unknown>) => Promise<{ data: { user: unknown }; error: { message: string } | null }>;
     resetPasswordForEmail: (email: string) => Promise<{ data: null; error: { message: string } }>;
@@ -446,6 +456,7 @@ export function createLocalDemoClient(storageKey: string): LocalDemoClient {
           hash: await hashPassword(password, salt),
           full_name: options?.data?.full_name || key.split('@')[0],
           mobile: options?.data?.mobile || '',
+          date_of_birth: options?.data?.date_of_birth || null,
           role: options?.data?.role === 'salon_owner' ? 'salon_owner' : 'customer',
           created_at: new Date().toISOString(),
         };
@@ -462,6 +473,7 @@ export function createLocalDemoClient(storageKey: string): LocalDemoClient {
             email: rec.email,
             role: rec.role,
             full_name: rec.full_name,
+            date_of_birth: rec.date_of_birth ?? null,
             created_at: rec.created_at,
             updated_at: rec.created_at,
           });

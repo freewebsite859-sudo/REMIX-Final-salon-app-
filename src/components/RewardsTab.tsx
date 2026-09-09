@@ -20,6 +20,16 @@ import {
   getTypeBadgeMeta,
   resetRewardsToDemo,
   formatRewardDate,
+  BOOKING_CASHBACK_PERCENT,
+  MIN_BOOKING_AMOUNT_INR,
+  MAX_REDEEM_PERCENT_OF_BILL,
+  calculateBookingPoints,
+  isBookingRewardEligible,
+  bookingBillAmount,
+  bookingRewardAlreadyAwarded,
+  maxRedeemablePoints,
+  redeemPointsForBooking,
+  syncBookingRewards,
 } from '../lib/rewardsService';
 
 interface RewardsTabProps {
@@ -52,6 +62,25 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
   useEffect(() => {
     setTransactions(getStoredRewardTransactions(userId));
   }, [userId]);
+
+  /**
+   * Loyalty earn rule: every COMPLETED booking credits
+   * floor(bill × 10%) points, exactly once. The reconciliation is idempotent,
+   * so running it whenever the booking list changes can never double-credit.
+   */
+  useEffect(() => {
+    const { transactions: synced, awarded, pointsAwarded } = syncBookingRewards(userId, appointments);
+    setTransactions(synced);
+    if (awarded.length > 0) {
+      setToastMessage({
+        text: `+${pointsAwarded} points credited for ${awarded.length} completed booking${
+          awarded.length === 1 ? '' : 's'
+        }.`,
+        type: 'success',
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, appointments]);
 
   // Derived wallet summary
   const summary = useMemo(() => {
@@ -189,6 +218,85 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
     } else {
       showToast(result.message, 'error');
     }
+  };
+
+  // -------------------------------------------------------------------------
+  // Booking loyalty (earn on completion · redeem against a completed booking)
+  // -------------------------------------------------------------------------
+  const completedBookings = useMemo(
+    () =>
+      (appointments || [])
+        .filter((apt) => String(apt.status || '').toLowerCase() === 'completed')
+        .sort((a, b) => (b.date || '').localeCompare(a.date || '')),
+    [appointments]
+  );
+
+  const bookingLedger = useMemo(
+    () =>
+      completedBookings.map((apt) => {
+        const bill = bookingBillAmount(apt);
+        const earnedTx = bookingRewardAlreadyAwarded(transactions, apt.id);
+        const redemption = transactions.find(
+          (tx) => tx.bookingId === apt.id && tx.type === 'redemption'
+        );
+        return {
+          appointment: apt,
+          bill,
+          eligible: isBookingRewardEligible(apt),
+          pointsEarned: earnedTx?.points ?? calculateBookingPoints(bill),
+          credited: Boolean(earnedTx),
+          redeemedPoints: redemption ? Math.abs(redemption.points) : 0,
+        };
+      }),
+    [completedBookings, transactions]
+  );
+
+  const [bookingRedeemId, setBookingRedeemId] = useState<string>('');
+  const [bookingRedeemPoints, setBookingRedeemPoints] = useState<string>('');
+  const [bookingRedeemError, setBookingRedeemError] = useState<string | null>(null);
+
+  const bookingBeingRedeemed = useMemo(
+    () => completedBookings.find((apt) => apt.id === bookingRedeemId) || null,
+    [completedBookings, bookingRedeemId]
+  );
+
+  const bookingRedeemCap = useMemo(() => {
+    if (!bookingBeingRedeemed) return 0;
+    return maxRedeemablePoints(summary.currentPoints, bookingBillAmount(bookingBeingRedeemed));
+  }, [bookingBeingRedeemed, summary.currentPoints]);
+
+  const openBookingRedeem = (appointmentId: string) => {
+    const target = completedBookings.find((apt) => apt.id === appointmentId) || null;
+    const cap = target
+      ? maxRedeemablePoints(summary.currentPoints, bookingBillAmount(target))
+      : 0;
+    setBookingRedeemId(appointmentId);
+    setBookingRedeemPoints(String(cap));
+    setBookingRedeemError(null);
+  };
+
+  const handleExecuteBookingRedemption = () => {
+    if (!bookingBeingRedeemed) return;
+    setBookingRedeemError(null);
+    const result = redeemPointsForBooking({
+      userId,
+      appointment: bookingBeingRedeemed,
+      pointsToRedeem: Number(bookingRedeemPoints),
+    });
+
+    if (!result.success) {
+      setBookingRedeemError(result.error || 'Redemption failed. Please review the rules and retry.');
+      return;
+    }
+
+    setTransactions(getStoredRewardTransactions(userId));
+    setBookingRedeemId('');
+    showToast(
+      `Redeemed ${result.pointsRedeemed} points (₹${result.discountInr} off) on booking ${
+        bookingBeingRedeemed.bookingRef || ''
+      }. Net payable ₹${result.netPayableInr}.`,
+      'success'
+    );
   };
 
   // Handle reset to demo transactions
@@ -599,6 +707,118 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
       </section>
 
       {/* ========================================================================= */}
+      {/* 4b. BOOKING LOYALTY — EARN ON COMPLETION & REDEEM ON A COMPLETED BILL     */}
+      {/* ========================================================================= */}
+      <section
+        id="section-booking-rewards"
+        className="bg-surface-container-low border border-outline-variant/50 rounded-2xl p-4 sm:p-5 shadow-xs mb-4"
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3 pb-3 border-b border-outline-variant/30">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-xl bg-emerald-500/15 text-emerald-800 flex items-center justify-center shrink-0">
+              <span className="material-symbols-outlined text-[22px]">event_available</span>
+            </div>
+            <div>
+              <h2 className="font-section-heading text-[17px] font-bold text-on-surface">
+                Booking Rewards
+              </h2>
+              <p className="text-[11px] text-on-surface-variant">
+                Earn {BOOKING_CASHBACK_PERCENT}% points on every completed appointment (min ₹
+                {MIN_BOOKING_AMOUNT_INR}) · redeem up to {MAX_REDEEM_PERCENT_OF_BILL}% of a completed bill
+              </p>
+            </div>
+          </div>
+          <div className="text-right shrink-0">
+            <span className="text-[10px] text-on-surface-variant block uppercase tracking-wide">
+              Earned from bookings
+            </span>
+            <span
+              id="wallet-booking-rewards-value"
+              className="text-[20px] font-extrabold text-emerald-800 tabular-nums"
+            >
+              +{summary.bookingRewards.toLocaleString('en-IN')} pts
+            </span>
+          </div>
+        </div>
+
+        {bookingLedger.length === 0 ? (
+          <div
+            id="booking-rewards-empty"
+            className="p-5 text-center bg-surface-container-lowest rounded-2xl border border-dashed border-outline-variant/50"
+          >
+            <p className="text-[13px] font-bold text-on-surface">No completed bookings yet</p>
+            <p className="text-[11px] text-on-surface-variant mt-0.5">
+              Points are credited automatically once your appointment is marked completed at the salon.
+            </p>
+            {onNavigateToBooking && (
+              <button
+                type="button"
+                onClick={onNavigateToBooking}
+                className="mt-3 px-3 py-1.5 bg-primary/10 text-primary text-[11px] font-bold rounded-lg hover:bg-primary/20 transition-colors cursor-pointer"
+              >
+                Book an appointment
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2.5">
+            {bookingLedger.map((row) => (
+              <div
+                key={row.appointment.id}
+                data-booking-reward={row.appointment.id}
+                className="p-3 rounded-xl bg-surface-container-lowest border border-outline-variant/40 flex flex-wrap items-center justify-between gap-2"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="font-bold text-[13px] text-on-surface truncate">
+                      {row.appointment.salonName}
+                    </span>
+                    <span className="text-[10px] font-mono text-on-surface-variant bg-surface-container px-1.5 py-0.2 rounded">
+                      {row.appointment.bookingRef}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-on-surface-variant">
+                    {formatRewardDate(row.appointment.date)} · Bill ₹{row.bill.toLocaleString('en-IN')}
+                    {row.redeemedPoints > 0 && (
+                      <> · Redeemed {row.redeemedPoints} pts</>
+                    )}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  {row.eligible ? (
+                    <span
+                      className={`text-[11px] font-extrabold px-2 py-1 rounded-lg ${
+                        row.credited
+                          ? 'bg-emerald-500/15 text-emerald-800'
+                          : 'bg-amber-500/15 text-amber-900'
+                      }`}
+                    >
+                      +{row.pointsEarned} pts
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-semibold px-2 py-1 rounded-lg bg-surface-container text-on-surface-variant">
+                      Below ₹{MIN_BOOKING_AMOUNT_INR} — no points
+                    </span>
+                  )}
+
+                  <button
+                    type="button"
+                    data-testid={`redeem-booking-${row.appointment.id}`}
+                    onClick={() => openBookingRedeem(row.appointment.id)}
+                    disabled={row.redeemedPoints > 0 || summary.currentPoints <= 0 || row.bill < MIN_BOOKING_AMOUNT_INR}
+                    className="px-3 py-1.5 rounded-lg bg-primary text-white text-[11px] font-bold hover:bg-[#b00055] transition-colors cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
+                  >
+                    {row.redeemedPoints > 0 ? 'Redeemed' : 'Redeem points'}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* ========================================================================= */}
       {/* 5. EXPIRING REWARDS SECTION                                               */}
       {/* ========================================================================= */}
       <section
@@ -700,6 +920,7 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
           {[
             { id: 'all', label: 'All' },
             { id: 'qr_payment', label: 'QR Payments' },
+            { id: 'booking', label: 'Bookings' },
             { id: 'referral', label: 'Referrals' },
             { id: 'redeemed', label: 'Redeemed' },
             { id: 'expired', label: 'Expired' },
@@ -1092,6 +1313,132 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL 1b: REDEEM POINTS AGAINST A COMPLETED BOOKING                       */}
+      {/* ========================================================================= */}
+      {bookingBeingRedeemed && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div
+            id="booking-redeem-modal"
+            className="w-full max-w-md bg-surface rounded-3xl p-5 sm:p-6 shadow-2xl border border-outline-variant/40 flex flex-col gap-4 max-h-[90vh] overflow-y-auto"
+          >
+            <div className="flex items-center justify-between border-b border-outline-variant/30 pb-3">
+              <div>
+                <h3 className="font-card-title text-[17px] font-bold text-on-surface">
+                  Redeem on Completed Booking
+                </h3>
+                <p className="text-[11px] text-on-surface-variant">
+                  {bookingBeingRedeemed.salonName} · {bookingBeingRedeemed.bookingRef}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBookingRedeemId('')}
+                aria-label="Close redemption"
+                className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container transition-colors cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
+            </div>
+
+            <div className="p-3 bg-primary/10 border border-primary/20 rounded-xl flex items-center justify-between">
+              <span className="text-[12px] font-bold text-on-surface">Available Balance</span>
+              <span className="text-[14px] font-extrabold text-primary tabular-nums">
+                {summary.currentPoints} pts (₹{summary.currentPoints * POINTS_TO_INR_RATIO})
+              </span>
+            </div>
+
+            <div>
+              <label
+                htmlFor="booking-redeem-points-input"
+                className="text-[12px] font-bold text-on-surface mb-1 flex items-center justify-between"
+              >
+                <span>Points to Redeem</span>
+                <span className="text-[10px] text-on-surface-variant">
+                  Max {bookingRedeemCap} pts ({MAX_REDEEM_PERCENT_OF_BILL}% of ₹
+                  {bookingBillAmount(bookingBeingRedeemed)})
+                </span>
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  id="booking-redeem-points-input"
+                  value={bookingRedeemPoints}
+                  onChange={(e) => setBookingRedeemPoints(e.target.value)}
+                  min="1"
+                  max={bookingRedeemCap}
+                  className="flex-1 h-11 px-3.5 bg-surface-container-lowest text-on-surface rounded-xl text-[14px] font-bold border border-outline-variant/50 focus:border-primary focus:ring-1 focus:ring-primary"
+                />
+                <button
+                  type="button"
+                  id="booking-redeem-max-btn"
+                  onClick={() => setBookingRedeemPoints(String(bookingRedeemCap))}
+                  className="px-3 bg-surface-container text-on-surface text-[12px] font-bold rounded-xl hover:bg-surface-container-high transition-colors cursor-pointer"
+                >
+                  Use Max
+                </button>
+              </div>
+            </div>
+
+            <div className="p-3 bg-surface-container-lowest rounded-xl border border-outline-variant/40 text-[12px] space-y-1.5">
+              <div className="flex justify-between text-on-surface-variant">
+                <span>Booking bill:</span>
+                <span className="font-semibold text-on-surface">
+                  ₹{bookingBillAmount(bookingBeingRedeemed).toLocaleString('en-IN')}
+                </span>
+              </div>
+              <div className="flex justify-between text-emerald-800">
+                <span>Points discount:</span>
+                <span className="font-bold">-₹{Math.max(0, Number(bookingRedeemPoints) || 0)}</span>
+              </div>
+              <div className="flex justify-between text-[14px] font-extrabold text-on-surface pt-1.5 border-t border-outline-variant/30">
+                <span>Net payable at salon:</span>
+                <span id="booking-redeem-net-payable" className="text-primary">
+                  ₹
+                  {Math.max(
+                    0,
+                    bookingBillAmount(bookingBeingRedeemed) - (Number(bookingRedeemPoints) || 0)
+                  ).toLocaleString('en-IN')}
+                </span>
+              </div>
+            </div>
+
+            {bookingRedeemError && (
+              <p
+                id="booking-redeem-error"
+                className="text-[12px] text-rose-700 font-semibold bg-rose-50 border border-rose-200 rounded-xl p-2.5"
+              >
+                {bookingRedeemError}
+              </p>
+            )}
+
+            <p className="text-[10px] text-on-surface-variant leading-relaxed">
+              ⚠️ Points are a discount on a partner-salon bill — never a cash withdrawal. One redemption
+              per booking.
+            </p>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setBookingRedeemId('')}
+                className="flex-1 py-2.5 rounded-xl bg-surface-container text-on-surface text-[12px] font-semibold hover:bg-surface-container-high transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                id="confirm-booking-redemption-btn"
+                onClick={handleExecuteBookingRedemption}
+                disabled={bookingRedeemCap <= 0}
+                className="flex-1 py-2.5 rounded-xl bg-primary text-white text-[12px] font-bold hover:bg-[#b00055] transition-colors cursor-pointer shadow-xs disabled:opacity-50"
+              >
+                Confirm Redemption
+              </button>
+            </div>
           </div>
         </div>
       )}

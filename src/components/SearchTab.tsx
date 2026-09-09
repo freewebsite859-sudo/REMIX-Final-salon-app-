@@ -23,6 +23,17 @@ import {
   pushRecentSearch,
   searchSalons,
 } from '../lib/salonSearch';
+import {
+  DEFAULT_MAPS_GROUNDING_PREFERENCES,
+  describeGroundingCapability,
+  groundResults,
+  loadMapsGroundingPreferences,
+  requestAiMapsGrounding,
+  setMapsGroundingPreference,
+  type AiGroundingResult,
+  type GroundedSalon,
+  type MapsGroundingPreferences,
+} from '../lib/mapsGrounding';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -77,10 +88,24 @@ const SearchResultCard: React.FC<{
   fromPrice: number;
   matchedService: SalonService | null;
   isSaved: boolean;
+  /** Typo-tolerant match — flagged so the ranking stays explainable. */
+  fuzzy?: boolean;
+  /** Google Maps grounding for this salon (null when grounding is off). */
+  grounding?: GroundedSalon | null;
   onOpen: () => void;
   onBook: () => void;
   onToggleSave: () => void;
-}> = ({ salon, fromPrice, matchedService, isSaved, onOpen, onBook, onToggleSave }) => {
+}> = ({
+  salon,
+  fromPrice,
+  matchedService,
+  isSaved,
+  fuzzy = false,
+  grounding = null,
+  onOpen,
+  onBook,
+  onToggleSave,
+}) => {
   const verified = isVerifiedSalon(salon);
   const category = salon.categories?.[0] || (salon.gender === 'men' ? 'Barber' : 'Salon');
   const offer = hasOffers(salon);
@@ -137,6 +162,46 @@ const SearchResultCard: React.FC<{
             </span>
           )}
         </div>
+
+        {(grounding || fuzzy) && (
+          <div className="flex flex-wrap items-center gap-1.5" data-testid={`result-meta-${salon.id}`}>
+            {grounding && (
+              <a
+                id={`maps-grounding-${salon.id}`}
+                data-grounding-status={grounding.status}
+                href={grounding.directionsUrl}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold border transition-colors ${
+                  grounding.status === 'verified'
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+                    : 'bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100'
+                }`}
+                title={
+                  grounding.status === 'verified'
+                    ? 'Coordinates verified against the salon catalog — opens Google Maps'
+                    : 'No verified coordinates — Google Maps will search by name and address'
+                }
+              >
+                <span className="material-symbols-outlined text-[12px]">
+                  {grounding.status === 'verified' ? 'where_to_vote' : 'location_searching'}
+                </span>
+                {grounding.label}
+              </a>
+            )}
+            {fuzzy && (
+              <span
+                data-fuzzy-match="true"
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-primary/10 text-primary border border-primary/20"
+                title="Matched despite a spelling difference in your search"
+              >
+                <span className="material-symbols-outlined text-[12px]">spellcheck</span>
+                Close match
+              </span>
+            )}
+          </div>
+        )}
 
         <p className="text-[11px] text-on-surface-variant truncate">
           {category}
@@ -355,6 +420,55 @@ export const SearchTab: React.FC<SearchTabProps> = ({
   const active = isSearchActive(query, filters);
   const activeFilterCount = countActiveFilters(pipeline.filters);
   const results = pipeline.results;
+
+  // ---- Google Maps grounding ---------------------------------------------
+  const [groundingPrefs, setGroundingPrefs] = useState<MapsGroundingPreferences>(
+    () => DEFAULT_MAPS_GROUNDING_PREFERENCES
+  );
+  const [aiGroundingState, setAiGroundingState] = useState<AiGroundingResult | null>(null);
+  const capability = useMemo(() => describeGroundingCapability(), []);
+
+  // Read persisted toggles after mount so server/CI renders stay deterministic.
+  useEffect(() => {
+    setGroundingPrefs(loadMapsGroundingPreferences());
+  }, []);
+
+  const toggleGrounding = useCallback(
+    (key: keyof MapsGroundingPreferences) => {
+      setGroundingPrefs((prev) => setMapsGroundingPreference(key, !prev[key]));
+    },
+    []
+  );
+
+  const grounded = useMemo(
+    () => groundResults(results, { enabled: groundingPrefs.groundedResults }),
+    [results, groundingPrefs.groundedResults]
+  );
+
+  // AI grounding is an explicit opt-in and never blocks the catalog results.
+  useEffect(() => {
+    if (!groundingPrefs.aiGrounding) {
+      setAiGroundingState(null);
+      return;
+    }
+    const q = query.trim();
+    if (!q) {
+      setAiGroundingState(null);
+      return;
+    }
+    let cancelled = false;
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    void requestAiMapsGrounding(
+      { query: q, area: areaShort, city: 'Jaipur' },
+      { enabled: true, signal: controller?.signal }
+    ).then((result) => {
+      if (!cancelled) setAiGroundingState(result);
+    });
+    return () => {
+      cancelled = true;
+      controller?.abort();
+    };
+  }, [groundingPrefs.aiGrounding, query, areaShort]);
 
   // Live NL understanding chips (even before submit)
   const liveParsed = useMemo(() => parseSearchQuery(query), [query]);
@@ -590,6 +704,112 @@ export const SearchTab: React.FC<SearchTabProps> = ({
             {voiceHint}
           </p>
         )}
+
+        {/* Typo correction notice — search must never dead-end on a typo. */}
+        {(active || submitted) && pipeline.didYouMean && (
+          <div
+            id="search-did-you-mean"
+            role="status"
+            className="mt-2.5 flex flex-wrap items-center gap-2 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2"
+          >
+            <span className="material-symbols-outlined text-[16px] text-primary">spellcheck</span>
+            <p className="text-[12px] text-on-surface flex-1 min-w-[160px]">
+              Also showing results for{' '}
+              <button
+                type="button"
+                id="search-apply-correction-btn"
+                onClick={() => applyExample(pipeline.didYouMean as string)}
+                className="font-bold text-primary underline underline-offset-2 cursor-pointer"
+              >
+                “{pipeline.didYouMean}”
+              </button>
+              {pipeline.appliedCorrections.length > 0 && (
+                <span className="text-on-surface-variant">
+                  {' '}
+                  ({pipeline.appliedCorrections
+                    .map((c) => `${c.from} → ${c.to}`)
+                    .join(', ')})
+                </span>
+              )}
+            </p>
+          </div>
+        )}
+
+        {/* Google Maps grounding controls */}
+        <div
+          id="maps-grounding-bar"
+          className="mt-2.5 rounded-xl border border-outline-variant/50 bg-white px-3 py-2"
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="material-symbols-outlined text-[16px] text-primary">map</span>
+            <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant mr-auto">
+              Maps grounding
+            </span>
+            <button
+              type="button"
+              id="toggle-grounded-results"
+              role="switch"
+              aria-checked={groundingPrefs.groundedResults}
+              onClick={() => toggleGrounding('groundedResults')}
+              className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition-colors cursor-pointer ${
+                groundingPrefs.groundedResults
+                  ? 'bg-primary text-white border-primary'
+                  : 'bg-white text-on-surface-variant border-outline-variant/60'
+              }`}
+            >
+              Google Maps grounded results {groundingPrefs.groundedResults ? 'On' : 'Off'}
+            </button>
+            <button
+              type="button"
+              id="toggle-ai-maps-grounding"
+              role="switch"
+              aria-checked={groundingPrefs.aiGrounding && capability.aiGrounding.available}
+              disabled={!capability.aiGrounding.available}
+              onClick={() => toggleGrounding('aiGrounding')}
+              className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition-colors ${
+                !capability.aiGrounding.available
+                  ? 'bg-surface-container text-on-surface-variant border-outline-variant/50 cursor-not-allowed opacity-70'
+                  : groundingPrefs.aiGrounding
+                    ? 'bg-nexora-pink text-white border-nexora-pink cursor-pointer'
+                    : 'bg-white text-on-surface-variant border-outline-variant/60 cursor-pointer'
+              }`}
+              title={capability.aiGrounding.reason}
+            >
+              AI Maps grounding{' '}
+              {!capability.aiGrounding.available
+                ? 'Unavailable'
+                : groundingPrefs.aiGrounding
+                  ? 'On'
+                  : 'Off'}
+            </button>
+          </div>
+          <p id="maps-grounding-status" className="mt-1 text-[11px] text-on-surface-variant">
+            {groundingPrefs.groundedResults
+              ? `${grounded.verifiedCount} of ${grounded.items.length} result${
+                  grounded.items.length === 1 ? '' : 's'
+                } verified against catalog coordinates${
+                  grounded.unverifiedCount > 0
+                    ? ` · ${grounded.unverifiedCount} without verified coordinates`
+                    : ''
+                }.`
+              : 'Grounding is off — results are shown in pure relevance order with no map verification.'}
+          </p>
+          {groundingPrefs.aiGrounding && aiGroundingState && (
+            <p id="ai-grounding-panel" data-ai-status={aiGroundingState.status} className="mt-1 text-[11px] text-on-surface-variant">
+              {aiGroundingState.status === 'ok'
+                ? aiGroundingState.summary ||
+                  `${aiGroundingState.places.length} place${
+                    aiGroundingState.places.length === 1 ? '' : 's'
+                  } grounded with Google Maps.`
+                : aiGroundingState.message}
+            </p>
+          )}
+          {!capability.aiGrounding.available && (
+            <p id="ai-grounding-unavailable-hint" className="mt-1 text-[11px] text-on-surface-variant">
+              {capability.aiGrounding.reason}
+            </p>
+          )}
+        </div>
 
         {/* Natural-language understanding strip */}
         {query.trim() && liveParsed.understanding.length > 0 && (
@@ -1078,12 +1298,14 @@ export const SearchTab: React.FC<SearchTabProps> = ({
             </div>
           ) : (
             <div className="flex flex-col gap-3">
-              {results.map(({ salon, fromPrice, matchedService }) => (
+              {grounded.items.map(({ salon, fromPrice, matchedService, fuzzy, grounding }) => (
                 <SearchResultCard
                   key={salon.id}
                   salon={salon}
                   fromPrice={fromPrice}
                   matchedService={matchedService}
+                  fuzzy={fuzzy}
+                  grounding={groundingPrefs.groundedResults ? grounding : null}
                   isSaved={savedSalonIds.includes(salon.id)}
                   onOpen={() => onOpenSalonDetails(salon)}
                   onBook={() => onBookSalon(salon, matchedService || undefined)}
