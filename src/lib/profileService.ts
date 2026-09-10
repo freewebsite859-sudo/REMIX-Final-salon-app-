@@ -135,7 +135,13 @@ export async function upsertUserProfile(
   email: string,
   role: UserRole,
   fullName?: string,
-  extra: { dateOfBirth?: string | null } = {},
+  extra: {
+    dateOfBirth?: string | null;
+    /** Mobile captured at sign-up (mirrors auth user_metadata.mobile). */
+    phone?: string | null;
+    /** Profile picture URL chosen by the customer. */
+    avatarUrl?: string | null;
+  } = {},
   client: SupabaseClient | null = supabase
 ): Promise<{ success: boolean; error: string | null }> {
   if (!client || !isSupabaseConfigured) {
@@ -167,6 +173,17 @@ export async function upsertUserProfile(
         payload.date_of_birth = extra.dateOfBirth;
       }
 
+      // Mobile is collected at sign-up and otherwise only lands in auth
+      // metadata, where the salon side cannot read it.
+      if (extra.phone) {
+        payload.phone = extra.phone;
+      }
+
+      // Profile picture (profiles.avatar_url) — chosen on the profile screen.
+      if (extra.avatarUrl) {
+        payload.avatar_url = extra.avatarUrl;
+      }
+
       // For user_profiles that uses user_id
       if (table === 'user_profiles') {
         payload.user_id = userId;
@@ -174,16 +191,28 @@ export async function upsertUserProfile(
 
       let { error } = await client.from(table).upsert(payload, { onConflict: 'id' });
 
-      // Legacy deployments may not have the date_of_birth column yet — retry
-      // without it instead of losing the whole profile row.
-      if (
-        error &&
-        payload.date_of_birth &&
-        ((error as any).code === '42703' || error.message?.includes('date_of_birth'))
-      ) {
-        const { date_of_birth: _omitted, ...withoutDob } = payload;
-        const retry = await client.from(table).upsert(withoutDob, { onConflict: 'id' });
+      // Legacy deployments may not have the newer columns yet (date_of_birth,
+      // phone, avatar_url). Drop only the columns the server rejected and
+      // retry, so a partially migrated project still saves the profile row
+      // instead of losing the whole write.
+      const optionalColumns = ['date_of_birth', 'phone', 'avatar_url'] as const;
+      for (let attempt = 0; attempt < optionalColumns.length && error; attempt += 1) {
+        const isMissingColumn =
+          (error as any).code === '42703' ||
+          optionalColumns.some((col) => error?.message?.includes(col));
+        if (!isMissingColumn) break;
+
+        const rejected =
+          optionalColumns.find((col) => error?.message?.includes(col)) ??
+          optionalColumns.find((col) => payload[col] !== undefined);
+        if (!rejected || payload[rejected] === undefined) break;
+
+        const { [rejected]: _omitted, ...withoutColumn } = payload;
+        const retry = await client.from(table).upsert(withoutColumn, { onConflict: 'id' });
         error = retry.error;
+        // Keep `payload` in sync so the next iteration cannot re-send the
+        // column the server just rejected.
+        delete payload[rejected];
       }
 
       if (!error) {

@@ -347,7 +347,12 @@ export const AuthPage: React.FC<AuthPageProps> = ({
               email.trim(),
               selectedRole,
               fullName.trim(),
-              { dateOfBirth: dateOfBirth || null }
+              {
+                dateOfBirth: dateOfBirth || null,
+                // Persist the mobile on the profile row too — auth metadata
+                // alone is not readable by the salon-side queries.
+                phone: mobile.trim() || null,
+              }
             );
             if (!result.success) {
               console.warn('[Nexora] Profile creation warning:', result.error);
@@ -586,6 +591,30 @@ export const AuthPage: React.FC<AuthPageProps> = ({
 
         {/* 4. Authentication Form */}
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          {/* Invite attribution banner — shown only when the code came from a
+              link, so the visitor knows their signup will be credited. */}
+          {authMode === 'signup' && referralCodeFromInvite && (
+            <div
+              id="signup-referral-banner"
+              role="status"
+              className="flex items-start gap-2.5 p-3.5 rounded-xl bg-[#b90064]/8 border border-[#b90064]/25"
+            >
+              <Gift className="w-4 h-4 text-[#b90064] mt-[2px] shrink-0" />
+              <div className="min-w-0">
+                <p className="text-[13px] font-bold text-[#b90064]">
+                  Joined via referral:{' '}
+                  <span id="signup-referral-banner-code" className="font-mono tracking-wide">
+                    {referralCode}
+                  </span>
+                </p>
+                <p className="text-[11px] text-[#594047] mt-0.5">
+                  Your friend gets {REFERRAL_POINTS_PER_INVITE} points after your first ₹
+                  {MIN_QUALIFYING_QR_PAYMENT}+ QR payment at a partner salon.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Sign Up: Full Name */}
           {authMode === 'signup' && (
             <div className="animate-in fade-in slide-in-from-top-2 duration-200">

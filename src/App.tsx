@@ -1647,6 +1647,7 @@ export default function App() {
             {customerRoute.kind === 'referral' && (
               <ReferralPage
                 user={user}
+                userId={userId}
                 onBack={() => goToCustomer(CUSTOMER_PROFILE, { replace: true })}
                 onOpenRewards={() => goToCustomer(CUSTOMER_REWARDS)}
                 onExploreSalons={() => goToCustomer(CUSTOMER_SEARCH)}

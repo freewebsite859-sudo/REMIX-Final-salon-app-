@@ -15,6 +15,8 @@ import {
 
 interface ReferralPageProps {
   user: UserProfile;
+  /** Supabase user id — lets the screen show server-counted referrals too. */
+  userId?: string;
   onBack?: () => void;
   onOpenRewards?: () => void;
   onExploreSalons?: () => void;
@@ -22,6 +24,7 @@ interface ReferralPageProps {
 
 export const ReferralPage: React.FC<ReferralPageProps> = ({
   user,
+  userId,
   onBack,
   onOpenRewards,
   onExploreSalons,
@@ -83,10 +86,64 @@ export const ReferralPage: React.FC<ReferralPageProps> = ({
   const [inviteName, setInviteName] = useState('');
   const [inviteMobile, setInviteMobile] = useState('');
 
-  const summary = useMemo(
+  /**
+   * Server-counted referrals. The local rows only cover signups recorded in
+   * THIS browser; the database holds everyone who used the code on any device.
+   * Whichever source reports more wins per metric, so a number can never look
+   * smaller than reality, and a disconnected backend degrades to local counts
+   * instead of showing zeros.
+   */
+  const [cloudSummary, setCloudSummary] = useState<{
+    totalInvited: number;
+    successfulReferrals: number;
+    pendingReferrals: number;
+    rewardEarned: number;
+  } | null>(null);
+  const [cloudState, setCloudState] = useState<'idle' | 'live' | 'offline'>('idle');
+
+  useEffect(() => {
+    if (!userId) {
+      setCloudState('offline');
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const { fetchReferralSummary } = await import('../lib/referralClient.ts');
+      const result = await fetchReferralSummary(userId);
+      if (cancelled) return;
+      if (result.ok && result.summary) {
+        setCloudSummary({
+          totalInvited: result.summary.totalInvited,
+          successfulReferrals: result.summary.successfulReferrals,
+          pendingReferrals: result.summary.pendingReferrals,
+          rewardEarned: result.summary.rewardEarned,
+        });
+        setCloudState('live');
+      } else {
+        setCloudState('offline');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, records.length]);
+
+  const localSummary = useMemo(
     () => computeReferralSummary(referralCode, records),
     [referralCode, records]
   );
+
+  const summary = useMemo(() => {
+    if (!cloudSummary) return localSummary;
+    const merge = (local: number, cloud: number) => Math.max(local, cloud);
+    return {
+      ...localSummary,
+      totalInvited: merge(localSummary.totalInvited, cloudSummary.totalInvited),
+      successfulReferrals: merge(localSummary.successfulReferrals, cloudSummary.successfulReferrals),
+      pendingReferrals: merge(localSummary.pendingReferrals, cloudSummary.pendingReferrals),
+      rewardEarned: merge(localSummary.rewardEarned, cloudSummary.rewardEarned),
+    };
+  }, [localSummary, cloudSummary]);
 
   const showToast = (msg: string) => {
     setToastMsg(msg);

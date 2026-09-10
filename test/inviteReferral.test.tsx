@@ -24,6 +24,7 @@ import {
   peekPendingReferralCode,
   redirectInviteToSignup,
   resolveInviteRoute,
+  resolveReferralCodeForSignup,
 } from '../src/lib/inviteLink.ts';
 import {
   computeReferralSummary,
@@ -178,6 +179,38 @@ async function run() {
   check('code stashed for later', peekPendingReferralCode() === INVITE_CODE);
 
   // =========================================================================
+  // 2b. Every documented invite path lands on the same signup screen
+  // =========================================================================
+  for (const path of ['/join', '/ref', '/invited', '/refer', '/referral-link']) {
+    setUrl(`${path}?code=${INVITE_CODE}`);
+    const code = redirectInviteToSignup({ replace: true });
+    check(
+      `${path}?code=… opens signup with the code`,
+      code === INVITE_CODE && window.location.pathname === '/customer/signup',
+      `${code} → ${window.location.pathname}${window.location.search}`
+    );
+  }
+  // Short path form: /r/:code (no query string at all)
+  setUrl(`/r/${INVITE_CODE.toLowerCase()}`);
+  const pathCode = redirectInviteToSignup({ replace: true });
+  check(
+    '/r/:code segment form works',
+    pathCode === INVITE_CODE && window.location.search === `?code=${INVITE_CODE}`,
+    `${pathCode} → ${window.location.search}`
+  );
+
+  // =========================================================================
+  // 2c. Reload / back-button must not lose the code
+  // =========================================================================
+  // A reload lands on a bare signup URL (no ?code=) — the stash must refill it.
+  setUrl('/customer/signup');
+  check(
+    'code survives a reload with an empty query string',
+    resolveReferralCodeForSignup() === INVITE_CODE,
+    resolveReferralCodeForSignup() || '(empty)'
+  );
+
+  // =========================================================================
   // 3. The referrer owns a stable, registered code
   // =========================================================================
   const referrerCode = ensureReferralCode({
@@ -222,6 +255,13 @@ async function run() {
     'invite hint tells the visitor the code was added',
     (byId('signup-referral-hint')?.textContent || '').includes(referrerCode),
     byId('signup-referral-hint')?.textContent || ''
+  );
+  check('invite banner rendered', Boolean(byId('signup-referral-banner')));
+  check(
+    'banner reads "Joined via referral: <code>"',
+    (byId('signup-referral-banner')?.textContent || '').includes('Joined via referral:') &&
+      byId('signup-referral-banner-code')?.textContent?.trim() === referrerCode,
+    byId('signup-referral-banner')?.textContent || ''
   );
 
   // =========================================================================

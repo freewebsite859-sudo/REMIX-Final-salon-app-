@@ -79,6 +79,58 @@ export async function resolveInviteCode(code?: string | null): Promise<ReferralA
   }
 }
 
+/** Server-side counters — the cross-device source of truth. */
+export interface ReferralSummaryResponse {
+  referralCode: string | null;
+  totalInvited: number;
+  successfulReferrals: number;
+  pendingReferrals: number;
+  rewardEarned: number;
+  rewardPending: number;
+}
+
+/**
+ * Read the referrer's counted referrals from the database. This is what makes
+ * "Total Invited" agree across devices: the local rows cover this browser, the
+ * server rows cover everyone else who used the code.
+ */
+export async function fetchReferralSummary(
+  userId?: string
+): Promise<{ ok: boolean; summary?: ReferralSummaryResponse; error?: string }> {
+  if (!userId) return { ok: false, error: 'Missing user id.' };
+  try {
+    const response = await fetch(`${baseUrl()}/${encodeURIComponent(userId)}`, {
+      headers: { Accept: 'application/json' },
+    });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      return {
+        ok: false,
+        error:
+          typeof payload.error === 'string'
+            ? payload.error
+            : `Referral summary failed (${response.status}).`,
+      };
+    }
+    const summary = (payload.summary || {}) as Record<string, unknown>;
+    const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+    return {
+      ok: true,
+      summary: {
+        referralCode:
+          typeof payload.referralCode === 'string' ? payload.referralCode : null,
+        totalInvited: num(summary.totalInvited),
+        successfulReferrals: num(summary.successfulReferrals),
+        pendingReferrals: num(summary.pendingReferrals),
+        rewardEarned: num(summary.rewardEarned),
+        rewardPending: num(summary.rewardPending),
+      },
+    };
+  } catch {
+    return { ok: false, error: 'Referral service is unreachable right now.' };
+  }
+}
+
 /**
  * Record "this new account arrived with this code" so the referrer's counters
  * move. Safe to call once per signup; the API is idempotent per pair.
