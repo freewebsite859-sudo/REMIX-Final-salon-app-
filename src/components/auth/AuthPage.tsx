@@ -69,7 +69,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   const [selectedRole, setSelectedRole] = useState<UserRole>('customer');
   /**
    * Referral code the new account arrived with. Prefilled from the invite link
-   * (`/invite?code=NX-VIJAY634` → `/customer/signup?code=NX-VIJAY634`) or from
+   * (`/invite?code=NX-VIJAY634` → `/customer/signup?ref=NX-VIJAY634`) or from
    * the stashed copy of it, and editable so a friend can paste a code by hand.
    */
   const [referralCode, setReferralCode] = useState<string>(() =>
@@ -121,7 +121,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
 
   /**
    * Keep the referral field in sync with the address bar. The invite redirect
-   * rewrites `/invite?code=NX-…` to `/customer/signup?code=NX-…` after mount,
+   * rewrites `/invite?code=NX-…` to `/customer/signup?ref=NX-…` after mount,
    * and a visitor may also switch tabs, so re-read on every history change.
    * A code the visitor typed themselves is never overwritten.
    */
@@ -379,8 +379,11 @@ export const AuthPage: React.FC<AuthPageProps> = ({
               mobile: mobile.trim(),
               userId: data.user?.id,
             });
-            if (outcome.success) {
-              const inviter = outcome.referrer?.name || outcome.remote?.referrerName;
+            // The server is the authority for cross-device invites: a friend's
+            // code is normally NOT in this browser's registry, and saying "not
+            // registered yet" after the backend counted it would be a lie.
+            if (outcome.remote?.ok || outcome.success) {
+              const inviter = outcome.remote?.referrerName || outcome.referrer?.name;
               referralNote = inviter
                 ? ` Invite from ${inviter} counted.`
                 : ` Referral code ${normalizedReferral} counted.`;

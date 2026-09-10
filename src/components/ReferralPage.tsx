@@ -1,11 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { UserProfile } from '../types.ts';
 import {
+  clearPendingReferralCode,
+  peekPendingReferralCode,
+} from '../lib/inviteLink.ts';
+import {
   computeReferralSummary,
   ensureReferralCode,
   findReferralCodeOwner,
   loadReferralRecords,
   readReferredBy,
+  registerReferralAfterSignup,
   saveReferralRecords,
   REFERRAL_UPDATED_EVENT,
   REFERRAL_POINTS_PER_INVITE,
@@ -71,6 +76,7 @@ export const ReferralPage: React.FC<ReferralPageProps> = ({
   }, [ownerKey]);
 
   /** Who invited THIS customer (shown when they arrived via an invite link). */
+  const [referredByTick, setReferredByTick] = useState(0);
   const referredBy = useMemo(() => {
     const record = readReferredBy(ownerKey);
     if (!record) return null;
@@ -79,7 +85,69 @@ export const ReferralPage: React.FC<ReferralPageProps> = ({
       code: record.code,
       name: owner?.name || record.referrerName || 'a Nexora customer',
     };
-  }, [ownerKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ownerKey, referredByTick]);
+
+  /**
+   * "I am already a Nexora customer and I just clicked a friend's invite link."
+   * Without this the link would open signup nobody can use while signed in, the
+   * stash would sit unused, and the friend would silently never be credited —
+   * which is the most common real way an invite link gets opened.
+   *
+   * The code is offered (never applied silently): counting someone else's
+   * referral on an existing account changes that person's points.
+   */
+  const [pendingInvite, setPendingInvite] = useState<string>(() => peekPendingReferralCode());
+  const [pendingInviteState, setPendingInviteState] = useState<'idle' | 'busy' | 'done'>(
+    'idle'
+  );
+  useEffect(() => {
+    const sync = () => setPendingInvite(peekPendingReferralCode());
+    sync();
+    window.addEventListener('popstate', sync);
+    return () => window.removeEventListener('popstate', sync);
+  }, []);
+
+  const showPendingInvite =
+    Boolean(pendingInvite) && pendingInvite !== referralCode && pendingInviteState !== 'done';
+
+  const handleApplyPendingInvite = async () => {
+    const code = pendingInvite;
+    if (!code || pendingInviteState === 'busy') return;
+    setPendingInviteState('busy');
+    let note = '';
+    try {
+      const outcome = await registerReferralAfterSignup({
+        code,
+        name: user.name,
+        email: user.email,
+        mobile: user.phone,
+        userId,
+      });
+      if (outcome.remote?.ok || outcome.success) {
+        const inviter = outcome.remote?.referrerName || outcome.referrer?.name;
+        note = inviter
+          ? `Invite from ${inviter} counted — they earn ${REFERRAL_POINTS_PER_INVITE} points after your first ₹${MIN_QUALIFYING_QR_PAYMENT}+ QR payment.`
+          : `Referral code ${code} counted.`;
+      } else if (outcome.reason === 'self_referral') {
+        note = 'That is your own referral code, so it cannot be applied here.';
+      } else if (outcome.reason === 'unknown_code') {
+        note = `Referral code ${code} is not registered on Nexora yet — ask your friend to open the app once, then try again.`;
+      } else {
+        note = outcome.message || 'The invite code could not be applied right now.';
+      }
+    } catch (err) {
+      note = err instanceof Error ? err.message : 'The invite code could not be applied right now.';
+    }
+    // Either way the stash has been answered: keeping it would offer the same
+    // code on every future visit (and could be consumed by a later signup).
+    clearPendingReferralCode();
+    setPendingInvite('');
+    setPendingInviteState('done');
+    setReferredByTick((n) => n + 1);
+    setRecords(loadReferralRecords(ownerKey));
+    showToast(note);
+  };
 
   // Invite modal state
   const [showInviteModal, setShowInviteModal] = useState(false);
@@ -262,6 +330,36 @@ export const ReferralPage: React.FC<ReferralPageProps> = ({
       {/* ========================================================================= */}
       {/* "YOU WERE INVITED" BANNER — attribution for the referred side             */}
       {/* ========================================================================= */}
+      {showPendingInvite && (
+        <div
+          id="section-referral-pending-invite"
+          className="bg-[#b90064]/10 border border-[#b90064]/30 rounded-3xl p-4 mb-5 flex items-start gap-3"
+        >
+          <div className="w-9 h-9 rounded-2xl bg-[#b90064]/20 text-[#4d0033] flex items-center justify-center shrink-0">
+            <span className="material-symbols-outlined text-[22px]">group_add</span>
+          </div>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-[13px] font-extrabold text-on-surface">
+              You opened an invite with code <span className="font-mono">{pendingInvite}</span>
+            </h2>
+            <p className="text-[11px] text-on-surface-variant font-medium mb-2.5">
+              You already have a Nexora account, so there is nothing to sign up for. Apply the
+              code and your friend gets {REFERRAL_POINTS_PER_INVITE} points once you complete a ₹
+              {MIN_QUALIFYING_QR_PAYMENT}+ QR payment.
+            </p>
+            <button
+              type="button"
+              id="btn-apply-pending-invite"
+              onClick={() => void handleApplyPendingInvite()}
+              disabled={pendingInviteState === 'busy'}
+              className="px-3.5 py-2 rounded-2xl bg-primary text-white text-[12px] font-bold hover:bg-primary/90 transition-all disabled:opacity-60 cursor-pointer"
+            >
+              {pendingInviteState === 'busy' ? 'Applying…' : 'Apply this code'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {referredBy && (
         <div
           id="section-referral-invited-by"

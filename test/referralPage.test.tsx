@@ -8,6 +8,43 @@ import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
 import type { UserProfile } from '../src/types.ts';
 import { ReferralPage } from '../src/components/ReferralPage.tsx';
+import {
+  PENDING_REFERRAL_CODE_KEY,
+  clearPendingReferralCode,
+  peekPendingReferralCode,
+  rememberPendingReferralCode,
+} from '../src/lib/inviteLink.ts';
+import {
+  loadStoredReferralRecords,
+  readReferredBy,
+  registerReferralCode,
+} from '../src/lib/referralService.ts';
+
+const FRIEND = { name: 'Vijay Kumar', email: 'vijay@example.com', code: 'NX-VIJAY634' };
+
+// The apply-invite flow posts attribution to the API. Stubbed here so the test
+// asserts the call instead of depending on a running server.
+const apiCalls: { url: string; body: any }[] = [];
+const realFetch = globalThis.fetch;
+globalThis.fetch = (async (input: any, init?: any) => {
+  const url = typeof input === 'string' ? input : String(input);
+  let body: any = null;
+  try {
+    body = init?.body ? JSON.parse(init.body) : null;
+  } catch {
+    body = init?.body;
+  }
+  apiCalls.push({ url, body });
+  return new Response(
+    JSON.stringify({
+      referralId: 'referral-1',
+      referrerName: FRIEND.name,
+      rewardPoints: 150,
+      status: 'pending',
+    }),
+    { status: 201, headers: { 'Content-Type': 'application/json' } }
+  );
+}) as typeof globalThis.fetch;
 
 let passed = 0;
 let failed = 0;
@@ -145,7 +182,20 @@ async function run() {
 
   // Referral Link
   const linkDisplay = byId('referral-link-display');
-  check('referral link displayed', Boolean(linkDisplay) && linkDisplay?.textContent?.includes('https://nexora.app/invite?code=') === true);
+  // Origin-agnostic on purpose: the link must work on whatever host serves the
+  // app (localhost in dev, the deployment in prod), so only the path + param are
+  // asserted here — see src/lib/inviteLink.ts:resolveInviteOrigin.
+  check(
+    'referral link displayed',
+    Boolean(linkDisplay) && /\/invite\?code=[A-Z0-9-]{4,}/.test(linkDisplay?.textContent || ''),
+    linkDisplay?.textContent || '(empty)'
+  );
+  check(
+    'referral link points at a live origin, not a dead marketing domain',
+    Boolean(linkDisplay) &&
+      (linkDisplay?.textContent || '').startsWith(window.location.origin),
+    linkDisplay?.textContent || '(empty)'
+  );
 
   const copyLinkBtn = byId('btn-copy-referral-link');
   check('copy referral link button exists', Boolean(copyLinkBtn));
@@ -263,6 +313,93 @@ async function run() {
     click(openRewardsBtn);
   });
   check('view rewards wallet fired callback', rewardsCalled);
+
+  // =========================================================================
+  // 8. A signed-in customer opens a friend's invite link
+  //
+  // This is the most common real case: the link is pasted into WhatsApp by
+  // someone who already has an account. There is nothing to sign up for, so the
+  // app must offer to apply the code instead of dropping the visit on the
+  // Refer & Earn screen with the invite ignored.
+  // =========================================================================
+  clearPendingReferralCode();
+  await act(async () => {
+    root.unmount();
+  });
+  host.innerHTML = '';
+  root = createRoot(host);
+  await act(async () => {
+    root.render(<ReferralPage user={mockUser} />);
+  });
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 40));
+  });
+  check(
+    'no invite prompt without a pending code',
+    byId('section-referral-pending-invite') === null
+  );
+
+  registerReferralCode({
+    code: FRIEND.code,
+    ownerKey: FRIEND.email,
+    name: FRIEND.name,
+    email: FRIEND.email,
+  });
+  rememberPendingReferralCode(FRIEND.code);
+  await act(async () => {
+    root.unmount();
+  });
+  host.innerHTML = '';
+  root = createRoot(host);
+  await act(async () => {
+    root.render(<ReferralPage user={mockUser} userId="33333333-3333-4333-8333-333333333333" />);
+  });
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 40));
+  });
+
+  const pendingBanner = byId('section-referral-pending-invite');
+  check('signed-in visitor is offered the friend\'s code', Boolean(pendingBanner));
+  check(
+    'the prompt names the code from the invite link',
+    (pendingBanner?.textContent || '').includes(FRIEND.code),
+    pendingBanner?.textContent?.slice(0, 80) || '(empty)'
+  );
+  const applyBtn = byId('btn-apply-pending-invite');
+  check('apply button exists', Boolean(applyBtn));
+
+  await act(async () => {
+    click(applyBtn);
+  });
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 150));
+  });
+
+  check(
+    'applying sends attribution to the backend',
+    apiCalls.some((c) => c.url.endsWith('/api/referrals/accept') && c.body?.code === FRIEND.code),
+    apiCalls.map((c) => c.url).join(', ') || '(no calls)'
+  );
+  check(
+    'the friend is credited with a pending referral row',
+    loadStoredReferralRecords(FRIEND.email).some(
+      (row) => row.status === 'pending' && row.referredEmail === mockUser.email
+    )
+  );
+  check(
+    'the new account remembers who invited them',
+    readReferredBy(mockUser.email)?.code === FRIEND.code
+  );
+  check(
+    'the stash is consumed so the code cannot be reused',
+    peekPendingReferralCode() === '' && window.localStorage.getItem(PENDING_REFERRAL_CODE_KEY) === null
+  );
+  check(
+    'the prompt disappears after applying',
+    byId('section-referral-pending-invite') === null
+  );
+  clearPendingReferralCode();
+  globalThis.fetch = realFetch;
 
   // Summary
   console.log(`\n${passed}/${passed + failed} referral page UI checks passed`);

@@ -3,13 +3,21 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import { attachNexoraApi } from "./server/attachApi";
+import { attachInviteRedirects } from "./server/inviteRedirects";
 
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+// Render/Railway/Fly inject PORT; a hard 3000 makes those hosts crash-loop,
+// which is another way an invite link can be "not working" in production.
+const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json({ limit: '32kb' }));
+
+// `/invite?code=NX-…` must answer with a real redirect before Vite/static/SPA
+// handling gets a chance, so an invite link opens the signup form even on a cold
+// load, on a host without SPA fallback, and with JS disabled.
+attachInviteRedirects(app);
 
 // Direct booking inserts are refused (402). The payments router creates the
 // booking only after a server-side gateway order + HMAC signature verify.
@@ -31,8 +39,11 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Nexora SalonOS server listening on http://0.0.0.0:${PORT}`);
+  const server = app.listen(PORT, "0.0.0.0");
+  server.once("listening", () => {
+    const address = server.address();
+    const port = typeof address === "object" && address ? address.port : PORT;
+    console.log(`Nexora SalonOS server listening on http://0.0.0.0:${port}`);
   });
 }
 

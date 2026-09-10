@@ -1,3 +1,6 @@
+// Must stay first: captures the invite code from the URL (and swaps the
+// GoTrue-colliding `?code=` for `?ref=`) before any auth client is built.
+import './lib/inviteBoot';
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';

@@ -69,6 +69,7 @@ import {
   customerSalonPath,
   customerSearchPath,
   isCustomerPath,
+  isCustomerSignupPath,
   isProtectedCustomerRoute,
   navigateCustomer,
   parseCustomerRoute,
@@ -86,7 +87,12 @@ import {
   resolveNotificationTarget,
   type AppNotification,
 } from './lib/notificationService';
-import { isInvitePath, redirectInviteToSignup } from './lib/inviteLink';
+import {
+  cameFromInviteLink,
+  isInvitePath,
+  redirectInviteToSignup,
+  resolveReferralCodeForSignup,
+} from './lib/inviteLink';
 import { syncReferralCodeToProfile } from './lib/referralService';
 
 const STORAGE_KEYS = {
@@ -573,10 +579,16 @@ export default function App() {
       // SIGNUP form with the code attached. Without this branch the path fell
       // through to the guest home screen and the code was silently dropped, so
       // nobody was ever counted for the referral.
-      if (isInvitePath(path)) {
-        // Rewrites the URL to /customer/signup?code=… and stashes the code in
+      // The pre-React capture (index.html / lib/inviteBoot) may already have
+      // rewritten `/invite?code=…` to `/customer/signup?ref=…` before React
+      // mounted, so the marker is checked as well as the raw path.
+      const arrivedByInvite = isInvitePath(path) || (cameFromInviteLink() && isCustomerSignupPath(path));
+      if (arrivedByInvite) {
+        // Rewrites the URL to /customer/signup?ref=… and stashes the code in
         // localStorage so a reload or a later navigation cannot lose it.
-        const code = redirectInviteToSignup({ replace: true });
+        const code = isInvitePath(path)
+          ? redirectInviteToSignup({ replace: true })
+          : resolveReferralCodeForSignup(window.location.search, path);
         if (isAuthenticated) {
           // Already signed in — nothing to sign up for. Show their own
           // Refer & Earn screen instead of a signup form.

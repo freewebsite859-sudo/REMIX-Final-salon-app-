@@ -16,13 +16,21 @@ import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
 
 import {
+  PENDING_REFERRAL_CODE_KEY,
+  cameFromInviteLink,
+  captureInviteCode,
+  clearPendingReferralCode,
+  PUBLIC_INVITE_PARAM,
+  SIGNUP_REFERRAL_PARAM,
   buildInviteLink,
   extractReferralCode,
   inviteSignupPath,
   isInvitePath,
+  isReferralCodeValue,
   normalizeReferralCode,
   peekPendingReferralCode,
   redirectInviteToSignup,
+  resolveInviteOrigin,
   resolveInviteRoute,
   resolveReferralCodeForSignup,
 } from '../src/lib/inviteLink.ts';
@@ -36,6 +44,7 @@ import {
   REFERRAL_POINTS_PER_INVITE,
 } from '../src/lib/referralService.ts';
 import { getStoredRewardTransactions } from '../src/lib/rewardsService.ts';
+import { cleanAuthParamsFromUrl, isAuthRoute } from '../src/lib/authRoutes.ts';
 import { AuthPage } from '../src/components/auth/AuthPage.tsx';
 import { ReferralPage } from '../src/components/ReferralPage.tsx';
 import type { UserProfile } from '../src/types.ts';
@@ -161,8 +170,37 @@ async function run() {
   check('/customer/home is not an invite path', !isInvitePath('/customer/home'));
   check('code parsed from ?code=', extractReferralCode(`?code=${INVITE_CODE}`) === INVITE_CODE);
   check('code parsed from path segment', extractReferralCode('', '/invite/nx-vijay634') === INVITE_CODE);
-  check('share link shape', buildInviteLink(INVITE_CODE) === `https://nexora.app/invite?code=${INVITE_CODE}`);
-  check('signup path keeps the code', inviteSignupPath(INVITE_CODE) === `/customer/signup?code=${INVITE_CODE}`);
+  // The shared link must point at a host that actually serves THIS app, so the
+  // origin comes from the deployment (window.location.origin here), never from a
+  // hardcoded marketing domain. `?code=` stays in the public link because that is
+  // the format already circulating in WhatsApp threads.
+  check(
+    'share link shape uses the live origin',
+    buildInviteLink(INVITE_CODE) === `${resolveInviteOrigin()}/invite?${PUBLIC_INVITE_PARAM}=${INVITE_CODE}`,
+    buildInviteLink(INVITE_CODE)
+  );
+  check(
+    'share link ignores a bogus APP_URL placeholder',
+    buildInviteLink(INVITE_CODE, 'MY_APP_URL').startsWith(`${resolveInviteOrigin()}/invite?`),
+    buildInviteLink(INVITE_CODE, 'MY_APP_URL')
+  );
+  check(
+    'explicit origin wins',
+    buildInviteLink(INVITE_CODE, 'https://nexora.app') === `https://nexora.app/invite?code=${INVITE_CODE}`
+  );
+  // The INTERNAL signup URL must not use `?code=`: Supabase's detectSessionInUrl
+  // reads that param as a PKCE authorization code.
+  check(
+    'signup path keeps the code',
+    inviteSignupPath(INVITE_CODE) === `/customer/signup?${SIGNUP_REFERRAL_PARAM}=${INVITE_CODE}`,
+    inviteSignupPath(INVITE_CODE)
+  );
+  check(
+    'a referral code is never confused with a Supabase auth code',
+    isReferralCodeValue(INVITE_CODE) &&
+      !isReferralCodeValue('2f9c1a4b7e3d4c5a9b1f0d2e3f4a5b6c7d8e9f0a') &&
+      !isReferralCodeValue('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.short.long')
+  );
 
   // =========================================================================
   // 2. Opening the invite link rewrites to the signup form and keeps the code
@@ -170,12 +208,24 @@ async function run() {
   setUrl(`/invite?code=${INVITE_CODE}`);
   const resolved = resolveInviteRoute('/invite', `?code=${INVITE_CODE}`);
   check('invite route detected', resolved.isInvite);
-  check('invite route targets signup', resolved.target === `/customer/signup?code=${INVITE_CODE}`, resolved.target);
+  check(
+    'invite route targets signup',
+    resolved.target === `/customer/signup?${SIGNUP_REFERRAL_PARAM}=${INVITE_CODE}`,
+    resolved.target
+  );
 
   const redirectedCode = redirectInviteToSignup({ replace: true });
   check('redirect returns the code', redirectedCode === INVITE_CODE, redirectedCode);
   check('url is now the signup screen', window.location.pathname === '/customer/signup', window.location.pathname);
-  check('url still carries the code', window.location.search === `?code=${INVITE_CODE}`, window.location.search);
+  check(
+    'url still carries the code',
+    window.location.search === `?${SIGNUP_REFERRAL_PARAM}=${INVITE_CODE}`,
+    window.location.search
+  );
+  check(
+    'the GoTrue-colliding ?code= param is gone from the signup URL',
+    !new URLSearchParams(window.location.search).has('code')
+  );
   check('code stashed for later', peekPendingReferralCode() === INVITE_CODE);
 
   // =========================================================================
@@ -195,7 +245,8 @@ async function run() {
   const pathCode = redirectInviteToSignup({ replace: true });
   check(
     '/r/:code segment form works',
-    pathCode === INVITE_CODE && window.location.search === `?code=${INVITE_CODE}`,
+    pathCode === INVITE_CODE &&
+      window.location.search === `?${SIGNUP_REFERRAL_PARAM}=${INVITE_CODE}`,
     `${pathCode} → ${window.location.search}`
   );
 
@@ -209,6 +260,70 @@ async function run() {
     resolveReferralCodeForSignup() === INVITE_CODE,
     resolveReferralCodeForSignup() || '(empty)'
   );
+
+  // =========================================================================
+  // 2d. The boot guard runs BEFORE the auth client exists
+  // =========================================================================
+  const AUTH_CODE_BLOB = '2f9c1a4b7e3d4c5a9b1f0d2e3f4a5b6c7d8e9f0a';
+
+  clearPendingReferralCode();
+  setUrl(`/invite?code=${INVITE_CODE}`);
+  const boot = captureInviteCode();
+  check('boot guard finds the invite code', boot.code === INVITE_CODE, boot.code);
+  check(
+    'boot guard lands on signup carrying ?ref=',
+    window.location.pathname === '/customer/signup' &&
+      window.location.search === `?${SIGNUP_REFERRAL_PARAM}=${INVITE_CODE}`,
+    `${window.location.pathname}${window.location.search}`
+  );
+  check('boot guard records that this visit came from an invite', cameFromInviteLink());
+  check(
+    'boot guard writes the shared stash key',
+    (window.localStorage.getItem(PENDING_REFERRAL_CODE_KEY) || '').includes(INVITE_CODE)
+  );
+
+  // A Supabase authorization code must be left exactly where it is.
+  clearPendingReferralCode();
+  setUrl(`/auth/callback?code=${AUTH_CODE_BLOB}`);
+  captureInviteCode();
+  check(
+    'boot guard never hijacks a Supabase auth code',
+    window.location.pathname === '/auth/callback' &&
+      window.location.search === `?code=${AUTH_CODE_BLOB}` &&
+      peekPendingReferralCode() === '',
+    `${window.location.pathname}${window.location.search}`
+  );
+
+  // Route protection must not bounce an invited visitor to login.
+  setUrl(`/invite?code=${INVITE_CODE}`);
+  check('invite path counts as an auth screen (no forced login)', isAuthRoute('/invite'));
+  check('segment invite path counts as an auth screen too', isAuthRoute('/r/NX-VIJAY634'));
+
+  // `cleanAuthParamsFromUrl` runs on every boot and used to delete the invite
+  // code along with Supabase's debris — the silent way a referral was lost.
+  clearPendingReferralCode();
+  window.localStorage.setItem(
+    PENDING_REFERRAL_CODE_KEY,
+    JSON.stringify({ code: INVITE_CODE, at: new Date().toISOString() })
+  );
+  setUrl(`/customer/signup?code=${INVITE_CODE}`);
+  cleanAuthParamsFromUrl();
+  const afterClean = new URLSearchParams(window.location.search);
+  check(
+    'auth-param cleanup keeps the referral code',
+    afterClean.get(SIGNUP_REFERRAL_PARAM) === INVITE_CODE && !afterClean.has('code'),
+    window.location.search || '(empty)'
+  );
+  setUrl(`/auth/callback?code=${AUTH_CODE_BLOB}&error=bad`);
+  cleanAuthParamsFromUrl();
+  check(
+    'cleanup still strips a spent auth code',
+    window.location.search === '',
+    window.location.search || '(empty)'
+  );
+  window.localStorage.removeItem(PENDING_REFERRAL_CODE_KEY);
+  clearPendingReferralCode();
+  setUrl('/customer/home');
 
   // =========================================================================
   // 3. The referrer owns a stable, registered code

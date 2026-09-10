@@ -165,6 +165,113 @@ Location requires a **secure context** (HTTPS or `localhost`); browsers block
 
 ---
 
+## 6. Invite (referral) links — what makes `/invite?code=NX-…` work
+
+A shared invite link is four independent systems that must all be right. Each one
+has broken in the past, so each is verified separately.
+
+```
+https://<your-host>/invite?code=NX-VIJAY634
+        │                        └── 4. attribution: the code must resolve to a real referrer
+        └── 1. the host must route this path
+            2. it must land on SIGNUP, carrying the code
+            3. the code must survive to the moment the account is created
+```
+
+### Layer 1 — the HTTP layer (`server/inviteRedirects.ts`)
+
+`/invite`, `/invited`, `/join`, `/ref`, `/refer`, `/referral-link`, `/r/:code` and
+`/invite/:code` answer with a real **302 → `/customer/signup?ref=<CODE>`**. This
+runs before Vite/static handling in `server.ts` *and* in the Vite dev-server
+plugin, so `npm run dev`, a preview, and `node dist/server.cjs` behave the same.
+A 302 works with JS disabled, for link-unfurlers, and before React boots.
+
+Responses are `Cache-Control: no-store`, so a fixed deploy is visible on the
+very next click instead of being pinned by the browser cache.
+
+### Layer 2 — the pre-React capture (`index.html` + `src/lib/inviteBoot.ts`)
+
+If a host serves a stale `index.html`, or the path is reached client-side, the
+inline script in `index.html` runs **before the app bundle**: it finds the code in
+`?code= / ?ref= / ?rc= …` or in the path segment, stashes it under
+`nexora-pending-referral-code` (+ `window.__NEXORA_INVITE__` when storage is
+blocked), and rewrites the address bar to `/customer/signup?ref=…`.
+
+That rewrite is also what keeps Supabase out of the way: GoTrue's
+`detectSessionInUrl` reads `?code=` as a **PKCE authorization code**. A referral
+code sitting there used to be swallowed by the token exchange — the visitor was
+bounced to login and the invite was lost. Public links keep `?code=` (that is the
+format already circulating); internal URLs use `?ref=`. `cleanAuthParamsFromUrl()`
+now refuses to delete a referral-shaped `code` for the same reason.
+
+### Layer 3 — static hosts (`public/_redirects`)
+
+`public/_redirects` ships the same rules for Netlify and Cloudflare Pages (it is
+copied into `dist/` by Vite), including the `/* → /index.html 200` SPA fallback.
+For **Vercel**, either deploy the Node server (`npm run build && node dist/server.cjs`
+— Layer 1 then applies) or add:
+
+```json
+{
+  "redirects": [
+    {
+      "source": "/invite",
+      "has": [{ "type": "query", "key": "code", "value": "(?<code>[A-Za-z0-9_-]{4,24})" }],
+      "destination": "/customer/signup?ref=$code",
+      "permanent": false
+    },
+    { "source": "/invite", "destination": "/customer/signup", "permanent": false },
+    { "source": "/r/:code", "destination": "/customer/signup?ref=:code", "permanent": false }
+  ],
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+}
+```
+
+### Layer 4 — the share link must point at a real host
+
+`buildInviteLink()` no longer hardcodes a marketing domain. Origin priority:
+`VITE_APP_URL` → `APP_URL` → `VERCEL_PROJECT_PRODUCTION_URL` →
+`window.location.origin` → `https://nexora.app`. **Set `VITE_APP_URL` to your
+public origin and redeploy** — `VITE_*` values are baked in at build time, so an
+existing deployment keeps emitting links built from its old origin until it is
+rebuilt. A value that is not a URL (e.g. the `MY_APP_URL` placeholder) is ignored
+rather than pasted into a share link.
+
+### Layer 5 — cross-device counting (not in this repo's hands)
+
+An invite is opened by a **different person on a different device**, so only the
+database can count it. Two things are required:
+
+1. `supabase/migrations/20260910120000_referral_codes_invite_links.sql` — creates
+   `profiles.referral_code`, the generator trigger and `resolve_referral_code()`
+   (see `SUPABASE_DEPLOY.md`).
+2. `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` on the server — `/api/referrals/accept`
+   returns **503** without them, which means signups are attributed only inside one
+   browser (the local registry) and the referrer's cloud counters never move.
+
+### Verifying it on a real deployment
+
+```bash
+npm run verify:invite -- --base https://your-app.vercel.app --code NX-VIJAY634
+```
+
+It probes every layer (302 target, code retention, `?code=` → `?ref=`
+normalisation, `/api/referrals/resolve` classification) and prints the exact next
+action for anything missing. Manual equivalents:
+
+```bash
+curl -i "https://<host>/invite?code=NX-VIJAY634"   # expect: 302 → /customer/signup?ref=NX-VIJAY634
+curl -i "https://<host>/r/nx-vijay634"             # expect: same 302
+curl  "https://<host>/api/referrals/resolve?code=NX-VIJAY634"   # 200 = counted; 404 = code unregistered; 503 = no service-role key
+```
+
+Automated coverage: `npm run test:invite-redirect` (HTTP layer + the inline
+capture script + `_redirects` + origin rules), `npm run test:invite-referral`
+(boot guard, signup prefill, counting), `npm run test:referral` (incl. the
+"already signed in, clicked a friend's link" prompt).
+
+---
+
 ## CI checks
 
 ```bash
@@ -173,7 +280,11 @@ npm run build       # 0 errors (with a bundle-size warning)
 npm run test:nexora # 22/22 auth + location integration checks
 npm run test:catalog # 7/7 hybrid catalog strategy checks
 npm run test:smoke  # renders cleanly
-npm run verify:live # requires real anon key + test user + applied RLS
+npm run test:invite-redirect # 37/37 invite HTTP layer + pre-React capture
+npm run test:invite-referral # 66/66 invite link → signup → referral counted
+npm run test:referral        # 47/47 Refer & Earn screen (incl. apply-a-friend's-code)
+npm run verify:live   # requires real anon key + test user + applied RLS
+npm run verify:invite # requires a deployed host; see §6
 ```
 
 `verify:live` is expected to stop before network checks when its required

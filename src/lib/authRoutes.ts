@@ -13,7 +13,14 @@
  */
 
 import { NEXORA_AUTH_STORAGE_KEY } from './supabase';
-import { INVITE_PATHS, isInvitePath } from './inviteLink';
+import {
+  INVITE_PATHS,
+  SIGNUP_REFERRAL_PARAM,
+  isInvitePath,
+  isReferralCodeValue,
+  normalizeReferralCode,
+  peekPendingReferralCode,
+} from './inviteLink';
 import {
   CUSTOMER_HOME,
   CUSTOMER_LOGIN,
@@ -78,7 +85,10 @@ export function currentPath(): string {
 }
 
 export function isAuthRoute(path: string = currentPath()): boolean {
-  return AUTH_PATHS.has(path) || isCustomerAuthPath(path);
+  // `isInvitePath` (not just the set) so the segment forms `/invite/NX-ABC` and
+  // `/r/NX-ABC` count as auth screens too — an invited visitor must never be
+  // bounced to login by route protection before they have seen the form.
+  return AUTH_PATHS.has(path) || isCustomerAuthPath(path) || isInvitePath(path);
 }
 
 export function isLoginRoute(path: string = currentPath()): boolean {
@@ -222,15 +232,35 @@ export function cleanAuthParamsFromUrl(): void {
   let changed = false;
 
   for (const param of dirtyParams) {
-    if (url.searchParams.has(param)) {
-      url.searchParams.delete(param);
-      changed = true;
-    }
+    if (!url.searchParams.has(param)) continue;
+    // A referral code (`NX-VIJAY634`) is not auth debris. Deleting it here is
+    // exactly how an invite used to vanish from the address bar — and with it,
+    // the referrer's count. Keep it; the invite-flow branch below moves it to
+    // the collision-free `?ref=` slot.
+    if (param === 'code' && isReferralCodeValue(url.searchParams.get('code'))) continue;
+    url.searchParams.delete(param);
+    changed = true;
   }
 
   if (url.hash.includes('access_token') || url.hash.includes('refresh_token')) {
     url.hash = '';
     changed = true;
+  }
+
+  // On the signup / invite screens, make sure the address bar carries the code
+  // the visitor arrived with, in the param Supabase never reads.
+  const path = (url.pathname.replace(/\/+$/, '') || '/').toLowerCase();
+  const onSignupScreen =
+    path === '/customer/signup' || path === '/auth/signup' || isInvitePath(path);
+  if (onSignupScreen) {
+    const code = normalizeReferralCode(
+      url.searchParams.get(SIGNUP_REFERRAL_PARAM) || peekPendingReferralCode()
+    );
+    if (code) {
+      url.searchParams.set(SIGNUP_REFERRAL_PARAM, code);
+      url.searchParams.delete('code');
+      changed = true;
+    }
   }
 
   if (changed) {
