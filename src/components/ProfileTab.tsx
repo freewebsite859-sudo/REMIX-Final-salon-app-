@@ -13,6 +13,7 @@ import {
   type NotificationChannel,
   type NotificationType,
 } from '../lib/notificationService';
+import { ensureReferralCode } from '../lib/referralService';
 
 interface ProfileTabProps {
   user: UserProfile;
@@ -690,11 +691,16 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
 
 
   // User's effective referral code
-  const referralCode = useMemo(() => {
-    if (user.referralCode) return user.referralCode;
-    const clean = (user.name || 'USER').replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 6) || 'NXUSER';
-    return `NEXORA-${clean}78`;
-  }, [user.referralCode, user.name]);
+  const referralCode = useMemo(
+    () =>
+      ensureReferralCode({
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        referralCode: user.referralCode,
+      }),
+    [user.referralCode, user.name, user.email, user.phone]
+  );
 
   // Derived user city & area
   const userCity = user.city || 'Jaipur';

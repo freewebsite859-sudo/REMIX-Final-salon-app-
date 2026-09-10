@@ -31,6 +31,7 @@ import {
   redeemPointsForBooking,
   syncBookingRewards,
 } from '../lib/rewardsService';
+import { completeReferralByQrPayment, ensureReferralCode } from '../lib/referralService';
 
 interface RewardsTabProps {
   user: UserProfile;
@@ -129,11 +130,17 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
   const [simDescription, setSimDescription] = useState<string>('Hair Spa & Beard Grooming');
 
   // Referral code for user
-  const userReferralCode = useMemo(() => {
-    if (user.referralCode) return user.referralCode;
-    const cleanName = (user.name || 'GUEST').replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 6) || 'NXUSER';
-    return `NEXORA-${cleanName}99`;
-  }, [user.referralCode, user.name]);
+  const userReferralCode = useMemo(
+    () =>
+      ensureReferralCode({
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        userId,
+        referralCode: user.referralCode,
+      }),
+    [user.referralCode, user.name, user.email, user.phone, userId]
+  );
 
   // Filtered transactions for display
   const filteredTransactions = useMemo(() => {
@@ -211,10 +218,25 @@ export const RewardsTab: React.FC<RewardsTabProps> = ({
     });
 
     if (result.success && result.transaction) {
+      // A qualifying QR payment is the trigger that releases the referral
+      // bonus: flip this customer's pending referral to `completed` and credit
+      // the friend who invited them (150 pts to their wallet).
+      const referralOutcome = completeReferralByQrPayment({
+        referredUserId: userId,
+        referredEmail: user.email,
+        amountInr: bill,
+        salonName: targetSalon.name,
+      });
+
       const updated = getStoredRewardTransactions(userId);
       setTransactions(updated);
       setIsQrSimulateModalOpen(false);
-      showToast(result.message, 'success');
+      showToast(
+        referralOutcome.success
+          ? `${result.message} ${referralOutcome.pointsCredited} referral points credited to your inviter.`
+          : result.message,
+        'success'
+      );
     } else {
       showToast(result.message, 'error');
     }

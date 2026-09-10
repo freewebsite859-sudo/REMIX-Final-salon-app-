@@ -14,6 +14,7 @@ import {
   Settings,
   ShoppingBag,
   CalendarDays,
+  Gift,
 } from 'lucide-react';
 import { NexoraLogo } from './NexoraLogo';
 import { PasswordResetModal } from './PasswordResetModal';
@@ -32,7 +33,16 @@ import {
   minDobInputValue,
   validateDateOfBirth,
 } from '../../lib/dobValidation';
-
+import {
+  consumePendingReferralCode,
+  normalizeReferralCode,
+  resolveReferralCodeForSignup,
+} from '../../lib/inviteLink';
+import {
+  MIN_QUALIFYING_QR_PAYMENT,
+  REFERRAL_POINTS_PER_INVITE,
+  registerReferralAfterSignup,
+} from '../../lib/referralService';
 interface AuthPageProps {
   onAuthSuccess: (user: Partial<UserProfile> & { role?: UserRole }) => void;
   onExploreAsGuest?: () => void;
@@ -57,6 +67,14 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [selectedRole, setSelectedRole] = useState<UserRole>('customer');
+  /**
+   * Referral code the new account arrived with. Prefilled from the invite link
+   * (`/invite?code=NX-VIJAY634` → `/customer/signup?code=NX-VIJAY634`) or from
+   * the stashed copy of it, and editable so a friend can paste a code by hand.
+   */
+  const [referralCode, setReferralCode] = useState<string>(() =>
+    resolveReferralCodeForSignup()
+  );
 
   // Password visibility toggles
   const [showPassword, setShowPassword] = useState(false);
@@ -89,10 +107,35 @@ export const AuthPage: React.FC<AuthPageProps> = ({
     [dateOfBirth]
   );
 
+  /** The code this visit arrived with (from the invite link / stash). */
+  const inviteCode = useMemo(() => resolveReferralCodeForSignup(), []);
+  /** True while the field still holds the invited code — drives the hint copy. */
+  const referralCodeFromInvite = Boolean(
+    inviteCode && normalizeReferralCode(referralCode) === inviteCode
+  );
+
   // Opening /auth/signup lands directly on the signup tab.
   useEffect(() => {
     if (initialMode === 'signup') setAuthMode('signup');
   }, [initialMode]);
+
+  /**
+   * Keep the referral field in sync with the address bar. The invite redirect
+   * rewrites `/invite?code=NX-…` to `/customer/signup?code=NX-…` after mount,
+   * and a visitor may also switch tabs, so re-read on every history change.
+   * A code the visitor typed themselves is never overwritten.
+   */
+  useEffect(() => {
+    const syncCodeFromUrl = () => {
+      const fromUrl = resolveReferralCodeForSignup();
+      if (fromUrl) {
+        setReferralCode((current) => (current ? current : fromUrl));
+      }
+    };
+    syncCodeFromUrl();
+    window.addEventListener('popstate', syncCodeFromUrl);
+    return () => window.removeEventListener('popstate', syncCodeFromUrl);
+  }, []);
 
   // Clear errors when switching modes and keep the customer URL in sync
   // (`/customer/login` ↔ `/customer/signup`).
@@ -267,6 +310,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         });
       } else {
         // Signup flow
+        const normalizedReferral = normalizeReferralCode(referralCode);
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(),
           password,
@@ -276,6 +320,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({
               mobile: mobile.trim(),
               date_of_birth: dateOfBirth || null,
               role: selectedRole,
+              // Who invited this account — kept on the auth user so attribution
+              // survives even if the referral row write fails.
+              referral_code: normalizedReferral || null,
             },
           },
         });
@@ -300,7 +347,12 @@ export const AuthPage: React.FC<AuthPageProps> = ({
               email.trim(),
               selectedRole,
               fullName.trim(),
-              { dateOfBirth: dateOfBirth || null }
+              {
+                dateOfBirth: dateOfBirth || null,
+                // Persist the mobile on the profile row too — auth metadata
+                // alone is not readable by the salon-side queries.
+                phone: mobile.trim() || null,
+              }
             );
             if (!result.success) {
               console.warn('[Nexora] Profile creation warning:', result.error);
@@ -311,13 +363,47 @@ export const AuthPage: React.FC<AuthPageProps> = ({
           }
         }
 
+        // -------------------------------------------------------------------
+        // Referral attribution — "this new account arrived with code X".
+        // Runs after the account exists so the referral row can point at a
+        // real user id. It never blocks signup: failures are reported in the
+        // success banner and logged, never thrown.
+        // -------------------------------------------------------------------
+        let referralNote = '';
+        if (normalizedReferral) {
+          try {
+            const outcome = await registerReferralAfterSignup({
+              code: normalizedReferral,
+              name: fullName.trim(),
+              email: email.trim(),
+              mobile: mobile.trim(),
+              userId: data.user?.id,
+            });
+            if (outcome.success) {
+              const inviter = outcome.referrer?.name || outcome.remote?.referrerName;
+              referralNote = inviter
+                ? ` Invite from ${inviter} counted.`
+                : ` Referral code ${normalizedReferral} counted.`;
+            } else if (outcome.reason === 'unknown_code') {
+              referralNote = ` Referral code ${normalizedReferral} is not registered yet — ask your friend to open Nexora once.`;
+            } else if (outcome.reason === 'self_referral') {
+              referralNote = ' Your own referral code cannot be used on your account.';
+            }
+          } catch (referralErr) {
+            console.warn('[Nexora] Referral attribution failed:', referralErr);
+          }
+          // The account exists now, so the stashed invite code has done its job.
+          // Clearing it stops a later signup on this device inheriting it.
+          consumePendingReferralCode();
+        }
+
         setIsLoading(false);
         setSuccessMessage(
           data.session
             ? selectedRole === 'salon_owner'
-              ? `Account created. Welcome! Redirecting to Salon Owner Dashboard.`
-              : `Account created. Welcome to Nexora Luxury Management.`
-            : `Account created. Check your email to confirm your account before signing in.`
+              ? `Account created. Welcome! Redirecting to Salon Owner Dashboard.${referralNote}`
+              : `Account created. Welcome to Nexora Luxury Management.${referralNote}`
+            : `Account created. Check your email to confirm your account before signing in.${referralNote}`
         );
         if (data.session) {
           onAuthSuccess({
@@ -505,6 +591,30 @@ export const AuthPage: React.FC<AuthPageProps> = ({
 
         {/* 4. Authentication Form */}
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          {/* Invite attribution banner — shown only when the code came from a
+              link, so the visitor knows their signup will be credited. */}
+          {authMode === 'signup' && referralCodeFromInvite && (
+            <div
+              id="signup-referral-banner"
+              role="status"
+              className="flex items-start gap-2.5 p-3.5 rounded-xl bg-[#b90064]/8 border border-[#b90064]/25"
+            >
+              <Gift className="w-4 h-4 text-[#b90064] mt-[2px] shrink-0" />
+              <div className="min-w-0">
+                <p className="text-[13px] font-bold text-[#b90064]">
+                  Joined via referral:{' '}
+                  <span id="signup-referral-banner-code" className="font-mono tracking-wide">
+                    {referralCode}
+                  </span>
+                </p>
+                <p className="text-[11px] text-[#594047] mt-0.5">
+                  Your friend gets {REFERRAL_POINTS_PER_INVITE} points after your first ₹
+                  {MIN_QUALIFYING_QR_PAYMENT}+ QR payment at a partner salon.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Sign Up: Full Name */}
           {authMode === 'signup' && (
             <div className="animate-in fade-in slide-in-from-top-2 duration-200">
@@ -671,6 +781,61 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                   ? 'Book appointments and discover salons' 
                   : 'Manage your salon and bookings'}
               </p>
+            </div>
+          )}
+
+          {/* Sign Up: Referral code — prefilled from the invite link */}
+          {authMode === 'signup' && (
+            <div
+              id="signup-referral-block"
+              className="animate-in fade-in slide-in-from-top-2 duration-200"
+            >
+              <label
+                htmlFor="signup-referral-code"
+                className="flex items-center gap-1 text-[13px] font-semibold text-[#1c1b1b] mb-1.5"
+              >
+                <span>Referral Code</span>
+                <span className="text-[11px] font-normal text-[#594047]/70">(Optional)</span>
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[#594047]/70">
+                  <Gift className="w-4 h-4" />
+                </div>
+                <input
+                  id="signup-referral-code"
+                  type="text"
+                  inputMode="text"
+                  autoCapitalize="characters"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={referralCode}
+                  onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
+                  onBlur={() => {
+                    const normalized = normalizeReferralCode(referralCode);
+                    setReferralCode(normalized);
+                  }}
+                  placeholder="e.g. NX-VIJAY634"
+                  aria-describedby="signup-referral-hint"
+                  className="w-full h-[52px] pl-10 pr-4 bg-white/80 focus:bg-white text-[#1c1b1b] placeholder:text-[#594047]/45 rounded-lg text-[14px] font-mono tracking-wide border border-[#e8e8e8] focus:border-[#b90064] focus:ring-4 focus:ring-[#b90064]/10 transition-all outline-none"
+                />
+              </div>
+              {referralCodeFromInvite ? (
+                <p
+                  id="signup-referral-hint"
+                  className="text-[11px] text-[#b90064] font-semibold mt-1 flex items-start gap-1"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5 mt-[1px] shrink-0" />
+                  <span>
+                    Invite code <span className="font-mono">{referralCode}</span> added — your
+                    friend earns {REFERRAL_POINTS_PER_INVITE} points once you make your first ₹
+                    {MIN_QUALIFYING_QR_PAYMENT}+ QR payment at a partner salon.
+                  </span>
+                </p>
+              ) : (
+                <p id="signup-referral-hint" className="text-[11px] text-[#594047]/70 mt-1">
+                  Got a code from a friend? Paste it here so their reward is counted.
+                </p>
+              )}
             </div>
           )}
 
