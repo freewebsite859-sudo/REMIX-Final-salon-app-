@@ -38,6 +38,7 @@
     "test:invite-referral": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs --import ./test/force-demo-auth.mjs test/inviteReferral.test.tsx",
     "test:referral-service": "tsx test/referralService.test.mts",
     "test:referral-api": "tsx test/referralApi.test.mts",
+    "test:invite-redirect": "tsx test/inviteRedirect.test.mts",
     "test:reviews": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/reviewsPage.test.tsx",
     "test:reviews-service": "tsx test/reviewsService.test.mts",
     "test:notifications-page": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/notificationsPage.test.tsx",
@@ -47,7 +48,8 @@
     "test:signup-dob": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/signupDob.test.tsx",
     "test:security": "tsx test/security.check.mts",
     "typecheck": "tsc --noEmit",
-    "verify:live": "node scripts/verify-live.mjs"
+    "verify:live": "node scripts/verify-live.mjs",
+    "verify:invite": "node scripts/verify-invite-link.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",

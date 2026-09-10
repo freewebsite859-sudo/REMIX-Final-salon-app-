@@ -12,6 +12,113 @@
   </head>
   <body class="bg-surface-off-white text-on-surface antialiased">
     <div id="root"></div>
+    <script>
+      /**
+       * Nexora invite-link capture — runs BEFORE the app bundle (and therefore
+       * before the Supabase client is constructed, whose detectSessionInUrl would
+       * otherwise treat `?code=` as a PKCE authorization code).
+       *
+       * Mirrors src/lib/inviteLink.ts: find the referral code on an invite URL
+       * (`/invite?code=NX-…`, `/r/NX-…`, `/join?ref=…`, …), stash it, then rewrite
+       * the address bar to the signup screen using the `ref` param. The stash is
+       * what makes the code survive even if the URL is cleaned or the visitor
+       * navigates away before signing up.
+       *
+       * Keep the constants in sync with src/lib/inviteLink.ts —
+       * test/inviteRedirect.test.mts asserts that they match.
+       */
+      (function () {
+        var PATHS = ['/invite', '/invited', '/join', '/ref', '/refer', '/referral-link', '/r'];
+        var PARAMS = ['code', 'ref', 'referral', 'referral_code', 'invite', 'invite_code', 'rc'];
+        var KEY = 'nexora-pending-referral-code';
+        var SIGNUP = '/customer/signup';
+        try {
+          var loc = window.location;
+          var path = (loc.pathname || '/').replace(/\/+$/, '') || '/';
+          var lower = path.length > 1 ? path.toLowerCase() : path;
+          var isInvite = false;
+          var segmentCode = '';
+          for (var i = 0; i < PATHS.length; i++) {
+            if (lower === PATHS[i] || lower.indexOf(PATHS[i] + '/') === 0) {
+              isInvite = true;
+              var rest = lower.slice(PATHS[i].length + 1);
+              if (rest) {
+                try {
+                  segmentCode = decodeURIComponent(path.slice(PATHS[i].length + 1).split('/')[0]);
+                } catch (e) {
+                  segmentCode = path.slice(PATHS[i].length + 1).split('/')[0];
+                }
+              }
+              break;
+            }
+          }
+          /**
+           * Same contract as normalizeReferralCode + isReferralCodeValue in
+           * src/lib/inviteLink.ts: short, upper-case, URL-safe. A Supabase
+           * authorization code is a long mixed-case blob and must NOT be
+           * captured as a referral code (that would poison the stash and hijack
+           * a password-reset / OAuth return URL).
+           */
+          function clean(value) {
+            var raw = String(value == null ? '' : value).trim();
+            if (!raw || raw.length > 24) return '';
+            var out = raw
+              .toUpperCase()
+              .replace(/\s+/g, '-')
+              .replace(/[^A-Z0-9-]/g, '')
+              .replace(/-{2,}/g, '-')
+              .replace(/^-+|-+$/g, '');
+            if (out.length < 4 || out.length > 24) return '';
+            if (/^NX-[A-Z0-9-]{2,}$/.test(out)) return out;
+            if (raw === raw.toUpperCase() && raw === out) return out;
+            return '';
+          }
+          var params = new URLSearchParams(loc.search || '');
+          var code = '';
+          for (var p = 0; p < PARAMS.length; p++) {
+            code = clean(params.get(PARAMS[p]));
+            if (code) break;
+          }
+          if (!code) code = clean(segmentCode);
+          if (!code) {
+            // Fall back to the stash so a reload of a bare signup URL keeps the
+            // code. Parsed defensively: the app writes JSON, older builds a raw code.
+            var stored = '';
+            try {
+              stored = window.localStorage.getItem(KEY) || '';
+            } catch (eS) {
+              stored = '';
+            }
+            if (stored) {
+              try {
+                var parsed = JSON.parse(stored);
+                code = clean(parsed && typeof parsed === 'object' ? parsed.code : '');
+              } catch (eJ) {
+                code = clean(stored);
+              }
+            }
+          }
+          if (!code) return;
+          window.__NEXORA_INVITE__ = { code: code, at: new Date().toISOString(), cameFromInvite: isInvite };
+          try {
+            window.localStorage.setItem(KEY, JSON.stringify({ code: code, at: new Date().toISOString() }));
+          } catch (e) {
+            try {
+              window.localStorage.setItem(KEY, code);
+            } catch (e2) {
+              /* storage disabled — the window marker and URL still carry it */
+            }
+          }
+          var isSignup = lower === SIGNUP || lower === '/auth/signup';
+          var target = isSignup || isInvite ? SIGNUP + '?ref=' + encodeURIComponent(code) : null;
+          if (target && (loc.pathname + loc.search) !== target) {
+            window.history.replaceState({ nexoraAuth: 'signup', nexoraInviteCode: code }, '', target);
+          }
+        } catch (e) {
+          /* a capture script must never break the page */
+        }
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

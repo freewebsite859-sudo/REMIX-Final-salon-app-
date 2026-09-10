@@ -5,17 +5,23 @@ import path from 'path';
 import { defineConfig, type Plugin, type ViteDevServer } from 'vite';
 import dotenv from 'dotenv';
 import { attachNexoraApi } from './server/attachApi';
+import { inviteRedirectMiddleware } from './server/inviteRedirects';
 
 dotenv.config();
 
 /**
  * Serve `/api/*` inside the Vite dev server so a preview that runs `vite`
  * (instead of `tsx server.ts`) does not 404 payment/booking routes.
+ *
+ * Invite links (`/invite?code=NX-…`) are answered here too: a preview host that
+ * never loads `server.ts` must still 302 an invited visitor onto the signup
+ * form instead of falling through to the guest home screen.
  */
 function nexoraApiPlugin(): Plugin {
   return {
     name: 'nexora-api',
     configureServer(server: ViteDevServer) {
+      server.middlewares.use(inviteRedirectMiddleware());
       const api = express();
       api.use(express.json({ limit: '32kb' }));
       attachNexoraApi(api);

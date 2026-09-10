@@ -1,0 +1,33 @@
+# Nexora redirect rules — read by Netlify and Cloudflare Pages (this file is
+# copied verbatim into `dist/` by Vite). `server/inviteRedirects.ts` does the
+# same job when the app is hosted on Node; these rules exist so a purely static
+# host never 404s an invite link or leaves the referral code to client-side JS.
+#
+# Contract: /invite?code=<CODE>  →  /customer/signup?ref=<CODE>
+# `ref` (not `code`) is used internally because Supabase's detectSessionInUrl
+# reads ?code= as a PKCE authorization code — see src/lib/inviteLink.ts.
+
+# --- invite links: query form (what the Copy Link / WhatsApp buttons emit) ---
+/invite?code=:code           /customer/signup?ref=:code            302
+/join?code=:code             /customer/signup?ref=:code            302
+/ref?code=:code              /customer/signup?ref=:code            302
+/refer?code=:code            /customer/signup?ref=:code            302
+/invited?code=:code          /customer/signup?ref=:code            302
+/referral-link?code=:code    /customer/signup?ref=:code            302
+
+# --- invite links: short path form -------------------------------------------
+/invite/:splat               /customer/signup?ref=:splat           302
+/join/:splat                 /customer/signup?ref=:splat           302
+/r/:splat                    /customer/signup?ref=:splat           302
+/ref/:splat                  /customer/signup?ref=:splat           302
+
+# --- invite links with no code, and legacy signup aliases --------------------
+/invite                      /customer/signup                      302
+/join                        /customer/signup                      302
+/r                           /customer/signup                      302
+/signup                      /customer/signup                      301
+/register                    /customer/signup                      301
+/auth/signup                 /customer/signup                      301
+
+# --- everything else is the SPA ---------------------------------------------
+/*                         /index.html                             200

@@ -10,8 +10,12 @@
  *   a. Every customer owns ONE stable referral code (`NX-VIJAY634` style),
  *      registered in a local registry and mirrored to `profiles.referral_code`
  *      when a live Supabase project is configured.
- *   b. `https://nexora.app/invite?code=NX-VIJAY634` opens the signup form with
- *      that code prefilled (see `lib/inviteLink.ts`).
+ *   b. `https://<deployment-origin>/invite?code=NX-VIJAY634` opens the signup
+ *      form with that code prefilled (see `lib/inviteLink.ts`; the origin comes
+ *      from VITE_APP_URL/APP_URL, falling back to the current host, and the
+ *      server 302s the invite path — see `server/inviteRedirects.ts`).
+ *      Internal URLs use `?ref=` because `?code=` belongs to Supabase's PKCE
+ *      exchange; `?code=` only ever appears in the public share link.
  *   c. On a successful signup the code is resolved back to the referrer and a
  *      PENDING referral row is written — that is what "Total Invited" counts.
  *   d. When the referred friend completes a qualifying ₹100+ QR payment the row
