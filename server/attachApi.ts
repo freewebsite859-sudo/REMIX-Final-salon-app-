@@ -11,12 +11,15 @@ import { createNotificationsRouter } from './notifications';
 import { createBookingsRouter } from './bookings';
 import { createPaymentsRouter } from './payments';
 import { createEngagementRouter } from './engagement';
+import { createReferralsRouter } from './referrals';
 
 export function attachNexoraApi(app: Express, env: NodeJS.ProcessEnv = process.env): void {
   app.use('/api/notifications', createNotificationsRouter(env));
   app.use('/api/bookings', createBookingsRouter(env));
   app.use('/api/payments', createPaymentsRouter(env));
   app.use('/api/engagement', createEngagementRouter(env));
+  // Invite-link attribution: GET /resolve, POST /accept, GET /:userId
+  app.use('/api/referrals', createReferralsRouter(env));
 
   app.get('/api/health', (_req: Request, res: Response) => {
     res.json({

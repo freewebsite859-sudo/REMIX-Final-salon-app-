@@ -61,6 +61,7 @@ import {
   CUSTOMER_REWARDS,
   CUSTOMER_SEARCH,
   CUSTOMER_SETTINGS,
+  CUSTOMER_SIGNUP,
   canonicalizeCustomerPath,
   customerBookPath,
   customerBookingPath,
@@ -85,6 +86,8 @@ import {
   resolveNotificationTarget,
   type AppNotification,
 } from './lib/notificationService';
+import { isInvitePath, redirectInviteToSignup } from './lib/inviteLink';
+import { syncReferralCodeToProfile } from './lib/referralService';
 
 const STORAGE_KEYS = {
   // These keys hold UI drafts/preferences only. They are never the source of
@@ -566,6 +569,31 @@ export default function App() {
         return;
       }
 
+      // Invite deep links (`https://nexora.app/invite?code=NX-…`) must open the
+      // SIGNUP form with the code attached. Without this branch the path fell
+      // through to the guest home screen and the code was silently dropped, so
+      // nobody was ever counted for the referral.
+      if (isInvitePath(path)) {
+        // Rewrites the URL to /customer/signup?code=… and stashes the code in
+        // localStorage so a reload or a later navigation cannot lose it.
+        const code = redirectInviteToSignup({ replace: true });
+        if (isAuthenticated) {
+          // Already signed in — nothing to sign up for. Show their own
+          // Refer & Earn screen instead of a signup form.
+          setShowAuthScreen(false);
+          navigateCustomer(CUSTOMER_REFERRAL, { replace: true });
+          applyCustomerRoute(parseCustomerRoute(CUSTOMER_REFERRAL));
+          return;
+        }
+        setShowAuthScreen(true);
+        setAuthInitialMode('signup');
+        setCustomerRoute(parseCustomerRoute(CUSTOMER_SIGNUP));
+        if (code) {
+          console.info(`[Nexora] Invite link opened with referral code ${code}`);
+        }
+        return;
+      }
+
       // Auth screens (legacy /auth/* and /customer/login|signup).
       if (isAuthRoute(path)) {
         setShowAuthScreen(true);
@@ -829,9 +857,34 @@ export default function App() {
           if (profile?.date_of_birth) {
             setUser(prev => ({ ...prev, dateOfBirth: prev.dateOfBirth || profile.date_of_birth! }));
           }
+          // A code already on the profile wins over a locally derived one.
+          const profileCode = (profile as { referral_code?: string | null } | null)?.referral_code;
+          if (profileCode) {
+            setUser(prev => ({ ...prev, referralCode: profileCode }));
+          }
         }
       } catch (err) {
         console.warn('[Nexora] Failed to refresh profile from backend:', err);
+      }
+
+      // Publish this customer's referral code so invite links they share can be
+      // resolved by the backend from any device. Explicit + non-blocking: it is
+      // never called from render, and a project without the migration column
+      // simply keeps working on local attribution.
+      try {
+        const result = await syncReferralCodeToProfile({
+          userId,
+          name: sessionUser?.user_metadata?.full_name || storedProfile?.name,
+          email: sessionUser?.email || storedProfile?.email,
+          phone: sessionUser?.user_metadata?.mobile || storedProfile?.phone,
+        });
+        if (result.synced) {
+          setUser(prev => ({ ...prev, referralCode: result.code }));
+        } else if (result.error && result.error !== 'live supabase not configured') {
+          console.info('[Nexora] Referral code kept on-device:', result.error);
+        }
+      } catch (err) {
+        console.info('[Nexora] Referral code sync skipped:', err);
       }
     })();
 

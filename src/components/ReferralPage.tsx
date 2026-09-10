@@ -1,9 +1,13 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type { UserProfile } from '../types.ts';
 import {
   computeReferralSummary,
+  ensureReferralCode,
+  findReferralCodeOwner,
   loadReferralRecords,
+  readReferredBy,
   saveReferralRecords,
+  REFERRAL_UPDATED_EVENT,
   REFERRAL_POINTS_PER_INVITE,
   MIN_QUALIFYING_QR_PAYMENT,
   type ReferralRecord,
@@ -22,12 +26,24 @@ export const ReferralPage: React.FC<ReferralPageProps> = ({
   onOpenRewards,
   onExploreSalons,
 }) => {
-  // Referral code derivation
-  const referralCode = useMemo(() => {
-    if (user.referralCode) return user.referralCode;
-    const clean = (user.name || 'USER').replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 6) || 'NXUSER';
-    return `NEXORA-${clean}78`;
-  }, [user.referralCode, user.name]);
+  /**
+   * The customer's ONE stable referral code. `ensureReferralCode` prefers the
+   * code already on the profile, reuses a previously issued one, otherwise
+   * derives `NX-<NAME><ddd>` — and always registers it so the invite links
+   * people share can be resolved back to this account.
+   */
+  const referralCode = useMemo(
+    () =>
+      ensureReferralCode({
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        referralCode: user.referralCode,
+      }),
+    [user.name, user.email, user.phone, user.referralCode]
+  );
+
+  const ownerKey = user.email || user.phone;
 
   // Load referral records
   const [records, setRecords] = useState<ReferralRecord[]>(() =>
@@ -35,6 +51,32 @@ export const ReferralPage: React.FC<ReferralPageProps> = ({
   );
   const [filterTab, setFilterTab] = useState<'all' | 'completed' | 'pending'>('all');
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  /**
+   * Counts must move without a manual refresh: a friend signing up through the
+   * invite link writes a new row under this account's key and broadcasts.
+   */
+  useEffect(() => {
+    const refresh = () => setRecords(loadReferralRecords(ownerKey));
+    refresh();
+    window.addEventListener(REFERRAL_UPDATED_EVENT, refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.removeEventListener(REFERRAL_UPDATED_EVENT, refresh);
+      window.removeEventListener('storage', refresh);
+    };
+  }, [ownerKey]);
+
+  /** Who invited THIS customer (shown when they arrived via an invite link). */
+  const referredBy = useMemo(() => {
+    const record = readReferredBy(ownerKey);
+    if (!record) return null;
+    const owner = findReferralCodeOwner(record.code);
+    return {
+      code: record.code,
+      name: owner?.name || record.referrerName || 'a Nexora customer',
+    };
+  }, [ownerKey]);
 
   // Invite modal state
   const [showInviteModal, setShowInviteModal] = useState(false);
@@ -159,6 +201,29 @@ export const ReferralPage: React.FC<ReferralPageProps> = ({
           <span className="hidden sm:inline">Invite Friend</span>
         </button>
       </div>
+
+      {/* ========================================================================= */}
+      {/* "YOU WERE INVITED" BANNER — attribution for the referred side             */}
+      {/* ========================================================================= */}
+      {referredBy && (
+        <div
+          id="section-referral-invited-by"
+          className="bg-emerald-500/10 border border-emerald-500/30 rounded-3xl p-4 mb-5 flex items-start gap-3"
+        >
+          <div className="w-9 h-9 rounded-2xl bg-emerald-500/20 text-emerald-900 flex items-center justify-center shrink-0">
+            <span className="material-symbols-outlined text-[22px]">redeem</span>
+          </div>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-[13px] font-extrabold text-emerald-900">
+              You joined with code <span className="font-mono">{referredBy.code}</span>
+            </h2>
+            <p className="text-[11px] text-emerald-950 font-medium">
+              {referredBy.name} is credited {REFERRAL_POINTS_PER_INVITE} points as soon as you
+              complete a ₹{MIN_QUALIFYING_QR_PAYMENT}+ QR payment at any partner salon.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* ========================================================================= */}
       {/* REFERRAL RULES BANNER (MANDATORY REQUIREMENT)                             */}

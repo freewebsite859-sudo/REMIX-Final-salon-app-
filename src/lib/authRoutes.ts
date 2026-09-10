@@ -13,6 +13,7 @@
  */
 
 import { NEXORA_AUTH_STORAGE_KEY } from './supabase';
+import { INVITE_PATHS, isInvitePath } from './inviteLink';
 import {
   CUSTOMER_HOME,
   CUSTOMER_LOGIN,
@@ -35,6 +36,9 @@ export const SIGNUP_ALIAS_PATHS: readonly string[] = [
   '/register',
   '/auth/register',
   CUSTOMER_SIGNUP,
+  // Invite deep links (`https://nexora.app/invite?code=NX-…`) are signup
+  // screens too: an invited visitor must land on the form, not on Home.
+  ...INVITE_PATHS,
 ];
 
 /**
@@ -86,6 +90,7 @@ export function isSignupRoute(path: string = currentPath()): boolean {
   return (
     path === SIGNUP_PATH ||
     SIGNUP_ALIAS_PATHS.includes(path) ||
+    isInvitePath(path) ||
     isCustomerSignupPath(path)
   );
 }
