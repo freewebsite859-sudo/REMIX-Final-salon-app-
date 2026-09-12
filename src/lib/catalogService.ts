@@ -1,8 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { GalleryPhoto, Review, Salon, SalonService, Stylist } from '../types';
+import type { GalleryPhoto, Review, Salon, SalonService, Stylist, SalonVideoReel } from '../types';
 import { isNexoraDemoMode, supabase } from './supabase';
 import { DEMO_SALONS } from '../data/demoCatalog';
 import { getTemplateSalons } from '../data/templateSalons';
+import { getReelsForSalon } from '../data/salonVideoReels';
 
 export type CatalogSource = 'remote' | 'fallback';
 
@@ -50,6 +51,9 @@ export interface SalonDbRow {
   phone?: string | null;
   gender?: Salon['gender'] | string | null;
   categories?: string[] | string | null;
+  video_url?: string | null;
+  video_preview_url?: string | null;
+  video_reels?: SalonVideoReel[] | null;
   // Optional search enrichment columns (mirrored from Salon interface)
   tags?: string[] | string | null;
   keywords?: string[] | string | null;
@@ -380,6 +384,10 @@ export function normalizeCatalog(
       discountOffer: asOptionalString(row.discount_offer),
       phone: asOptionalString(row.phone),
       gender: genderValue(row.gender),
+      videoUrl: asOptionalString(row.video_url ?? row.video_preview_url) || getReelsForSalon(id)[0]?.videoUrl,
+      videoReels: Array.isArray(row.video_reels) && row.video_reels.length > 0
+        ? row.video_reels
+        : getReelsForSalon(id),
     });
   }
 
@@ -503,11 +511,17 @@ export function mergeTemplateSalons(remoteSalons: Salon[]): Salon[] {
       // Ensure services and staff are sanitized for BookingModal
       const sanitizedServices = mapBookingServices(remoteSalon.services);
       const sanitizedStylists = mapBookingStylists(remoteSalon.stylists, remoteSalon.id, remoteSalon.name);
+      const templateReels = remoteSalon.videoReels && remoteSalon.videoReels.length > 0
+        ? remoteSalon.videoReels
+        : getReelsForSalon(remoteSalon.id);
+      const salonVideoUrl = remoteSalon.videoUrl || templateReels[0]?.videoUrl;
 
       merged.push({
         ...remoteSalon,
         services: sanitizedServices,
         stylists: sanitizedStylists,
+        videoUrl: salonVideoUrl,
+        videoReels: templateReels.length > 0 ? templateReels : undefined,
       });
     }
   }
@@ -518,18 +532,24 @@ export function mergeTemplateSalons(remoteSalons: Salon[]): Salon[] {
 
     const formattedServices = mapBookingServices(tmplSalon.services);
     const formattedStylists = mapBookingStylists(tmplSalon.stylists, tmplSalon.id, tmplSalon.name);
+    const templateReels = tmplSalon.videoReels && tmplSalon.videoReels.length > 0
+      ? tmplSalon.videoReels
+      : getReelsForSalon(tmplSalon.id);
+    const videoUrl = tmplSalon.videoUrl || templateReels[0]?.videoUrl;
 
     const formattedTmplSalon: Salon = {
       ...tmplSalon,
       services: formattedServices,
       stylists: formattedStylists,
+      videoUrl,
+      videoReels: templateReels,
     };
 
     if (!existingIds.has(tmplSalon.id)) {
       existingIds.add(tmplSalon.id);
       merged.push(formattedTmplSalon);
     } else {
-      // If a live salon exists with matching ID but lacks services/stylists, enrich it safely
+      // If a live salon exists with matching ID but lacks services/stylists/video preview, enrich it safely
       const existingIndex = merged.findIndex((s) => s.id === tmplSalon.id);
       if (existingIndex >= 0) {
         const existing = merged[existingIndex];
@@ -538,6 +558,12 @@ export function mergeTemplateSalons(remoteSalons: Salon[]): Salon[] {
         }
         if (!existing.stylists || existing.stylists.length === 0) {
           existing.stylists = formattedStylists;
+        }
+        if (!existing.videoUrl) {
+          existing.videoUrl = formattedTmplSalon.videoUrl;
+        }
+        if (!existing.videoReels || existing.videoReels.length === 0) {
+          existing.videoReels = formattedTmplSalon.videoReels;
         }
       }
     }

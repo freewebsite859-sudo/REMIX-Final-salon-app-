@@ -1,5 +1,6 @@
 import { Salon } from '../types';
 import { getTemplateSalons } from './templateSalons';
+import { getReelsForSalon } from './salonVideoReels';
 
 const ORIGINAL_SALONS: Salon[] = [
   {
@@ -736,4 +737,14 @@ const ORIGINAL_SALONS: Salon[] = [
   },
 ];
 
-export const DEMO_SALONS: Salon[] = [...getTemplateSalons(), ...ORIGINAL_SALONS];
+export const DEMO_SALONS: Salon[] = [
+  ...getTemplateSalons(),
+  ...ORIGINAL_SALONS.map((s) => {
+    const reels = getReelsForSalon(s.id);
+    return {
+      ...s,
+      videoUrl: s.videoUrl || reels[0]?.videoUrl,
+      videoReels: s.videoReels || reels,
+    };
+  }),
+];

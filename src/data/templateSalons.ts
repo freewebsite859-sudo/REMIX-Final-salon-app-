@@ -128,6 +128,7 @@ export function getTemplateSalons(): Salon[] {
       discountOffer: idx % 2 === 0 ? '15% OFF on first online booking' : undefined,
       phone: tmpl.phone,
       gender: isMen ? 'men' : isWomen ? 'women' : 'unisex',
+      videoUrl: getReelsForSalon(tmpl.id)[0]?.videoUrl || 'https://assets.mixkit.co/videos/preview/mixkit-hairdresser-cutting-hair-with-scissors-and-a-comb-41131-large.mp4',
       videoReels: getReelsForSalon(tmpl.id),
     };
   });

@@ -95,6 +95,7 @@ export interface Salon {
   discountOffer?: string;
   phone?: string;
   gender: 'unisex' | 'women' | 'men';
+  videoUrl?: string;
   videoReels?: SalonVideoReel[];
   socialVideos?: SocialVideo[];
 }
