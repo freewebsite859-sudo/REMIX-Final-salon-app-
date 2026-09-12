@@ -12,6 +12,7 @@ export interface ProfileMenuProps {
   onAddresses: () => void;
   onSupport: () => void;
   onAppSettings: () => void;
+  onAutoReminder?: () => void;
   onPrivacyPolicy: () => void;
   onTerms: () => void;
   onLogout: () => void;
@@ -51,6 +52,7 @@ export const ProfileMenu: React.FC<ProfileMenuProps> = ({
   onAddresses,
   onSupport,
   onAppSettings,
+  onAutoReminder,
   onPrivacyPolicy,
   onTerms,
   onLogout,
@@ -114,8 +116,19 @@ export const ProfileMenu: React.FC<ProfileMenuProps> = ({
       ],
     },
     {
-      title: 'App & Support',
+      title: 'App & Business Tools',
       items: [
+        ...(onAutoReminder
+          ? [
+              {
+                key: 'auto-reminder',
+                label: 'Auto Reminders (WhatsApp)',
+                icon: 'mark_chat_unread',
+                description: 'Screen 10 — 2-day automatic WhatsApp reminder campaign',
+                action: onAutoReminder,
+              },
+            ]
+          : []),
         {
           key: 'support',
           label: 'Support',

@@ -346,3 +346,36 @@ export interface SpendMilestoneReward {
   isUnlocked: boolean;
   unlockedAtDate?: string;
 }
+
+export type ReminderFrequencyOption = '2_days' | '3_days' | 'weekly' | 'custom';
+export type CampaignStatus = 'active' | 'paused' | 'stopped' | 'draft';
+
+export interface AutoReminderConfig {
+  isEnabled: boolean;
+  status: CampaignStatus;
+  customerGroup: string;
+  startDate: string;
+  endDate: string;
+  sendTime: string;
+  selectedOffer: string;
+  messageTemplate: string;
+  maximumReminders: number;
+  frequency: ReminderFrequencyOption;
+  customDays?: number;
+  stopAfterBooking: boolean;
+  stopAfterOfferExpiry: boolean;
+  skipRecentlyContacted: boolean;
+  skipRecentlyContactedDays: number;
+  excludeUnsubscribed: boolean;
+  businessHoursOnly: boolean;
+  businessHoursStart: string;
+  businessHoursEnd: string;
+  campaignStats?: {
+    audienceCount: number;
+    sentCount: number;
+    bookedCount: number;
+    optOutCount: number;
+    conversionRate: number;
+  };
+}
+
