@@ -47,7 +47,9 @@
     "test:signup-dob": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/signupDob.test.tsx",
     "test:security": "tsx test/security.check.mts",
     "typecheck": "tsc --noEmit",
-    "verify:live": "node scripts/verify-live.mjs"
+    "verify:live": "node scripts/verify-live.mjs",
+    "diagnose:templates": "tsx --import ./test/asset-loader-register.mjs scripts/diagnoseTemplates.ts",
+    "diagnose:loader": "tsx --import ./test/asset-loader-register.mjs src/scripts/diagnostic-template-loader.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",
@@ -57,9 +59,11 @@
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "lucide-react": "^0.546.0",
+    "motion": "^13.2.0",
     "qrcode": "^1.5.4",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
+    "recharts": "^3.10.1",
     "vite": "^6.2.3"
   },
   "devDependencies": {

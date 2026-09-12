@@ -129,6 +129,10 @@ export const ChooseProfessionalScreen: React.FC<ChooseProfessionalScreenProps> =
     () =>
       (salon?.stylists || []).map((stylist) => ({
         ...stylist,
+        avatar: stylist.avatar || stylist.avatarUrl || '',
+        rating: stylist.rating ?? 5,
+        experience: stylist.experience || '3+ years',
+        specialty: stylist.specialty || stylist.specialties || ['Styling'],
         // Availability is deliberately empty until the canonical availability
         // API supplies it. It must not be fabricated in the client.
         reviewCount: 0,

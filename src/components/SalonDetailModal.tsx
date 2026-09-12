@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Salon, SalonService, Stylist, Review } from '../types';
+import { Salon, SalonService, Stylist, Review, SalonVideoReel } from '../types';
 import { StaticMapPreview } from './StaticMapPreview';
 import { buildBookingMetadataServices } from '../lib/bookingContract';
 import { computeBookingTotals } from '../lib/bookingCore';
+import { SalonVideoReelsModal } from './SalonVideoReelsModal';
+import { getReelsForSalon, ALL_SALON_VIDEO_REELS } from '../data/salonVideoReels';
 
 /** Indian-rupee formatting with thousands separators (e.g. ₹3,150). */
 function formatINR(amount: number): string {
@@ -33,7 +35,7 @@ interface SalonDetailModalProps {
   onToggleSaveService?: (salonId: string, serviceId: string) => void;
 }
 
-type ModalTab = 'services' | 'reviews' | 'about';
+type ModalTab = 'services' | 'videos' | 'reviews' | 'about';
 
 export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
   salon,
@@ -50,6 +52,14 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<ModalTab>(initialTab);
   const [activeCategory, setActiveCategory] = useState<string>('all');
+  const [activeReelModalIndex, setActiveReelModalIndex] = useState<number | null>(null);
+
+  const salonReels: SalonVideoReel[] = useMemo(() => {
+    if (!salon) return [];
+    if (salon.videoReels && salon.videoReels.length > 0) return salon.videoReels;
+    const matched = getReelsForSalon(salon.id);
+    return matched.length > 0 ? matched : ALL_SALON_VIDEO_REELS.slice(0, 4);
+  }, [salon]);
   /**
    * Multi-service cart for this salon (bulk selection).
    * Stored as ids so a re-render of the catalog can never desynchronise the
@@ -402,6 +412,26 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
             </button>
 
             <button
+              id="salon-tab-videos"
+              onClick={() => setActiveTab('videos')}
+              className={`flex-1 min-w-[90px] py-2 px-2.5 rounded-xl text-[12px] sm:text-[13px] font-semibold flex items-center justify-center gap-1.5 transition-all ${
+                activeTab === 'videos'
+                  ? 'bg-primary text-white shadow-xs'
+                  : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[16px]">play_circle</span>
+              <span>Stories</span>
+              {salonReels.length > 0 && (
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                  activeTab === 'videos' ? 'bg-white/20 text-white' : 'bg-rose-500/15 text-rose-600'
+                }`}>
+                  {salonReels.length}
+                </span>
+              )}
+            </button>
+
+            <button
               id="salon-tab-reviews"
               onClick={() => setActiveTab('reviews')}
               className={`flex-1 min-w-[90px] py-2 px-2.5 rounded-xl text-[12px] sm:text-[13px] font-semibold flex items-center justify-center gap-1.5 transition-all ${
@@ -597,6 +627,90 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
                 </div>
               </div>
             </>
+          )}
+
+          {/* ======================= TAB 2: VIDEOS & STORIES REELS ======================= */}
+          {activeTab === 'videos' && (
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-section-heading text-[15px] font-bold text-on-surface">
+                    Salon Stories &amp; Video Previews
+                  </h3>
+                  <p className="text-[12px] text-on-surface-variant">
+                    Watch live stylist techniques, cuts, color balayage, and client results
+                  </p>
+                </div>
+                {salonReels.length > 0 && (
+                  <button
+                    onClick={() => setActiveReelModalIndex(0)}
+                    className="px-3 py-1.5 rounded-full bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-transform active:scale-95"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">play_arrow</span>
+                    <span>Play All</span>
+                  </button>
+                )}
+              </div>
+
+              {salonReels.length === 0 ? (
+                <div className="p-8 text-center bg-surface-container-low rounded-2xl border border-outline-variant/30 text-xs text-on-surface-variant">
+                  No video reels available for this salon yet.
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {salonReels.map((reel, rIdx) => (
+                    <div
+                      key={reel.id}
+                      onClick={() => setActiveReelModalIndex(rIdx)}
+                      className="group relative aspect-[9/15] rounded-2xl overflow-hidden bg-slate-950 border border-outline-variant/30 shadow-sm hover:shadow-lg transition-all cursor-pointer flex flex-col justify-between p-2.5 select-none"
+                    >
+                      <img
+                        src={reel.thumbnailUrl}
+                        alt={reel.title}
+                        className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                        loading="lazy"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-black/60 pointer-events-none" />
+
+                      {/* Top Bar */}
+                      <div className="relative z-10 flex items-center justify-between">
+                        <span className="bg-rose-600/90 text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                          Reel
+                        </span>
+                        {reel.duration && (
+                          <span className="bg-black/60 backdrop-blur-md text-white text-[9px] font-semibold px-1.5 py-0.5 rounded">
+                            {reel.duration}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Center Play Button */}
+                      <div className="relative z-10 flex items-center justify-center my-auto">
+                        <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-md border border-white/40 flex items-center justify-center text-white group-hover:scale-110 group-hover:bg-rose-600 transition-all shadow-md">
+                          <span className="material-symbols-outlined text-[18px] ml-0.5">play_arrow</span>
+                        </div>
+                      </div>
+
+                      {/* Bottom Info */}
+                      <div className="relative z-10 flex flex-col gap-1">
+                        <h4 className="text-white text-[11px] font-bold leading-tight line-clamp-2 drop-shadow">
+                          {reel.title}
+                        </h4>
+                        {reel.servicePrice ? (
+                          <div className="flex items-center justify-between pt-1 border-t border-white/20 text-[10px]">
+                            <span className="text-amber-300 font-extrabold">₹{reel.servicePrice}</span>
+                            <span className="text-white font-bold underline">Watch &amp; Book</span>
+                          </div>
+                        ) : (
+                          <span className="text-[10px] text-white/80">{reel.category}</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
 
           {/* ======================= TAB 3: REVIEWS & RATINGS ======================= */}
@@ -1154,6 +1268,21 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Fullscreen Video Reels Player Modal */}
+      {activeReelModalIndex !== null && (
+        <SalonVideoReelsModal
+          isOpen={activeReelModalIndex !== null}
+          onClose={() => setActiveReelModalIndex(null)}
+          reels={salonReels}
+          initialIndex={activeReelModalIndex}
+          salons={[salon]}
+          onBookSalon={(s, srv) => {
+            setActiveReelModalIndex(null);
+            onBookService(s, srv);
+          }}
+        />
+      )}
 
     </div>
   );

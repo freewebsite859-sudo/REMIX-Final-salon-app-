@@ -2,21 +2,33 @@ export interface Stylist {
   id: string;
   name: string;
   role: string;
-  avatar: string;
-  rating: number;
-  experience: string;
-  specialty: string[];
+  avatar?: string;
+  avatarUrl?: string;
+  bio?: string;
+  rating?: number;
+  experience?: string;
+  specialty?: string[];
+  specialties?: string[];
+  phone?: string;
+  assignedServices?: string[];
+  status?: string;
+  accessRole?: string;
+  commissionRate?: number;
+  hidePhone?: boolean;
 }
 
 export interface SalonService {
   id: string;
   name: string;
-  category: 'hair' | 'skin' | 'nails' | 'spa' | 'grooming' | 'bridal';
-  duration: number; // minutes
+  category: string;
+  duration?: number; // minutes
+  durationMinutes?: number;
   price: number;
   discountPrice?: number;
   description: string;
   popular?: boolean;
+  icon?: string;
+  showDuration?: boolean;
 }
 
 export interface Review {
@@ -83,6 +95,8 @@ export interface Salon {
   discountOffer?: string;
   phone?: string;
   gender: 'unisex' | 'women' | 'men';
+  videoReels?: SalonVideoReel[];
+  socialVideos?: SocialVideo[];
 }
 
 /**
@@ -378,4 +392,307 @@ export interface AutoReminderConfig {
     conversionRate: number;
   };
 }
+
+export type AppView =
+  | 'landing'
+  | 'wizard'
+  | 'preview'
+  | 'dashboard'
+  | 'staffPerformance'
+  | 'staffCommission'
+  | 'growthPartner'
+  | 'bookings'
+  | 'bookingDetail';
+
+export type BusinessTypeId = 
+  | 'hair_salon'         // Hair Cut & Styling Studio
+  | 'barber'             // Barber Shop / Men's Grooming
+  | 'unisex_salon'       // Unisex Salon
+  | 'beauty_parlour'     // Beauty Parlour
+  | 'nail_studio'        // Nail Studio
+  | 'hair_spa'           // Hair Spa & Treatment
+  | 'skincare_clinic'    // Facial & Skincare Clinic
+  | 'makeup_studio'      // Makeup Studio
+  | 'massage_wellness'   // Massage & Wellness Center
+  | 'hair_coloring'      // Hair Coloring Studio
+  | 'bridal_lounge'      // Bridal Makeup & Makeover Lounge
+  | 'tattoo_studio'      // Tattoo & Body Art Studio
+  | 'lash_brow'          // Lash & Brow Bar
+  | 'ayurvedic_spa'      // Ayurvedic Rejuvenation Spa
+  | 'ayurvedic_wellness_spa' // Ayurvedic & Wellness Spa
+  | 'luxury_hair_salon' // Premium Luxury Hair Salon
+  | 'bridal_makeover_studio' // Bridal & Makeover Studio
+  | 'family_salon' // Modern Unisex Family Salon
+  | 'barber_grooming_club' // Gentlemen's Barber & Grooming Club
+  | 'nails_lash_brow_bar' // Nails, Lash & Brow Bar
+  | 'medispa_aesthetics' // Medi-Spa & Skin Aesthetics Clinic
+  | 'organic_bio_salon' // Organic & Eco-Friendly Bio-Salon
+  | 'express_beauty_bar' // Express & Quick Beauty Bar
+  | 'thai_massage_center' // Thai & Oriental Massage Center
+  | 'kids_teens_studio' // Kids & Teens Fun Hair Studio
+  | 'resort_spa' // Luxury Hotel & Resort Spa
+  | 'vedic_ayurveda_studio'; // Vedic Ayurveda Wellness Studio
+
+export type LayoutStyle = 
+  | 'modern_minimalist'
+  | 'vintage_industrial'
+  | 'contemporary_balanced'
+  | 'curved_elegant'
+  | 'bento_grid'
+  | 'zen_emerald'
+  | 'clinical_clean'
+  | 'dark_glam'
+  | 'earth_bamboo'
+  | 'creative_gallery'
+  | 'royal_crimson'
+  | 'urban_monochrome'
+  | 'chic_nude'
+  | 'ayurvedic_terracotta'
+  | 'botanical_wellness'
+  | 'haute_luxe'
+  | 'ivory_pearl_bridal'
+  | 'family_fresh'
+  | 'gents_club'
+  | 'berry_pearl_bar'
+  | 'medispa_porcelain'
+  | 'organic_meadow'
+  | 'express_pop'
+  | 'oriental_silk'
+  | 'candy_playroom'
+  | 'resort_luxe'
+  | 'vedic_marigold';
+
+export interface BusinessTypeOption {
+  id: BusinessTypeId;
+  title: string;
+  categoryTag: string;
+  icon: string;
+  aestheticDescription: string;
+  description?: string;
+  paletteName: string;
+  badge: string;
+  defaultServices: Array<{ name: string; price: number; duration: number; category: string }>;
+}
+
+export type SalonThemePreset = 
+  | 'slate_silver'
+  | 'vintage_brass'
+  | 'pastel_blush'
+  | 'rose_gold_ivory'
+  | 'neon_gloss_bento'
+  | 'emerald_sage'
+  | 'clinical_sky_blue'
+  | 'obsidian_gold'
+  | 'earth_bamboo'
+  | 'chroma_gradient'
+  | 'royal_crimson_gold'
+  | 'urban_monochrome'
+  | 'chic_nude_beige'
+  | 'ayurvedic_terracotta'
+  | 'sage_jade_botanical'
+  | 'onyx_champagne_gold'
+  | 'ivory_blush_pearl'
+  | 'sky_cream_family'
+  | 'midnight_copper_club'
+  | 'berry_blush_pearl'
+  | 'porcelain_sage_teal'
+  | 'fern_linen_organic'
+  | 'coral_slate_express'
+  | 'temple_saffron_silk'
+  | 'cotton_candy_sky'
+  | 'azure_champagne_luxe'
+  | 'marigold_warm_sand';
+
+export interface CategoryTemplateConfig {
+  id: BusinessTypeId;
+  title: string;
+  shortName: string;
+  tagline: string;
+  about: string;
+  icon: string;
+  layoutStyle: LayoutStyle;
+  paletteLabel: string;
+  themePreset: SalonThemePreset;
+  subCategories: string[];
+  defaultCity: string;
+  defaultAddress: string;
+  defaultPostalCode: string;
+  phone: string;
+  whatsapp: string;
+  ownerName: string;
+  ownerRole: string;
+  ownerPhotoUrl: string;
+  coverImageUrl: string;
+  instagramHandle: string;
+  themeStyle: {
+    heroBackground: string;
+    heroTextColor: string;
+    cardBorder: string;
+    cardBackground: string;
+    cardRadius: string;
+    accentColor: string;
+    accentBg: string;
+    badgeBg: string;
+    badgeText: string;
+    buttonBg: string;
+    buttonText: string;
+    priceColor: string;
+    isDark?: boolean;
+    headerBanner?: string;
+  };
+  services: SalonService[];
+  stylists: Stylist[];
+  videoReels?: SalonVideoReel[];
+  socialVideos?: SocialVideo[];
+}
+
+export interface SalonVideoReel {
+  id: string;
+  salonId: string;
+  salonName: string;
+  salonImage: string;
+  salonRating: number;
+  salonLocation?: string;
+  title: string;
+  description?: string;
+  videoUrl: string;
+  thumbnailUrl: string;
+  duration?: string;
+  views?: string;
+  likes?: string;
+  category: string;
+  serviceName?: string;
+  servicePrice?: number;
+  serviceId?: string;
+  stylistName?: string;
+  tags?: string[];
+  isOwnerHighlight?: boolean;
+}
+
+export type VideoCategoryTag = 'SHOWCASE' | 'SHORT' | 'LONG';
+
+export interface SocialVideo {
+  id: string;
+  youtubeUrl: string;
+  videoId: string;
+  title: string;
+  description?: string;
+  channelTitle?: string;
+  thumbnailUrl: string;
+  categoryTag: VideoCategoryTag;
+  isOwnerVideo: boolean;
+  views?: string;
+  transformationTag?: string;
+}
+
+export interface HomeServiceConfig {
+  enabled: boolean;
+  baseCharge: number;
+  radiusLimitKm: number;
+}
+
+export type PromoBannerTheme = 
+  | 'gradient_purple'
+  | 'royal_gold'
+  | 'rose_velvet'
+  | 'emerald_botanical'
+  | 'obsidian_glam'
+  | 'sunset_coral'
+  | 'custom';
+
+export interface PromotionalBannerConfig {
+  enabled: boolean;
+  text: string;
+  discountCode?: string;
+  badgeText?: string;
+  buttonText?: string;
+  buttonAction?: 'book' | 'copy';
+  themePreset?: PromoBannerTheme;
+  customBgColor?: string;
+  customTextColor?: string;
+  startDate?: string;
+  endDate?: string;
+}
+
+export interface SalonOffer {
+  id: string;
+  title: string;
+  description: string;
+  discountValue: string;
+  code: string;
+  imageUrl?: string;
+  startDate?: string;
+  expiryDate?: string;
+  terms?: string;
+  isActive: boolean;
+}
+
+export interface ClientRecord {
+  id: string;
+  name: string;
+  phone?: string;
+  email?: string;
+  totalVisits?: number;
+  totalSpent?: number;
+  lastVisit?: string;
+  notes?: string;
+  favoriteStylist?: string;
+  points?: number;
+  lifetimePoints?: number;
+}
+
+export interface SalonProfile {
+  ownerId?: string;
+  businessType: BusinessTypeId;
+  businessName: string;
+  ownerName: string;
+  ownerRole: string;
+  phone: string;
+  whatsapp: string;
+  email: string;
+  dob?: string;
+  whatsappNotificationsEnabled?: boolean;
+  tagline: string;
+  about: string;
+  ownerPhotoUrl: string;
+  coverImageUrl: string;
+  logoUrl?: string;
+  address: string;
+  shopFlatNo?: string;
+  city: string;
+  state?: string;
+  latitude?: number;
+  longitude?: number;
+  areaLocality?: string;
+  landmark?: string;
+  postalCode?: string;
+  themePreset?: SalonThemePreset;
+  currency?: string;
+  subdomain?: string;
+  customDomain?: string;
+  customAccentColor?: string;
+  brandColor?: string;
+  requireDeposit?: boolean;
+  depositPercentage?: number;
+  instagramHandle?: string;
+  facebookUrl?: string;
+  facebookPage?: string;
+  tiktokUrl?: string;
+  tiktokProfile?: string;
+  tiktokHandle?: string;
+  youtubeChannel?: string;
+  googleBusinessUrl?: string;
+  whiteLabelEnabled?: boolean;
+  heroImages?: string[];
+  offers?: SalonOffer[];
+  galleryPhotos?: GalleryPhoto[];
+  subCategories?: string[];
+  themeAccentKey?: string;
+  homeService?: HomeServiceConfig;
+  promotionalBanner?: PromotionalBannerConfig;
+  customThemeOverride?: Record<string, string>;
+  isLivePublished?: boolean;
+  socialVideos?: SocialVideo[];
+}
+
 

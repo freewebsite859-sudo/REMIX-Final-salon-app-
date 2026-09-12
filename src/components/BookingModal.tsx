@@ -10,13 +10,13 @@ function formatINR(amount: number): string {
 }
 
 interface BookingModalProps {
-  salon: Salon | null;
+  salon?: Salon | null;
   initialService?: SalonService | null;
   initialServices?: SalonService[] | null;
   initialStylist?: Stylist | null;
   isOpen: boolean;
   onClose: () => void;
-  onConfirmBooking: (appointment: Appointment) => void;
+  onConfirmBooking?: (appointment: Appointment) => void;
   onViewAppointments?: () => void;
   onOpenSummary?: (draft: {
     salon: Salon;
@@ -26,6 +26,15 @@ interface BookingModalProps {
     time: string;
     notes?: string;
   }) => void;
+  fromHistory?: boolean;
+  profile?: any;
+  services?: SalonService[];
+  stylists?: Stylist[];
+  onShowToast?: (toastData: any) => void;
+  onAddAppointment?: (appointment: any) => void;
+  themeAccentHex?: string;
+  user?: any;
+  onRequireAuth?: () => void;
 }
 
 export const BookingModal: React.FC<BookingModalProps> = ({

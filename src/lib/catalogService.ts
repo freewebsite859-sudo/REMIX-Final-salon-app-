@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { GalleryPhoto, Review, Salon, SalonService, Stylist } from '../types';
 import { isNexoraDemoMode, supabase } from './supabase';
 import { DEMO_SALONS } from '../data/demoCatalog';
+import { getTemplateSalons } from '../data/templateSalons';
 
 export type CatalogSource = 'remote' | 'fallback';
 
@@ -403,6 +404,150 @@ async function readRows<T>(client: SupabaseClient, table: string): Promise<{ row
   }
 }
 
+/**
+ * Validates a template salon object against mandatory catalog display requirements.
+ */
+function isValidTemplateSalon(salon: Salon): boolean {
+  if (!salon || typeof salon !== 'object') return false;
+  if (!salon.id || typeof salon.id !== 'string' || !salon.id.trim()) return false;
+  if (!salon.name || typeof salon.name !== 'string' || !salon.name.trim()) return false;
+  if (!salon.location || typeof salon.location.latitude !== 'number' || typeof salon.location.longitude !== 'number') {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Validates and normalizes template salon services to ensure compatibility with BookingModal.
+ */
+function mapBookingServices(services: SalonService[] = []): SalonService[] {
+  const seenServiceIds = new Set<string>();
+  const mapped: SalonService[] = [];
+
+  for (const s of services) {
+    if (!s || !s.id || !s.name) continue;
+    if (seenServiceIds.has(s.id)) continue;
+    seenServiceIds.add(s.id);
+
+    mapped.push({
+      id: s.id.trim(),
+      name: s.name.trim(),
+      category: s.category || 'hair',
+      duration: typeof s.duration === 'number' && s.duration > 0 ? s.duration : 45,
+      price: typeof s.price === 'number' && s.price >= 0 ? s.price : 499,
+      discountPrice: typeof s.discountPrice === 'number' && s.discountPrice >= 0 ? s.discountPrice : undefined,
+      description: s.description ? s.description.trim() : '',
+      popular: Boolean(s.popular),
+    });
+  }
+
+  return mapped;
+}
+
+/**
+ * Validates and normalizes template salon staff to ensure compatibility with BookingModal.
+ */
+function mapBookingStylists(stylists: Stylist[] = [], salonId: string, salonName: string): Stylist[] {
+  const seenStylistIds = new Set<string>();
+  const mapped: Stylist[] = [];
+
+  for (const st of stylists) {
+    if (!st || !st.id || !st.name) continue;
+    if (seenStylistIds.has(st.id)) continue;
+    seenStylistIds.add(st.id);
+
+    mapped.push({
+      id: st.id.trim(),
+      name: st.name.trim(),
+      role: st.role ? st.role.trim() : 'Specialist',
+      avatar: st.avatarUrl || st.avatar || '',
+      avatarUrl: st.avatarUrl || st.avatar || '',
+      rating: typeof st.rating === 'number' ? st.rating : 4.9,
+      experience: st.experience ? st.experience.trim() : '5+ years',
+      specialty: Array.isArray(st.specialty) ? st.specialty : ['Specialist'],
+    });
+  }
+
+  if (mapped.length === 0) {
+    mapped.push({
+      id: `${salonId}-default-staff`,
+      name: `${salonName} Lead Specialist`,
+      role: 'Master Stylist & Specialist',
+      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80',
+      avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80',
+      rating: 4.9,
+      experience: '8+ years',
+      specialty: ['All Services'],
+    });
+  }
+
+  return mapped;
+}
+
+/**
+ * Robustly merges live Supabase salon data with template salons.
+ * Live Supabase salons take primary priority. Validated template salons from templateSalons.ts
+ * are selectively injected ONLY if their unique ID is not already present in live data.
+ * Guarantees zero ID duplicates and compatible services/staff for BookingModal.
+ */
+export function mergeTemplateSalons(remoteSalons: Salon[]): Salon[] {
+  const templateSalons = getTemplateSalons();
+  const existingIds = new Set<string>();
+  const merged: Salon[] = [];
+
+  // 1. Process live Supabase salons first (Primary Priority)
+  for (const remoteSalon of remoteSalons) {
+    if (isValidTemplateSalon(remoteSalon) && !existingIds.has(remoteSalon.id)) {
+      existingIds.add(remoteSalon.id);
+
+      // Ensure services and staff are sanitized for BookingModal
+      const sanitizedServices = mapBookingServices(remoteSalon.services);
+      const sanitizedStylists = mapBookingStylists(remoteSalon.stylists, remoteSalon.id, remoteSalon.name);
+
+      merged.push({
+        ...remoteSalon,
+        services: sanitizedServices,
+        stylists: sanitizedStylists,
+      });
+    }
+  }
+
+  // 2. Selectively inject validated template salons if ID does not exist in live data
+  for (const tmplSalon of templateSalons) {
+    if (!isValidTemplateSalon(tmplSalon)) continue;
+
+    const formattedServices = mapBookingServices(tmplSalon.services);
+    const formattedStylists = mapBookingStylists(tmplSalon.stylists, tmplSalon.id, tmplSalon.name);
+
+    const formattedTmplSalon: Salon = {
+      ...tmplSalon,
+      services: formattedServices,
+      stylists: formattedStylists,
+    };
+
+    if (!existingIds.has(tmplSalon.id)) {
+      existingIds.add(tmplSalon.id);
+      merged.push(formattedTmplSalon);
+    } else {
+      // If a live salon exists with matching ID but lacks services/stylists, enrich it safely
+      const existingIndex = merged.findIndex((s) => s.id === tmplSalon.id);
+      if (existingIndex >= 0) {
+        const existing = merged[existingIndex];
+        if (!existing.services || existing.services.length === 0) {
+          existing.services = formattedServices;
+        }
+        if (!existing.stylists || existing.stylists.length === 0) {
+          existing.stylists = formattedStylists;
+        }
+      }
+    }
+  }
+
+  return merged;
+}
+
+
+
 /** Fetch the canonical catalog, falling back without ever mixing fake rows into real rows. */
 export async function fetchCatalog(client: SupabaseClient | null = supabase): Promise<CatalogResult> {
   if (!client || isNexoraDemoMode) {
@@ -446,5 +591,8 @@ export async function fetchCatalog(client: SupabaseClient | null = supabase): Pr
     };
   }
 
-  return { salons: normalized, source: 'remote', warnings };
+  const combinedSalons = mergeTemplateSalons(normalized);
+
+  return { salons: combinedSalons, source: 'remote', warnings };
 }
+

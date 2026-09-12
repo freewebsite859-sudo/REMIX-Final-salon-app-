@@ -1,6 +1,7 @@
 import { Salon } from '../types';
+import { getTemplateSalons } from './templateSalons';
 
-export const DEMO_SALONS: Salon[] = [
+const ORIGINAL_SALONS: Salon[] = [
   {
     id: 'salon-1',
     name: 'Scissors & Shears Salon',
@@ -734,3 +735,5 @@ export const DEMO_SALONS: Salon[] = [
     ],
   },
 ];
+
+export const DEMO_SALONS: Salon[] = [...getTemplateSalons(), ...ORIGINAL_SALONS];

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Salon, Appointment, SalonService, Stylist, UserProfile } from '../types';
 import { AppointmentCountdownBanner, parseAppointmentDateTime } from './AppointmentCountdownBanner';
 import { JAIPUR_AREA_CHIPS } from '../lib/jaipurAreas';
+import { VideoReelsSection } from './VideoReelsSection';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -968,6 +969,18 @@ export const HomeTab: React.FC<HomeTabProps> = ({
             })}
           </div>
         </section>
+      )}
+
+      {/* ================================================================= */}
+      {/* 8.3 Watch Salon Stories & Video Previews (Shorts / Reels Feed)    */}
+      {/* ================================================================= */}
+      {!searchInput.trim() && (
+        <VideoReelsSection
+          salons={salons}
+          onBookSalon={onBookSalon}
+          onOpenSalonDetails={onOpenSalonDetails}
+          className="mb-7"
+        />
       )}
 
       {/* Search results (when actively filtering) — full list */}
