@@ -14,7 +14,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { toDataURL as qrToDataUrl } from 'qrcode';
+import QRCode from 'qrcode';
 import { fetchMyQrCode, fetchEngagementSummary } from '../lib/engagementClient';
 import { isRealtimeEnabled, subscribeToTable } from '../lib/realtimeService';
 import type { EngagementSummary } from '../lib/engagement';
@@ -79,7 +79,8 @@ export const QrEngagementCard: React.FC<QrEngagementCardProps> = ({ userId }) =>
       }
 
       try {
-        const qrDataUrl = await qrToDataUrl(qrRes.data.code, {
+        const qrFn = QRCode.toDataURL || (QRCode as unknown as { default: { toDataURL: typeof QRCode.toDataURL } }).default?.toDataURL;
+        const qrDataUrl = await qrFn(qrRes.data.code, {
           width: 208,
           margin: 1,
           errorCorrectionLevel: 'M',
