@@ -395,6 +395,32 @@ export default function App() {
   const [selectedServicesForBooking, setSelectedServicesForBooking] = useState<SalonService[] | null>(null);
   const [selectedStylistForBooking, setSelectedStylistForBooking] = useState<Stylist | null>(null);
 
+  // Managed playing video ID for concurrent video playback & scroll autoplay observer on Home
+  const [playingVideoId, setPlayingVideoId] = useState<string | null>(null);
+
+  // Reset video playback when navigating away from Home or opening blocking modals
+  useEffect(() => {
+    if (
+      activeTab !== 'home' ||
+      isSalonDetailModalOpen ||
+      isBookingModalOpen ||
+      isLocationModalOpen ||
+      isNotificationsModalOpen ||
+      isBookingSummaryModalOpen ||
+      Boolean(chooseProfessionalData)
+    ) {
+      setPlayingVideoId(null);
+    }
+  }, [
+    activeTab,
+    isSalonDetailModalOpen,
+    isBookingModalOpen,
+    isLocationModalOpen,
+    isNotificationsModalOpen,
+    isBookingSummaryModalOpen,
+    chooseProfessionalData,
+  ]);
+
   // ---------------------------------------------------------------------------
   // NOTIFICATIONS (database-backed)
   // The list is a cache of what the backend returned. Nothing is fabricated
@@ -1515,6 +1541,8 @@ export default function App() {
                 onOpenLocation={() => setIsLocationModalOpen(true)}
                 onOpenMembership={() => goToCustomer(CUSTOMER_MEMBERSHIP)}
                 onOpenReferral={() => goToCustomer(CUSTOMER_REFERRAL)}
+                playingVideoId={playingVideoId}
+                onPlayingVideoChange={setPlayingVideoId}
               />
             )}
 

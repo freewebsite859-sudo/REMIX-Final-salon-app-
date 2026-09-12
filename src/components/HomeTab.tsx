@@ -29,6 +29,10 @@ interface HomeTabProps {
   onOpenMembership?: () => void;
   /** Navigate to referral. */
   onOpenReferral?: () => void;
+  /** Active playing video ID for concurrent autoplay coordination */
+  playingVideoId?: string | null;
+  /** Handler when active playing video changes */
+  onPlayingVideoChange?: (videoId: string | null) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -436,6 +440,8 @@ export const HomeTab: React.FC<HomeTabProps> = ({
   onOpenLocation,
   onOpenMembership,
   onOpenReferral,
+  playingVideoId,
+  onPlayingVideoChange,
 }) => {
   const [searchInput, setSearchInput] = useState(initialSearchQuery || '');
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
@@ -979,6 +985,8 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           salons={salons}
           onBookSalon={onBookSalon}
           onOpenSalonDetails={onOpenSalonDetails}
+          playingVideoId={playingVideoId}
+          onPlayingVideoChange={onPlayingVideoChange}
           className="mb-7"
         />
       )}
