@@ -15,7 +15,23 @@ interface SplashScreenProps {
   minimumMs?: number;
   /** Fired once the minimum hold has elapsed, so the caller can hand off. */
   onMinimumElapsed?: () => void;
+  /**
+   * Plays the exit animation instead of the entrance. The caller keeps the
+   * component mounted for the duration so the handoff into login/home is a
+   * crossfade rather than the splash vanishing on the next paint.
+   */
+  exiting?: boolean;
 }
+
+/** Length of the exit crossfade; the caller waits this long before unmounting. */
+export const SPLASH_EXIT_MS = 240;
+
+/**
+ * Minimum time the splash stays up even when everything resolves instantly.
+ * The brand mark's entrance animation runs 600 ms, so a shorter hold cuts it
+ * off mid-draw and the splash reads as a rendering glitch rather than a boot.
+ */
+export const SPLASH_MINIMUM_MS = 900;
 
 /**
  * Nexora splash screen.
@@ -31,8 +47,9 @@ interface SplashScreenProps {
  */
 export const SplashScreen: React.FC<SplashScreenProps> = ({
   status = 'Getting things ready',
-  minimumMs = 900,
+  minimumMs = SPLASH_MINIMUM_MS,
   onMinimumElapsed,
+  exiting = false,
 }) => {
   const [heldFor, setHeldFor] = useState(0);
 
@@ -70,7 +87,12 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
       role="status"
       aria-live="polite"
       aria-busy="true"
-      className="min-h-screen w-full flex flex-col items-center justify-center bg-gradient-to-b from-surface-off-white via-white to-[#fdf2f8] text-on-surface px-6"
+      data-exiting={exiting ? 'true' : undefined}
+      className={`min-h-screen w-full flex flex-col items-center justify-center bg-gradient-to-b from-surface-off-white via-white to-[#fdf2f8] text-on-surface px-6 motion-safe:${
+        exiting
+          ? `animate-[nexora-splash-out_${SPLASH_EXIT_MS}ms_ease-in_both]`
+          : 'animate-none'
+      }`}
     >
       {/* Brand mark */}
       <div className="flex flex-col items-center motion-safe:animate-[nexora-splash-in_600ms_ease-out_both]">
@@ -109,6 +131,10 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
         @keyframes nexora-splash-in {
           from { opacity: 0; transform: translateY(8px) scale(0.98); }
           to   { opacity: 1; transform: none; }
+        }
+        @keyframes nexora-splash-out {
+          from { opacity: 1; transform: none; }
+          to   { opacity: 0; transform: scale(1.01); }
         }
         @media (prefers-reduced-motion: reduce) {
           [data-testid="nexora-splash"] * { animation: none !important; transition: none !important; }

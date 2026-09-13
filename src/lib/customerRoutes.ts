@@ -57,6 +57,18 @@ export const CUSTOMER_BOOKING_PREFIX = '/customer/booking/';
 /** Prefix used for a single service detail: `/customer/service/:serviceId`. */
 export const CUSTOMER_SERVICE_PREFIX = '/customer/service/';
 
+/**
+ * Short aliases for the two service screens: `/services` and
+ * `/services/:serviceId`.
+ *
+ * The app namespaces everything under `/customer`, but these screens are also
+ * reached by the bare paths, so both spellings resolve to the same route kind.
+ * `canonicalizeCustomerPath` rewrites the alias to its `/customer` form so the
+ * address bar settles on one canonical URL.
+ */
+export const SERVICES_ALIAS = '/services';
+export const SERVICES_ALIAS_PREFIX = '/services/';
+
 /** Session key for the post-login return path (e.g. a book attempt while logged out). */
 export const CUSTOMER_RETURN_PATH_KEY = 'nexora-customer-return-path';
 
@@ -137,6 +149,34 @@ export function currentSearch(): string {
 /** True when the path is under `/customer` (including exact `/customer`). */
 export function isCustomerPath(path: string = currentPathname()): boolean {
   return path === CUSTOMER_ROOT || path.startsWith(`${CUSTOMER_ROOT}/`);
+}
+
+/**
+ * Map a `/services` alias onto its canonical `/customer` URL, preserving the
+ * query string. Returns null for anything that is not a services alias, so
+ * callers can treat null as "leave this path alone".
+ *
+ * Both spellings parse to the same route kind; rewriting to the canonical form
+ * means the router gate (which is keyed on `/customer`) and the address bar
+ * settle on one URL instead of two ways to reach the same screen.
+ */
+export function canonicalizeServicesAlias(
+  path: string = currentPathname()
+): string | null {
+  const qIndex = path.indexOf('?');
+  const pathname = qIndex >= 0 ? path.slice(0, qIndex) : path;
+  const search = qIndex >= 0 ? path.slice(qIndex) : '';
+  const normalized = pathname.replace(/\/+$/, '') || '/';
+
+  if (normalized === SERVICES_ALIAS) {
+    return `${CUSTOMER_SERVICES}${search}`;
+  }
+  if (normalized.startsWith(SERVICES_ALIAS_PREFIX)) {
+    const serviceId = normalized.slice(SERVICES_ALIAS_PREFIX.length).split('/')[0] || '';
+    if (!serviceId) return `${CUSTOMER_SERVICES}${search}`;
+    return `${CUSTOMER_SERVICE_PREFIX}${serviceId}${search}`;
+  }
+  return null;
 }
 
 export function isCustomerAuthPath(path: string = currentPathname()): boolean {
@@ -258,7 +298,7 @@ export function parseCustomerRoute(
   if (normalized === CUSTOMER_SEARCH) {
     return { kind: 'search', path: normalized, query: q };
   }
-  if (normalized === CUSTOMER_SERVICES) {
+  if (normalized === CUSTOMER_SERVICES || normalized === SERVICES_ALIAS) {
     return {
       kind: 'services',
       path: normalized,
@@ -295,10 +335,14 @@ export function parseCustomerRoute(
     return { kind: 'notifications', path: normalized };
   }
 
-  if (normalized.startsWith(CUSTOMER_SERVICE_PREFIX)) {
-    const serviceId = safeDecode(
-      normalized.slice(CUSTOMER_SERVICE_PREFIX.length).split('/')[0] || ''
-    );
+  // `/customer/service/:id` and its `/services/:id` alias share one shape.
+  const serviceMatch = normalized.startsWith(CUSTOMER_SERVICE_PREFIX)
+    ? normalized.slice(CUSTOMER_SERVICE_PREFIX.length)
+    : normalized.startsWith(SERVICES_ALIAS_PREFIX)
+    ? normalized.slice(SERVICES_ALIAS_PREFIX.length)
+    : null;
+  if (serviceMatch !== null) {
+    const serviceId = safeDecode(serviceMatch.split('/')[0] || '');
     if (serviceId) {
       return {
         kind: 'service',
@@ -595,6 +639,9 @@ export const CUSTOMER_ROUTE_CATALOG: readonly string[] = [
   CUSTOMER_SEARCH,
   CUSTOMER_SERVICES,
   `${CUSTOMER_SERVICE_PREFIX}:serviceId`,
+  // Accepted aliases for the two service screens (see canonicalizeServicesAlias).
+  SERVICES_ALIAS,
+  `${SERVICES_ALIAS_PREFIX}:serviceId`,
   `${CUSTOMER_SALON_PREFIX}:salonSlug`,
   `${CUSTOMER_BOOK_PREFIX}:salonId`,
   CUSTOMER_BOOKINGS,

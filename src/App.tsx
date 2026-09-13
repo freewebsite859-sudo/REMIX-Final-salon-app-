@@ -39,7 +39,11 @@ import { NotificationsModal } from './components/NotificationsModal';
 import { ChooseProfessionalScreen } from './components/ChooseProfessionalScreen';
 import { BookingSummaryModal, type BookingPaymentRequest } from './components/BookingSummaryModal';
 import { AuthPage } from './components/auth/AuthPage';
-import { SplashScreen } from './components/SplashScreen';
+import {
+  SplashScreen,
+  SPLASH_EXIT_MS,
+  SPLASH_MINIMUM_MS,
+} from './components/SplashScreen';
 import { ServicesScreen } from './components/ServicesScreen';
 import { ServiceDetailScreen } from './components/ServiceDetailScreen';
 import { PasswordUpdatePage } from './components/auth/PasswordUpdatePage';
@@ -90,6 +94,7 @@ import {
   customerSearchPath,
   customerServicePath,
   customerServicesPath,
+  canonicalizeServicesAlias,
   isCustomerPath,
   isProtectedCustomerRoute,
   navigateCustomer,
@@ -375,6 +380,20 @@ export default function App() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   /** Set when a cancellation was refused server-side; the booking stays active. */
   const [cancellationError, setCancellationError] = useState<string | null>(null);
+  /**
+   * Splash handoff. The boot splash unmounts by early return, which made it
+   * vanish on a single frame. Instead it stays mounted for SPLASH_EXIT_MS with
+   * `exiting` set so the transition into login/home is a crossfade.
+   */
+  // Starts false: the splash only appears once a boot is actually in flight,
+  // so an app whose session resolves instantly is never held behind a brand
+  // screen it did not need.
+  const [splashMounted, setSplashMounted] = useState<boolean>(false);
+  const [splashExiting, setSplashExiting] = useState<boolean>(false);
+  /** Frozen so the status line does not flip mid-fade. */
+  const splashStatusRef = useRef<string>('Restoring your secure session…');
+  /** When the splash first appeared, so the minimum hold can be honoured. */
+  const splashMountedAtRef = useRef<number>(0);
   const [savedSalonIds, setSavedSalonIds] = useState<string[]>([]);
   const [savedServices, setSavedServices] = useState<SavedServiceRef[]>([]);
   const [savedStaff, setSavedStaff] = useState<SavedStaffRef[]>([]);
@@ -630,7 +649,18 @@ export default function App() {
    */
   useEffect(() => {
     const syncFromLocation = () => {
-      const path = currentPath();
+      const rawPath = currentPath();
+
+      // `/services` and `/services/:id` are accepted aliases for the two service
+      // screens. Rewrite them to their canonical `/customer` form first so the
+      // route gate below — which is keyed on the `/customer` prefix — sees a
+      // path it recognises, and so the address bar settles on one canonical URL
+      // instead of two spellings of the same screen.
+      const aliased = canonicalizeServicesAlias(rawPath);
+      const path = aliased ?? rawPath;
+      if (aliased && aliased !== rawPath) {
+        navigateCustomer(aliased, { replace: true });
+      }
 
       // Password recovery stays on the dedicated /auth/reset screen.
       if (path === '/auth/reset') {
@@ -1422,19 +1452,61 @@ export default function App() {
     return true;
   };
 
+  const isBooting = isSupabaseConfigured && (isAuthLoading || isRoleLoading);
+
+  // Freeze the phase label so it cannot flip mid-fade, then run the crossfade.
+  // The splash unmounts by early return, which made it disappear on a single
+  // frame; keeping it mounted for SPLASH_EXIT_MS with `exiting` set turns that
+  // into a real transition into login/home.
+  useEffect(() => {
+    if (isBooting) {
+      splashStatusRef.current = isRoleLoading
+        ? 'Checking your account type…'
+        : 'Restoring your secure session…';
+      // Stamp the hold from the moment the splash first appears, not from
+      // component init, so a boot that starts late still gets its full hold.
+      if (!splashMounted) splashMountedAtRef.current = Date.now();
+      setSplashMounted(true);
+      setSplashExiting(false);
+      return;
+    }
+    if (!splashMounted) return;
+    // Honour prefers-reduced-motion: skip the hold, the CSS animation is
+    // suppressed for those users anyway.
+    const reduce =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) {
+      setSplashMounted(false);
+      return;
+    }
+    // Wait out the remainder of the minimum hold before fading. The brand
+    // mark's entrance runs 600 ms, so exiting the moment the session resolves
+    // cuts it off mid-draw and the splash reads as a glitch rather than a boot.
+    const holdRemaining = Math.max(
+      0,
+      SPLASH_MINIMUM_MS - (Date.now() - splashMountedAtRef.current)
+    );
+    let exitTimer: number | undefined;
+    const holdTimer = window.setTimeout(() => {
+      setSplashExiting(true);
+      exitTimer = window.setTimeout(() => {
+        setSplashMounted(false);
+        setSplashExiting(false);
+      }, SPLASH_EXIT_MS);
+    }, holdRemaining);
+    return () => {
+      window.clearTimeout(holdTimer);
+      if (exitTimer !== undefined) window.clearTimeout(exitTimer);
+    };
+  }, [isBooting, isRoleLoading, splashMounted]);
+
   // Do not render protected controls or guest fallback data while Supabase is
   // still restoring the session. This closes the auth/session race on refresh.
   // Session must survive page refresh - we keep loading until initial session check completes
-  if (isSupabaseConfigured && (isAuthLoading || isRoleLoading)) {
-    return (
-      <SplashScreen
-        status={
-          isRoleLoading
-            ? 'Checking your account type…'
-            : 'Restoring your secure session…'
-        }
-      />
-    );
+  if (isBooting || splashMounted) {
+    return <SplashScreen status={splashStatusRef.current} exiting={splashExiting} />;
   }
 
   // Splash Screen (A1): shown only while there is genuinely nothing to render —

@@ -19,7 +19,7 @@ import {
   type CatalogServiceEntry,
 } from '../src/components/ServicesScreen';
 import { ServiceDetailScreen } from '../src/components/ServiceDetailScreen';
-import { SplashScreen } from '../src/components/SplashScreen';
+import { SplashScreen, SPLASH_EXIT_MS } from '../src/components/SplashScreen';
 import type { Salon, SalonService, Stylist } from '../src/types';
 
 const results: { name: string; pass: boolean; detail?: string }[] = [];
@@ -414,6 +414,60 @@ check(
   elapsed,
   `elapsed=${elapsed}`
 );
+
+// 4b. The handoff into login/home must be a crossfade, not an abrupt unmount.
+//
+// The splash used to unmount by early return, so it vanished on a single frame
+// even though it fades IN. `exiting` keeps it mounted for SPLASH_EXIT_MS and
+// swaps the entrance keyframes for the exit ones.
+{
+  await act(async () => {
+    root.render(<SplashScreen status="Restoring your secure session…" minimumMs={0} />);
+  });
+  const entering = container.querySelector('[data-testid="nexora-splash"]');
+  // The entrance animation lives on the brand mark; the exit fades the whole
+  // container, so it has to cover the wordmark and the progress bar together.
+  const enteringBrand = entering?.firstElementChild as HTMLElement | null;
+  check(
+    'the splash animates in on mount (brand mark)',
+    Boolean(enteringBrand?.className.includes('nexora-splash-in')),
+    enteringBrand?.className.slice(0, 120)
+  );
+  check(
+    'a mounting splash is not marked as exiting',
+    entering?.getAttribute('data-exiting') === null,
+    String(entering?.getAttribute('data-exiting'))
+  );
+
+  await act(async () => {
+    root.render(
+      <SplashScreen status="Restoring your secure session…" minimumMs={0} exiting />
+    );
+  });
+  const exiting = container.querySelector('[data-testid="nexora-splash"]');
+  check(
+    'an exiting splash switches to the exit keyframes',
+    Boolean(exiting?.className.includes('nexora-splash-out')) &&
+      !exiting?.className.includes('nexora-splash-in_'),
+    exiting?.className.slice(0, 160)
+  );
+  check(
+    'an exiting splash is marked for the caller/tests',
+    exiting?.getAttribute('data-exiting') === 'true',
+    String(exiting?.getAttribute('data-exiting'))
+  );
+  check(
+    'the exit duration is long enough to read as a transition',
+    SPLASH_EXIT_MS >= 150 && SPLASH_EXIT_MS <= 600,
+    `${SPLASH_EXIT_MS}ms`
+  );
+  check(
+    'the exit animation is declared alongside the entrance',
+    typeof document.querySelector('style')?.textContent === 'string' &&
+      document.querySelector('style')!.textContent!.includes('@keyframes nexora-splash-out'),
+    'keyframes present'
+  );
+}
 
 // ---------------------------------------------------------------------------
 // 5. Favourites are scoped per salon.

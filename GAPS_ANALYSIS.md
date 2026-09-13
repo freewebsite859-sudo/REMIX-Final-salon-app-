@@ -47,14 +47,14 @@ meant to cover — so the catalog and search logic had no coverage in practice.
 
 | # | Screen | Status at start | Now |
 |---|---|---|---|
-| **A1** | Splash Screen | **MISSING** — no component existed; boot showed a bare `<p>Restoring your secure session…</p>` on a white viewport | ✅ `src/components/SplashScreen.tsx` |
+| **A1** | Splash Screen | **MISSING** — no component existed; boot showed a bare `<p>Restoring your secure session…</p>` on a white viewport | ✅ `src/components/SplashScreen.tsx` — branding, boot animation, **and** a crossfade out (BUG 12) |
 | **A2** | Login Screen | Present — `auth/AuthPage.tsx` (mode `login`) | unchanged |
 | **A3** | Sign Up Screen | Present — `auth/AuthPage.tsx` (mode `signup`) | unchanged |
 | **A4** | Forgot Password Screen | Present — `auth/PasswordResetModal.tsx` | unchanged |
 | **A5** | Reset Password Screen | Present — `auth/PasswordUpdatePage.tsx` at `/auth/reset` | unchanged |
 | **B6** | Home Screen | Present — `HomeTab.tsx` | unchanged |
-| **B7** | Services Screen | **MISSING** — no catalog browser; only salon-level search and home category chips | ✅ `src/components/ServicesScreen.tsx` at `/customer/services` |
-| **B8** | Service Detail Screen | **MISSING** — tapping a service jumped straight into booking; no treatment page existed | ✅ `src/components/ServiceDetailScreen.tsx` at `/customer/service/:id` |
+| **B7** | Services Screen | **MISSING** — no catalog browser; only salon-level search and home category chips | ✅ `src/components/ServicesScreen.tsx` at `/customer/services` **and** `/services` (BUG 13) |
+| **B8** | Service Detail Screen | **MISSING** — tapping a service jumped straight into booking; no treatment page existed | ✅ `src/components/ServiceDetailScreen.tsx` at `/customer/service/:id` **and** `/services/:id` (BUG 13) |
 | **B9** | Select Appointment Date | Present — `BookingModal` step 3 | unchanged |
 | **B10** | Select Time Slot | Present — `BookingModal` step 3 / `ChooseProfessionalScreen` | unchanged |
 | **B11** | Customer Details Screen | **PARTIAL** — only a free-text "notes" box; no name/phone/email capture | ✅ `BookingModal` step 5, validated |
@@ -68,7 +68,7 @@ meant to cover — so the catalog and search logic had no coverage in practice.
 
 ---
 
-## 3. Bugs found and fixed (11)
+## 3. Bugs found and fixed (13)
 
 ### BUG 1 — Catalog: demo salons leaked into live remote results (data integrity)
 
@@ -297,6 +297,42 @@ different user cannot cancel someone's booking, and cancelling actually **releas
 — the concrete harm the old code caused. Verified live against the production build:
 `POST /api/bookings/bk-1/cancel` → `503 {configured:false}`.
 
+### BUG 12 — The splash faded in but vanished on a single frame
+
+`SplashScreen` had a 600 ms entrance animation (`nexora-splash-in`) and a
+`minimumMs` hold, but `App.tsx` mounted it through an **early return**, so the moment
+`isBooting` flipped false the component unmounted and the splash disappeared mid-frame.
+The result was an entrance that never finished and no exit at all.
+
+**Fix:** the splash stays mounted for `SPLASH_EXIT_MS` with `exiting` set, swapping the
+entrance keyframes for `nexora-splash-out` so the handoff into login/home is a crossfade.
+`SPLASH_MINIMUM_MS` (900 ms) is honoured from the moment the splash first appears, so the
+entrance always completes — without it a fast session restore cut the 600 ms animation off
+at ~240 ms, which reads as a rendering glitch. `prefers-reduced-motion` skips both the hold
+and the animation.
+
+Two suites asserted app content at a hardcoded 600 ms and therefore raced the new
+transition; both now poll until the splash unmounts instead of sleeping a magic number.
+
+Verified in the real `App` shell (`test:app-services-routing`, 13 checks): splash present at
+mount → still present mid-hold → `exiting=true` → unmounted, with app content rendered
+afterwards.
+
+### BUG 13 — `/services` and `/services/:id` were not routes
+
+The Services and Service Detail screens existed but were only reachable at
+`/customer/services` and `/customer/service/:id`. The bare `/services` spellings returned
+`{ kind: 'unknown' }` from `parseCustomerRoute` — and, worse, `isCustomerPath('/services')`
+is `false`, so `App.tsx`'s route gate bounced them to home **before** the parse result was
+ever consulted. The server returned 200 for them only because the SPA fallback serves
+`index.html` for every path.
+
+**Fix:** both spellings now parse to the same `services` / `service` kinds, and
+`canonicalizeServicesAlias` rewrites the alias to its canonical `/customer` form inside
+`syncFromLocation` so the gate recognises it and the address bar settles on one URL.
+Rewriting is idempotent — applying it to its own output returns `null` — so there is no
+redirect loop (asserted in test).
+
 ## 4. What was added
 
 ### A1 — Splash Screen (`src/components/SplashScreen.tsx`)
@@ -399,12 +435,12 @@ return `503 {configured:false}` on this deployment (service-role key unset), and
 
 | Suite | Checks | Covers |
 |---|---|---|
-| `test:services-flow` (new) | 38 | catalog flattening, both new screens, splash |
+| `test:services-flow` (new) | 44 | catalog flattening, both new screens, splash incl. crossfade |
 | `test:booking-cancellation` (new) | 28 | cancel router, owner scoping, slot release, browser client |
 | `test:customer-details-flow` (new) | 21 | Step 5 details survive the handoff, appear on the review screen, and reach the booking payload instead of the stored profile |
-| `test:app-services-routing` (new) | 7 | the **real App shell** reaching both routes |
+| `test:app-services-routing` (new) | 13 | the **real App shell** reaching both routes via both spellings |
 | `test:account-deletion` (new) | 21 | deletion router + browser client |
-| `test:customer-routes` | +16 | the two new routes, encoding round trips |
+| `test:customer-routes` | +30 | the two new routes, encoding round trips, the `/services` aliases |
 | `test:booking-modal` | +8 | the Customer Details gate |
 
 `test:app-services-routing` exists because the component tests render the new

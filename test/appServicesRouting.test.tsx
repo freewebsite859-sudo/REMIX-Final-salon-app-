@@ -35,11 +35,27 @@ function go(path: string) {
   window.dispatchEvent(new PopStateEvent('popstate'));
 }
 
+/**
+ * Wait for the boot splash to finish its handoff rather than sleeping a magic
+ * number. The splash deliberately holds for SPLASH_MINIMUM_MS and then
+ * crossfades for SPLASH_EXIT_MS before unmounting, so a fixed 600 ms wait races
+ * the transition. Polling expresses the actual intent: "the app has booted".
+ */
+async function settle(timeoutMs = 6000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 60));
+    if (!container.querySelector('[data-testid="nexora-splash"]')) return true;
+  }
+  return false;
+}
+
 async function mount() {
   await act(async () => {
     root.render(React.createElement(AuthProvider, null, React.createElement(App)));
-    await new Promise((r) => setTimeout(r, 600));
   });
+  const booted = await settle();
+  check('the app boots past the splash screen', booted, `splashGone=${booted}`);
 }
 
 await mount();
@@ -84,6 +100,51 @@ check(
   'an unknown service id shows a not-found state instead of crashing',
   (container.textContent || '').includes('no longer listed'),
   (container.textContent || '').slice(0, 90)
+);
+
+// 3b. The bare `/services` and `/services/:id` aliases reach the same screens.
+//
+// The spec names these screens by their bare paths, but the app namespaces
+// everything under `/customer` and the route gate is keyed on that prefix. So
+// parsing alone is not enough — without the canonicalizing rewrite in
+// syncFromLocation the alias falls through the gate and bounces to home.
+await act(async () => {
+  go('/services');
+  await new Promise((r) => setTimeout(r, 350));
+});
+check(
+  'the /services alias renders the Services Screen',
+  Boolean(container.querySelector('[data-testid="services-screen"]')),
+  `found=${Boolean(container.querySelector('[data-testid="services-screen"]'))} text="${(
+    container.textContent || ''
+  ).slice(0, 60)}"`
+);
+check(
+  'the /services alias canonicalizes the address bar',
+  window.location.pathname === '/customer/services',
+  window.location.pathname
+);
+check(
+  'the /services alias still lists catalog treatments',
+  container.querySelectorAll('[data-testid="service-card"]').length > 0,
+  `cards=${container.querySelectorAll('[data-testid="service-card"]').length}`
+);
+
+await act(async () => {
+  go(`/services/${encodeURIComponent(serviceId || '')}`);
+  await new Promise((r) => setTimeout(r, 350));
+});
+check(
+  'the /services/:id alias renders the Service Detail Screen',
+  Boolean(container.querySelector('[data-testid="service-detail-screen"]')),
+  `found=${Boolean(container.querySelector('[data-testid="service-detail-screen"]'))} text="${(
+    container.textContent || ''
+  ).slice(0, 60)}"`
+);
+check(
+  'the /services/:id alias canonicalizes to /customer/service/:id',
+  window.location.pathname === `/customer/service/${encodeURIComponent(serviceId || '')}`,
+  window.location.pathname
 );
 
 // 4. The Search tab exposes the entry point to the Services Screen.

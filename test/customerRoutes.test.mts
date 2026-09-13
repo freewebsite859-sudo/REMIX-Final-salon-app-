@@ -14,6 +14,7 @@ import {
   CUSTOMER_PROFILE,
   CUSTOMER_REWARDS,
   CUSTOMER_ROUTE_CATALOG,
+  canonicalizeServicesAlias,
   CUSTOMER_SEARCH,
   CUSTOMER_SERVICES,
   CUSTOMER_SERVICE_PREFIX,
@@ -62,6 +63,8 @@ const expected = [
   '/customer/referral',
   '/customer/reviews',
   '/customer/notifications',
+  '/services',
+  '/services/:serviceId',
 ];
 check(
   'catalog lists every required customer route',
@@ -71,6 +74,84 @@ check(
 );
 
 // Static parses
+// ---------------------------------------------------------------------------
+// `/services` and `/services/:id` aliases for the two service screens.
+//
+// The app namespaces everything under `/customer`, but the spec names these
+// screens by their bare paths. Both spellings must reach the same screens, and
+// the alias must canonicalize so the router gate (keyed on `/customer`) works.
+// ---------------------------------------------------------------------------
+check('parse /services -> services', parseCustomerRoute('/services').kind === 'services');
+check(
+  'parse /services keeps ?category',
+  parseCustomerRoute('/services?category=hair').category === 'hair',
+  String(parseCustomerRoute('/services?category=hair').category)
+);
+check(
+  'parse /services keeps ?q',
+  parseCustomerRoute('/services?q=cut').query === 'cut'
+);
+{
+  const r = parseCustomerRoute('/services/svc-1');
+  check('parse /services/:id -> service', r.kind === 'service');
+  check(
+    'parse /services/:id extracts the id',
+    r.kind === 'service' && r.serviceId === 'svc-1',
+    JSON.stringify(r)
+  );
+}
+{
+  const r = parseCustomerRoute('/services/svc-1?salon=sal-9');
+  check(
+    'parse /services/:id keeps ?salon',
+    r.kind === 'service' && r.salonId === 'sal-9',
+    JSON.stringify(r)
+  );
+}
+check(
+  'a trailing slash on the alias still parses',
+  parseCustomerRoute('/services/').kind === 'services'
+);
+
+// Canonicalization — this is what lets the /customer-keyed gate accept it.
+check(
+  'canonicalize /services',
+  canonicalizeServicesAlias('/services') === '/customer/services',
+  String(canonicalizeServicesAlias('/services'))
+);
+check(
+  'canonicalize /services/:id',
+  canonicalizeServicesAlias('/services/svc-1') === '/customer/service/svc-1',
+  String(canonicalizeServicesAlias('/services/svc-1'))
+);
+check(
+  'canonicalize preserves the query string',
+  canonicalizeServicesAlias('/services/svc-1?salon=sal-9') ===
+    '/customer/service/svc-1?salon=sal-9',
+  String(canonicalizeServicesAlias('/services/svc-1?salon=sal-9'))
+);
+check(
+  'canonicalize collapses a bare /services/:id-less alias to the catalog',
+  canonicalizeServicesAlias('/services/') === '/customer/services',
+  String(canonicalizeServicesAlias('/services/'))
+);
+check(
+  'canonicalize leaves canonical paths alone (null)',
+  canonicalizeServicesAlias('/customer/services') === null &&
+    canonicalizeServicesAlias('/customer/service/svc-1') === null
+);
+check(
+  'canonicalize leaves unrelated paths alone (null)',
+  canonicalizeServicesAlias('/customer/home') === null &&
+    canonicalizeServicesAlias('/customer/booking/bk-1') === null
+);
+// Rewriting must terminate: applying it to its own output changes nothing.
+{
+  const once = canonicalizeServicesAlias('/services/svc-1');
+  const twice = once ? canonicalizeServicesAlias(once) : 'n/a';
+  check('canonicalizing twice is a no-op (no redirect loop)', twice === null, String(twice));
+}
+
 check('parse /customer/home', parseCustomerRoute(CUSTOMER_HOME).kind === 'home');
 check('parse /customer/login', parseCustomerRoute(CUSTOMER_LOGIN).kind === 'login');
 check('parse /customer/signup', parseCustomerRoute(CUSTOMER_SIGNUP).kind === 'signup');
