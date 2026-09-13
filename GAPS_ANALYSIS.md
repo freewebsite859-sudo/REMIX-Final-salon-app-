@@ -444,9 +444,21 @@ network.
 **Verified.** `test:media-playback` (60 checks) covers the ladder, the poster
 fallback, the gesture unlock, the toggle, and a source scan asserting every
 surface carries `muted`/`playsInline`/`autoPlay`/`loop`/`onError` and no
-unguarded `.play()`. Negative controls: disabling the ladder →
-**58/60** (fails on the step-down checks); disabling the gesture unlock →
-**55/60** (fails on all five gesture checks).
+unguarded `.play()`.
+
+Negative controls — each fix was removed and the suite re-run:
+
+| Removed | Result | Failing checks |
+|---|---|---|
+| source ladder (primary only, never steps down) | **57/62**, exit 1 | step-down to fallback A, "still on a video element", second step-down to B, plus the two guard checks |
+| gesture unlock (`onGesture` never releases) | **55/60**, exit 1 | all five gesture checks |
+
+The denominators differ (62 vs 60) because the guarded
+`failCurrentVideo()` helper only records a check when the element it expects
+is missing — so a broken ladder adds two extra failures rather than throwing.
+That guard was added deliberately: an earlier version dereferenced the element
+directly, and the negative control **crashed with a `TypeError`** instead of
+printing a tally, hiding every check after the failure.
 
 **Also note.** One test assertion was itself wrong before it was right: it
 checked `video.hasAttribute('muted')`. React sets `muted` as a DOM *property*

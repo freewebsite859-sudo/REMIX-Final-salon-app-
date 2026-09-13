@@ -315,6 +315,23 @@ const container = document.createElement('div');
 document.body.appendChild(container);
 let root: Root | null = createRoot(container);
 
+/**
+ * Fire an `error` event on the current video element.
+ *
+ * Guarded instead of dereferencing the element directly: if the source ladder
+ * is broken the element disappears early, and an unguarded dereference would
+ * throw and abort the run before the tally printed — turning a clean set of
+ * failures into a stack trace and hiding every check that never ran.
+ */
+function failCurrentVideo(label: string): void {
+  const el = container.querySelector('video');
+  if (!el) {
+    check(label, false, 'no <video> element present to fail');
+    return;
+  }
+  el.dispatchEvent(new Event('error'));
+}
+
 await act(async () => {
   root!.render(<Harness />);
   await wait(30);
@@ -348,7 +365,7 @@ check(
 
 // Fail the primary -> should step to fallback A, not give up.
 await act(async () => {
-  video!.dispatchEvent(new Event('error'));
+  failCurrentVideo('hook: primary source raised an error');
   await wait(30);
 });
 video = container.querySelector('video');
@@ -364,7 +381,7 @@ check(
 
 // Fail fallback A -> fallback B.
 await act(async () => {
-  video!.dispatchEvent(new Event('error'));
+  failCurrentVideo('hook: fallback A raised an error');
   await wait(30);
 });
 video = container.querySelector('video');
@@ -376,7 +393,7 @@ check(
 
 // Fail fallback B -> every source exhausted, poster fallback shown.
 await act(async () => {
-  video!.dispatchEvent(new Event('error'));
+  failCurrentVideo('hook: fallback B raised an error');
   await wait(30);
 });
 video = container.querySelector('video');
