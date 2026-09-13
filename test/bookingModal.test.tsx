@@ -100,11 +100,18 @@ function summaryBar(container: HTMLElement): HTMLElement | null {
 // ---------------------------------------------------------------------------
 let container: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
-let onOpenSummaryCalls: Array<{ services: SalonService[] }>;
+let onOpenSummaryCalls: Array<{
+  services: SalonService[];
+  customer?: { name: string; phone: string; email: string };
+}>;
+
+/** A signed-in customer's stored details — the Step 5 prefill source. */
+const CUSTOMER = { name: 'Ananya Sharma', email: 'ananya@example.com', phone: '+91 98765 43210' };
 
 function renderModal(props: {
   initialService?: SalonService | null;
   initialServices?: SalonService[] | null;
+  customerDetails?: { name?: string; email?: string; phone?: string } | null;
 }) {
   onOpenSummaryCalls = [];
   root.render(
@@ -113,11 +120,21 @@ function renderModal(props: {
       salon={salon}
       initialService={props.initialService ?? null}
       initialServices={props.initialServices ?? null}
+      customerDetails={
+        props.customerDetails === undefined ? CUSTOMER : props.customerDetails
+      }
       onClose={() => undefined}
       onConfirmBooking={() => undefined}
-      onOpenSummary={(draft) => onOpenSummaryCalls.push({ services: draft.services })}
+      onOpenSummary={(draft) => onOpenSummaryCalls.push(draft as any)}
     />
   );
+}
+
+function clickButton(container: HTMLElement, label: string): HTMLButtonElement | undefined {
+  const btn = Array.from(container.querySelectorAll('button')).find((b) =>
+    b.textContent?.includes(label)
+  ) as HTMLButtonElement | undefined;
+  return btn;
 }
 
 async function mount() {
@@ -341,6 +358,122 @@ await act(async () => {
     'stale incoming selection resolves to explicit empty state (no silent default reseed)',
     checked === 0 && Boolean(hint),
     `checked=${checked} hint=${Boolean(hint)}`
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Step 5 — Customer Details gate.
+//
+// The booking flow must not hand a salon an appointment it cannot contact the
+// customer about. Advancing to the review requires a name and a reachable
+// phone number; the email stays optional.
+// ---------------------------------------------------------------------------
+function setField(container: HTMLElement, id: string, value: string) {
+  const input = container.querySelector(`#${id}`) as HTMLInputElement;
+  const setter = Object.getOwnPropertyDescriptor(
+    Object.getPrototypeOf(input),
+    'value'
+  )?.set;
+  setter?.call(input, value);
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+}
+
+await act(async () => {
+  renderModal({ initialService: srvHaircut, customerDetails: null });
+  await new Promise((r) => setTimeout(r, 0));
+});
+
+{
+  check(
+    'customer details step is rendered with all three fields',
+    Boolean(container.querySelector('#booking-customer-name')) &&
+      Boolean(container.querySelector('#booking-customer-phone')) &&
+      Boolean(container.querySelector('#booking-customer-email'))
+  );
+
+  // No details at all: the flow must refuse to advance.
+  await act(async () => {
+    clickButton(container, 'Review Full Appointment Summary')?.click();
+  });
+  check(
+    'review is blocked while the name is missing',
+    onOpenSummaryCalls.length === 0 &&
+      Boolean(container.querySelector('[role="alert"]')?.textContent?.includes('name')),
+    `drafts=${onOpenSummaryCalls.length} alert="${container.querySelector('[role="alert"]')?.textContent ?? ''}"`
+  );
+
+  // A name but no phone is still not contactable.
+  await act(async () => {
+    setField(container, 'booking-customer-name', 'Ananya Sharma');
+    clickButton(container, 'Review Full Appointment Summary')?.click();
+  });
+  check(
+    'review is blocked while the contact number is missing',
+    onOpenSummaryCalls.length === 0 &&
+      Boolean(container.querySelector('[role="alert"]')?.textContent?.includes('contact number')),
+    `drafts=${onOpenSummaryCalls.length} alert="${container.querySelector('[role="alert"]')?.textContent ?? ''}"`
+  );
+
+  // A malformed phone must be rejected, not passed through to the salon.
+  await act(async () => {
+    setField(container, 'booking-customer-phone', '123');
+    clickButton(container, 'Review Full Appointment Summary')?.click();
+  });
+  check(
+    'a malformed contact number is rejected',
+    onOpenSummaryCalls.length === 0,
+    `drafts=${onOpenSummaryCalls.length}`
+  );
+
+  // A malformed email is caught too (it is optional, but must be valid if given).
+  await act(async () => {
+    setField(container, 'booking-customer-phone', '+91 98765 43210');
+    setField(container, 'booking-customer-email', 'not-an-email');
+    clickButton(container, 'Review Full Appointment Summary')?.click();
+  });
+  check(
+    'a malformed email is rejected',
+    onOpenSummaryCalls.length === 0 &&
+      Boolean(container.querySelector('[role="alert"]')?.textContent?.includes('email')),
+    `drafts=${onOpenSummaryCalls.length}`
+  );
+
+  // Valid name + phone (email cleared) advances and carries the details.
+  await act(async () => {
+    setField(container, 'booking-customer-email', '');
+    clickButton(container, 'Review Full Appointment Summary')?.click();
+  });
+  check(
+    'valid details advance to review and the draft carries them',
+    onOpenSummaryCalls.length === 1 &&
+      onOpenSummaryCalls[0].customer?.name === 'Ananya Sharma' &&
+      onOpenSummaryCalls[0].customer?.phone === '+91 98765 43210',
+    `drafts=${onOpenSummaryCalls.length} customer=${JSON.stringify(onOpenSummaryCalls[0]?.customer)}`
+  );
+}
+
+// A signed-in customer arrives prefilled and advances without retyping.
+await act(async () => {
+  renderModal({ initialService: srvHaircut });
+  await new Promise((r) => setTimeout(r, 0));
+});
+
+{
+  const nameInput = container.querySelector('#booking-customer-name') as HTMLInputElement;
+  const phoneInput = container.querySelector('#booking-customer-phone') as HTMLInputElement;
+  check(
+    'stored customer details prefill the step',
+    nameInput.value === CUSTOMER.name && phoneInput.value === CUSTOMER.phone,
+    `name="${nameInput.value}" phone="${phoneInput.value}"`
+  );
+
+  await act(async () => {
+    clickButton(container, 'Review Full Appointment Summary')?.click();
+  });
+  check(
+    'a prefilled customer advances straight to review',
+    onOpenSummaryCalls.length === 1,
+    `drafts=${onOpenSummaryCalls.length}`
   );
 }
 

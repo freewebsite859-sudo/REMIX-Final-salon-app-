@@ -574,11 +574,17 @@ export const MembershipPage: React.FC<MembershipPageProps> = ({
               className="p-3 bg-surface-container-lowest rounded-2xl border border-outline-variant/40 flex items-center justify-between gap-3 hover:border-primary/40 transition-all shadow-2xs"
             >
               <div className="flex items-center gap-3 min-w-0">
-                <img
-                  src={salon.image}
-                  alt={salon.name}
-                  className="w-12 h-12 rounded-xl object-cover ring-1 ring-outline-variant/30 shrink-0"
-                />
+                {salon.image ? (
+                  <img
+                    src={salon.image}
+                    alt={salon.name}
+                    className="w-12 h-12 rounded-xl object-cover ring-1 ring-outline-variant/30 shrink-0"
+                  />
+                ) : (
+                  <span className="w-12 h-12 rounded-xl bg-primary/10 text-primary flex items-center justify-center ring-1 ring-outline-variant/30 shrink-0">
+                    <span className="material-symbols-outlined text-[18px]">content_cut</span>
+                  </span>
+                )}
                 <div className="min-w-0">
                   <h4 className="font-bold text-[13px] text-on-surface truncate">{salon.name}</h4>
                   <div className="flex items-center gap-1.5 text-[11px] text-on-surface-variant mt-0.5">

@@ -29,15 +29,28 @@ Commands and results, run against this working tree:
 |---|---|
 | `npm run lint` (`tsc --noEmit`) | clean |
 | `npm run build` | ✓ `dist/` + `dist/server.cjs` |
-| `npm run test:referral` | 64/64 |
-| `npm run test:notifications` | 51/51 |
-| `npm run test:profile` | 130/130 |
+| `npm test` (all 37 suites) | **37/37** |
+| `npm run test:referral` | 37/37 |
+| `npm run test:notifications` | 52/52 |
+| `npm run test:profile` | 110/110 |
 | `npm run test:nexora` | 22/22 |
-| `npm run test:catalog` | 7/7 |
+| `npm run test:catalog` | 9/9 |
 | `npm run test:smoke` | PASS |
+| `npm run test:services-flow` | 36/36 |
+| `npm run test:app-services-routing` | 7/7 |
+
+> **Correction (2026-09-13).** The previous revision of this table was wrong
+> against the tree it claimed to describe. It listed `test:catalog 7/7` and
+> `test:smoke PASS`, but on re-run `test:catalog` and `test:salon-search` died
+> at module load (`ERR_UNKNOWN_FILE_EXTENSION`, so both were silently not
+> running), `test:search-location` was 99/100, and `test:smoke` failed. The
+> suite was 31/35, not green. See `GAPS_ANALYSIS.md` §1 and §3 for root causes
+> and fixes. Numbers above are from a fresh run on 2026-09-13.
 
 `node_modules` is not persisted between sessions in this workspace — run
-`npm ci --no-audit --no-fund` before any of the above.
+`npm install --no-audit --no-fund` before any of the above. (The repo's
+committed lockfile is `bun.lock`; `npm ci` requires a `package-lock.json` that
+is not tracked.)
 
 ---
 
@@ -131,15 +144,38 @@ the old "endpoint was not found" failure is gone. With keys, `/api/bookings`
 still answers 402.
 *Remaining:* live Razorpay keys + a real dual-client run against the project.
 
-**B4. Account deletion is not implemented.**
-`App.tsx` `handleDeleteAccount` deliberately returns `false` and logs a warning rather
-than pretending to delete. It needs a trusted service_role Edge Function and a
-`POST /api/user/delete` route that forwards the user's JWT. Compliance blocker.
+**B4. Account deletion — implemented 2026-09-13, still needs live keys.**
+`POST /api/user/delete` (`server/userAccount.ts`) verifies the caller's own
+access token via `auth.getUser()` and deletes exactly that account with
+`auth.admin.deleteUser()` using the server-held service-role key. Identity is
+taken from the verified token only — a `userId` in the request body is ignored,
+so a caller cannot target another account. Failures answer 401 (bad/expired
+token), 500 (upstream failure, body states "No data was deleted") or 503 with
+`configured:false` when `SUPABASE_SERVICE_ROLE_KEY` is absent — never a fake
+success. `App.tsx` `handleDeleteAccount` only signs out and clears local caches
+when the endpoint confirms deletion.
+Covered by `npm run test:account-deletion` (21 checks).
+*Remaining:* `SUPABASE_SERVICE_ROLE_KEY` is unset here, so the route has only
+been exercised against an injected store and returns 503 on this deployment.
+A real deletion has not been run against a live project.
 
-**B5. Invalid Gemini model names.**
-`server.ts` requests `gemini-3.6-flash` (lines 114, 164) and `gemini-3.7-flash`
-(lines 289, 381). These model ids do not exist, so every AI endpoint fails. Replace
-with a supported model and make it configurable via `GEMINI_MODEL`.
+**B5. Four client-called API routes do not exist.**
+Verified against a running `npm run dev` server on 2026-09-13 — all return
+**HTTP 404**: `/api/generate-bio`, `/api/generate-promo-image`,
+`/api/youtube/fetch-videos`, `/api/fetch-youtube-meta`. `/api/health` returns
+200, so the shared API surface from `server/attachApi.ts` is mounted; these four
+were simply never implemented on either side of it. Callers degrade rather than
+crash (`AIBioModal` uses a local fallback generator, `youtubeMetadata` returns
+its fallback on `!response.ok`, `OffersManagement` and `SocialConnectivityStep`
+catch and surface a message), so the impact is lost functionality, not a blank
+screen. All four sit in salon-owner surfaces, outside the 16 customer screens.
+
+> **Correction (2026-09-13).** This blocker previously read "Invalid Gemini
+> model names — `server.ts` requests `gemini-3.6-flash` (lines 114, 164) and
+> `gemini-3.7-flash` (lines 289, 381)". That was wrong against this tree:
+> `server.ts` is 39 lines long and contains no model reference, and a repo-wide
+> grep for `gemini` matches only prose in this file. The model ids may have
+> existed in an earlier revision; they do not exist now.
 
 ### HIGH
 
@@ -149,8 +185,14 @@ in-repo catalog when the remote root is empty or unreachable. The fallback must 
 mix with remote rows — `test:catalog` covers this — but the real column names still
 need confirming against the canonical schema.
 
-**B7. Browser bundle is 795 kB (195 kB gzip).** Lazy-load AI, gallery, profile,
-booking and category surfaces.
+**B7. Browser bundle is 1,245 kB (335 kB gzip).** Partially split on
+2026-09-13: `PaymentOverviewDashboard` (and with it the 64 kB `d3-vendor`) plus
+five route-gated screens (`MembershipPage`, `SettingsPage`, `ReferralPage`,
+`ReviewsPage`, `NotificationsPage`) are now `React.lazy`, taking the main chunk
+from 1,380 kB / 360 kB gzip to 1,245 kB / 335 kB gzip and removing d3 from the
+preload list. The bottom-nav tabs stay eager on purpose. Still above the 795 kB
+recorded before this work — the remaining weight is the catalog data
+(`categoryTemplates.ts`, ~144 kB source) and the eager tab surfaces.
 
 **B8. No end-to-end run against a real backend.** Every suite here stubs Supabase.
 Signup, email confirmation, login, refresh, direct protected URL, booking, payment

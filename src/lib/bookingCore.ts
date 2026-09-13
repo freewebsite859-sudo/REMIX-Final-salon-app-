@@ -124,6 +124,17 @@ export interface BookingStore {
   insertBookingServices(rows: BookingServiceDbRow[]): Promise<{ ok: boolean; error?: string }>;
   deleteBooking(bookingId: string): Promise<{ ok: boolean; error?: string }>;
   /**
+   * Cancel a booking owned by `ownerUserId`. The owner match is part of the
+   * store contract, not the route, so a caller can never cancel someone
+   * else's booking by guessing an id. Returns `found: false` when no row
+   * matches BOTH the id and the owner — the route reports that as 404 rather
+   * than leaking whether the id exists.
+   */
+  cancelBooking?(
+    bookingId: string,
+    ownerUserId: string
+  ): Promise<{ ok: boolean; found?: boolean; error?: string }>;
+  /**
    * Optional occupancy check used by the payment router AND createBooking so
    * two verified deposits cannot land on one chair/time. Stores that omit it
    * skip the database lookup (in-memory holds still apply).
@@ -507,6 +518,19 @@ export function bookingToAppointment(input: BookingCreateRequest, booking: Booki
       : {}),
     ...(booking.discount_amount > 0 ? { discountApplied: booking.discount_amount } : {}),
     ...(booking.notes ? { notes: booking.notes } : {}),
+    // Echo the persisted Step 5 contact back so the confirmation and detail
+    // screens can show the person the salon will reach. Without this the
+    // details survived the write and were dropped on read-back.
+    ...(booking.customer &&
+    (booking.customer.name || booking.customer.phone || booking.customer.email)
+      ? {
+          contact: {
+            ...(booking.customer.name ? { name: booking.customer.name } : {}),
+            ...(booking.customer.phone ? { phone: booking.customer.phone } : {}),
+            ...(booking.customer.email ? { email: booking.customer.email } : {}),
+          },
+        }
+      : {}),
     createdAt: booking.created_at,
     salonConfirmationStatus: 'pending_owner_approval',
   };

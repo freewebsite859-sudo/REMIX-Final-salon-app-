@@ -31,6 +31,12 @@ export interface BookingSummaryModalProps {
   time: string;
   specialNotes?: string;
   /**
+   * Step 5 Customer Details, shown here so the customer can verify the contact
+   * the salon will receive before paying. Booking on someone else's behalf is
+   * common, so this cannot be inferred from the signed-in profile alone.
+   */
+  customer?: { name: string; phone: string; email: string } | null;
+  /**
    * Server-side payment/booking adapter. It must create the order, verify the
    * gateway signature, enforce availability/ownership, and return the
    * canonical booking. There is intentionally no browser fallback.
@@ -116,6 +122,7 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
   date,
   time,
   specialNotes = '',
+  customer,
   onPayDeposit,
   onConfirmBooking,
   onChangeSalon,
@@ -458,11 +465,22 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
                 </div>
 
                 <div className="flex items-center gap-3.5">
-                  <img
-                    src={salon.image}
-                    alt={salon.name}
-                    className="w-14 h-14 rounded-xl object-cover ring-1 ring-outline-variant/40 flex-shrink-0"
-                  />
+                  {/*
+                    Guarded: an empty src="" makes the browser re-request the
+                    whole page, which is both a wasted request and a visible
+                    flash. Catalog rows frequently carry no image.
+                  */}
+                  {salon.image ? (
+                    <img
+                      src={salon.image}
+                      alt={salon.name}
+                      className="w-14 h-14 rounded-xl object-cover ring-1 ring-outline-variant/40 flex-shrink-0"
+                    />
+                  ) : (
+                    <span className="w-14 h-14 rounded-xl bg-primary/10 text-primary flex items-center justify-center flex-shrink-0 ring-1 ring-outline-variant/40">
+                      <span className="material-symbols-outlined text-[22px]">content_cut</span>
+                    </span>
+                  )}
                   <div className="flex-1 min-w-0">
                     <h3 className="font-bold text-[15px] text-on-surface truncate leading-snug">
                       {salon.name}
@@ -608,11 +626,17 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
 
                 {stylist ? (
                   <div className="flex items-center gap-3.5">
-                    <img
-                      src={stylist.avatar}
-                      alt={stylist.name}
-                      className="w-13 h-13 rounded-full object-cover ring-2 ring-primary/20 flex-shrink-0"
-                    />
+                    {stylist.avatar ? (
+                      <img
+                        src={stylist.avatar}
+                        alt={stylist.name}
+                        className="w-13 h-13 rounded-full object-cover ring-2 ring-primary/20 flex-shrink-0"
+                      />
+                    ) : (
+                      <span className="w-13 h-13 rounded-full bg-primary/10 text-primary flex items-center justify-center flex-shrink-0 ring-2 ring-primary/20">
+                        <span className="material-symbols-outlined text-[20px]">badge</span>
+                      </span>
+                    )}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
                         <h4 className="font-bold text-[14px] text-on-surface">{stylist.name}</h4>
@@ -708,6 +732,55 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* Field 4b: Contact details the salon will receive */}
+              {customer && (customer.name || customer.phone) && (
+                <div
+                  data-testid="review-contact-details"
+                  className="bg-surface-container-low rounded-2xl p-4 border border-outline-variant/50"
+                >
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant flex items-center gap-1 mb-2.5">
+                    <span className="material-symbols-outlined text-[14px]">badge</span>
+                    Contact For This Appointment
+                  </span>
+                  <div className="flex flex-col gap-2">
+                    {customer.name && (
+                      <div className="flex items-start justify-between gap-3">
+                        <span className="text-[10px] text-on-surface-variant uppercase font-semibold">
+                          Name
+                        </span>
+                        <span className="font-bold text-[13px] text-on-surface text-right">
+                          {customer.name}
+                        </span>
+                      </div>
+                    )}
+                    {customer.phone && (
+                      <div className="flex items-start justify-between gap-3">
+                        <span className="text-[10px] text-on-surface-variant uppercase font-semibold">
+                          Phone
+                        </span>
+                        <span className="font-bold text-[13px] text-on-surface text-right">
+                          {customer.phone}
+                        </span>
+                      </div>
+                    )}
+                    {customer.email && (
+                      <div className="flex items-start justify-between gap-3">
+                        <span className="text-[10px] text-on-surface-variant uppercase font-semibold">
+                          Email
+                        </span>
+                        <span className="font-bold text-[13px] text-on-surface text-right break-all">
+                          {customer.email}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <p className="mt-2.5 text-[10px] text-on-surface-variant leading-relaxed">
+                    The salon uses these details to confirm your slot. Use “Change
+                    date/time” to edit them.
+                  </p>
+                </div>
+              )}
 
               {/* Field 5: Special Notes / Requests */}
               <div className="bg-surface-container-low rounded-2xl p-4 border border-outline-variant/50">

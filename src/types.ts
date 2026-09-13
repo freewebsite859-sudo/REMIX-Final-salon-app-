@@ -172,6 +172,13 @@ export interface Appointment {
    * demo record instead of implying a captured gateway payment.
    */
   isDemoBooking?: boolean;
+  /**
+   * Contact details recorded on the booking at Step 5 — the person the salon
+   * should reach about THIS appointment, which is not necessarily the account
+   * holder. Persisted on `bookings.customer` and echoed back so the
+   * confirmation and detail screens can show what the salon received.
+   */
+  contact?: { name?: string; phone?: string; email?: string };
 }
 
 /**

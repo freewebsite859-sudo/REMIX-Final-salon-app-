@@ -39,6 +39,11 @@ import {
   validateBookingRequest,
 } from '../src/lib/bookingCore';
 import { isRazorpayConfigured } from '../src/lib/paymentCore';
+import {
+  createSupabaseAccountStore,
+  extractBearerToken,
+  type AccountStore,
+} from './userAccount';
 
 // Re-exported so existing importers (tests, tooling) keep one canonical entry
 // point for the booking contract implementation.
@@ -94,6 +99,16 @@ export function createMemoryBookingStore(): BookingStore {
       }
       return { ok: true };
     },
+    async cancelBooking(bookingId, ownerUserId) {
+      // Owner match is part of the query, not a post-filter: an id guess
+      // cannot reach another customer's row.
+      const row = bookings.find(
+        (b) => b.id === bookingId && b.user_id === ownerUserId
+      );
+      if (!row) return { ok: false, found: false };
+      (row as { status: string }).status = 'cancelled';
+      return { ok: true, found: true };
+    },
     async findActiveSlot(salonId, slotDate, slotTime, stylistId) {
       const wantChair = stylistId && stylistId.trim() ? stylistId.trim() : null;
       return bookings.some((row) => {
@@ -121,6 +136,18 @@ export function createSupabaseBookingStore(client: SupabaseClient): BookingStore
     async deleteBooking(bookingId: string) {
       const { error } = await client.from('bookings').delete().eq('id', bookingId);
       return error ? { ok: false, error: error.message } : { ok: true };
+    },
+    async cancelBooking(bookingId, ownerUserId) {
+      // Scope the update by BOTH id and owner. `select('id')` reports whether
+      // anything matched, which is how the route tells 404 apart from 500.
+      const { data, error } = await client
+        .from('bookings')
+        .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+        .eq('id', bookingId)
+        .eq('user_id', ownerUserId)
+        .select('id');
+      if (error) return { ok: false, error: error.message };
+      return { ok: true, found: Array.isArray(data) && data.length > 0 };
     },
     async findActiveSlot(salonId, slotDate, slotTime, stylistId) {
       let query = client
@@ -151,7 +178,8 @@ export function createSupabaseBookingStore(client: SupabaseClient): BookingStore
 
 export function createBookingsRouter(
   env: NodeJS.ProcessEnv = process.env,
-  storeOverride?: BookingStore | null
+  storeOverride?: BookingStore | null,
+  accountStoreOverride?: AccountStore | null
 ): Router {
   const router = Router();
   const { client, reason } = createServiceClient(env);
@@ -173,7 +201,81 @@ export function createBookingsRouter(
     const effectiveStore = store ?? createMemoryBookingStore();
     return createBookingsHandler(effectiveStore, reason)(req, res);
   });
+
+  // POST /api/bookings/:id/cancel — authenticated, owner-scoped.
+  //
+  // Cancelling used to be client-only: App.tsx flipped the row's status in
+  // React state and never told the server, so the salon still saw an active
+  // booking, the slot stayed occupied, and a reload restored the appointment.
+  router.post('/:id/cancel', (req: Request, res: Response) => {
+    const effectiveStore = store ?? createMemoryBookingStore();
+    const accountStore = accountStoreOverride ?? (client ? createSupabaseAccountStore(client) : null);
+    return createCancelBookingHandler(effectiveStore, accountStore, reason)(req, res);
+  });
+
   return router;
+}
+
+/**
+ * Express handler for POST /api/bookings/:id/cancel — separated so tests can
+ * drive the success path without a live Supabase project.
+ *
+ * Identity comes only from the verified access token. The booking id in the URL
+ * is matched against that identity inside the store, so a caller cannot cancel
+ * another customer's booking by guessing an id, and "not yours" is
+ * indistinguishable from "does not exist".
+ */
+export function createCancelBookingHandler(
+  store: BookingStore | null,
+  accountStore: AccountStore | null,
+  reason?: string
+): (req: Request, res: Response) => Promise<Response | void> {
+  return async (req: Request, res: Response) => {
+    if (!accountStore) {
+      // Same honesty rule as account deletion: never report a cancellation
+      // that did not happen. The client keeps the booking active.
+      return res.status(503).json({
+        error: 'Cancellation is not available',
+        reason: reason || 'service client unavailable',
+        configured: false,
+      });
+    }
+
+    if (!store || typeof store.cancelBooking !== 'function') {
+      return jsonError(res, 501, 'This booking service cannot cancel appointments.');
+    }
+
+    const token = extractBearerToken(req);
+    if (!token) {
+      return jsonError(res, 401, 'Missing access token. Sign in again and retry.');
+    }
+
+    const verified = await accountStore.verifyAccessToken(token);
+    if (!verified.ok || !verified.userId) {
+      return jsonError(res, 401, verified.error || 'Session expired. Sign in again and retry.');
+    }
+
+    const bookingId = typeof req.params.id === 'string' ? req.params.id.trim() : '';
+    if (!bookingId) {
+      return jsonError(res, 400, 'A booking id is required.');
+    }
+
+    const outcome = await store.cancelBooking(bookingId, verified.userId);
+    if (!outcome.ok) {
+      return jsonError(
+        res,
+        500,
+        `Cancellation failed: ${outcome.error || 'unknown error'}. The booking is still active.`
+      );
+    }
+    if (outcome.found === false) {
+      // Identical shape for "not yours" and "does not exist" so the endpoint
+      // cannot be used to enumerate other customers' booking ids.
+      return jsonError(res, 404, 'No active booking found for your account.');
+    }
+
+    return res.json({ success: true, bookingId, status: 'cancelled' });
+  };
 }
 
 /** Express handler for POST /api/bookings — separated so tests can drive it. */

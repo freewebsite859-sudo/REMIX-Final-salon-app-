@@ -1,5 +1,10 @@
 import React, { useState, useRef, useMemo } from 'react';
 import {
+  ReelPlayToggle,
+  ReelPosterFallback,
+  useReelVideo,
+} from '../hooks/useReelVideo';
+import {
   Play,
   Sparkles,
   Star,
@@ -35,6 +40,198 @@ const REEL_CATEGORIES = [
   { id: 'bridal', label: 'Bridal & Glam', icon: '👰' },
   { id: 'tattoo', label: 'Tattoo Art', icon: '🎨' },
 ];
+
+/**
+ * One reel card in the stories rail.
+ *
+ * Extracted from the `.map()` body so it can own hooks: playback safety, the
+ * source-fallback ladder and the manual play/pause control all need per-card
+ * state, which cannot live inside a render callback.
+ */
+interface StoryReelCardProps {
+  reel: SalonVideoReel;
+  idx: number;
+  isHovered: boolean;
+  matchedSalon?: Salon;
+  onHover: (id: string | null) => void;
+  onOpenReel: (idx: number) => void;
+  onBookSalon?: (salon: Salon, service?: SalonService) => void;
+}
+
+const StoryReelCard: React.FC<StoryReelCardProps> = ({
+  reel,
+  idx,
+  isHovered,
+  matchedSalon,
+  onHover,
+  onOpenReel,
+  onBookSalon,
+}) => {
+  const {
+    videoRef,
+    activeSrc,
+    exhausted,
+    isPlaying: isActuallyPlaying,
+    hasDecoded,
+    togglePlay,
+    onVideoError,
+    onVideoPlaying,
+    onVideoPause,
+    onLoadedData,
+  } = useReelVideo({
+    videoUrl: reel.videoUrl,
+    posterUrl: reel.thumbnailUrl,
+    wantPlaying: isHovered,
+    muted: true,
+  });
+
+  return (
+            <div
+              key={reel.id}
+              onMouseEnter={() => onHover(reel.id)}
+              onMouseLeave={() => onHover(null)}
+              onClick={() => onOpenReel(idx)}
+              className="group relative flex-none w-[170px] sm:w-[190px] md:w-[210px] aspect-[9/15] rounded-2xl overflow-hidden bg-slate-900 border border-slate-200/40 dark:border-slate-800 shadow-md hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1 snap-start cursor-pointer select-none"
+            >
+              {/* Media: Video or Poster with hover playback preview */}
+              <div className="absolute inset-0 w-full h-full bg-slate-950">
+                <img
+                  src={reel.thumbnailUrl}
+                  alt={reel.title}
+                  className={`w-full h-full object-cover transition-transform duration-700 ease-out ${
+                    isHovered ? 'scale-105' : 'scale-100'
+                  }`}
+                  loading="lazy"
+                />
+
+                {/*
+                  Hover preview. Previously this mounted a bare <video> with no
+                  error handling and no manual control: if the stream 404'd or
+                  autoplay was blocked the card showed nothing but a still
+                  frame, with no way to tell the two apart.
+                */}
+                {exhausted ? (
+                  <ReelPosterFallback
+                    posterUrl={reel.thumbnailUrl}
+                    title={reel.title}
+                    onRetry={onVideoError}
+                  />
+                ) : activeSrc ? (
+                  <video
+                    ref={videoRef}
+                    key={activeSrc}
+                    src={activeSrc}
+                    poster={reel.thumbnailUrl}
+                    playsInline
+                    muted
+                    autoPlay
+                    loop
+                    preload="metadata"
+                    onError={onVideoError}
+                    onPlaying={onVideoPlaying}
+                    onPause={onVideoPause}
+                    onLoadedData={onLoadedData}
+                    className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${
+                      isActuallyPlaying && hasDecoded ? 'opacity-100' : 'opacity-0'
+                    }`}
+                  />
+                ) : null}
+              </div>
+
+              {/* Gradient Scrims for Readable Overlays */}
+              <div className="absolute inset-0 bg-gradient-to-t from-black via-black/30 to-black/60 pointer-events-none" />
+
+              {/* Top Bar on Card: Salon Story Avatar & View count */}
+              <div className="absolute top-2.5 inset-x-2.5 z-10 flex items-center justify-between">
+                {/* Story Gradient Ring Avatar */}
+                <div className="flex items-center gap-1.5 bg-black/40 backdrop-blur-md pl-1 pr-2.5 py-0.5 rounded-full border border-white/15">
+                  <div className="w-6 h-6 rounded-full p-[1.5px] bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-500 shrink-0">
+                    <img
+                      src={reel.salonImage}
+                      alt={reel.salonName}
+                      className="w-full h-full rounded-full object-cover"
+                    />
+                  </div>
+                  <span className="text-[11px] font-bold text-white truncate max-w-[85px]">
+                    {reel.salonName}
+                  </span>
+                </div>
+
+                {/* Duration chip */}
+                {reel.duration && (
+                  <span className="text-[10px] font-bold text-white/90 bg-black/50 backdrop-blur-md px-2 py-0.5 rounded-md border border-white/10 flex items-center gap-1">
+                    <Clock className="w-2.5 h-2.5 text-amber-300" />
+                    {reel.duration}
+                  </span>
+                )}
+              </div>
+
+              {/* Center control: a real play/pause button, not decoration. */}
+              <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+                <div className="pointer-events-auto">
+                  <ReelPlayToggle
+                    isPlaying={isActuallyPlaying}
+                    onToggle={togglePlay}
+                    label={reel.title}
+                    className={`transition-transform duration-300 ${
+                      isHovered ? 'scale-110 bg-rose-500/70 border-rose-300' : 'group-hover:scale-105'
+                    }`}
+                  />
+                </div>
+              </div>
+
+              {/* Bottom Card Details */}
+              <div className="absolute bottom-0 inset-x-0 p-3 z-10 flex flex-col gap-1.5">
+                {/* Rating & Views Badge */}
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="flex items-center gap-1 bg-amber-400/90 text-slate-900 font-extrabold px-1.5 py-0.5 rounded-md text-[10px]">
+                    <Star className="w-2.5 h-2.5 fill-slate-900" />
+                    {reel.salonRating.toFixed(1)}
+                  </span>
+                  <span className="flex items-center gap-1 text-[10px] text-white/80 font-medium">
+                    <Eye className="w-3 h-3 text-white/70" />
+                    {reel.views || '15K'}
+                  </span>
+                </div>
+
+                {/* Title */}
+                <h3 className="text-white text-xs font-bold leading-tight line-clamp-2 drop-shadow">
+                  {reel.title}
+                </h3>
+
+                {/* Service Tag & Instant Action */}
+                <div className="flex items-center justify-between gap-1 pt-1 border-t border-white/15">
+                  {reel.servicePrice ? (
+                    <div className="flex flex-col">
+                      <span className="text-[9px] uppercase font-semibold text-white/70">From</span>
+                      <span className="text-xs font-black text-amber-300">₹{reel.servicePrice}</span>
+                    </div>
+                  ) : (
+                    <span className="text-[10px] text-white/70 truncate">{reel.category}</span>
+                  )}
+
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (onBookSalon && matchedSalon) {
+                        const srv = matchedSalon.services.find(
+                          (s) => s.id === reel.serviceId || s.name === reel.serviceName
+                        );
+                        onBookSalon(matchedSalon, srv);
+                      } else {
+                        onOpenReel(idx);
+                      }
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-white hover:bg-amber-300 text-slate-950 text-[11px] font-extrabold flex items-center gap-1 shadow-md transition-colors"
+                  >
+                    <CalendarCheck className="w-3 h-3" />
+                    <span>Book</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+  );
+};
 
 export const SalonStoriesReelFeed: React.FC<SalonStoriesReelFeedProps> = ({
   salons,
@@ -178,133 +375,18 @@ export const SalonStoriesReelFeed: React.FC<SalonStoriesReelFeedProps> = ({
         ref={scrollContainerRef}
         className="flex items-center gap-3.5 overflow-x-auto px-page-margin pb-4 pt-1 snap-x snap-mandatory scroll-smooth no-scrollbar"
       >
-        {filteredReels.map((reel, idx) => {
-          const isHovered = hoveredReelId === reel.id;
-          const matchedSalon = salons.find((s) => s.id === reel.salonId);
-
-          return (
-            <div
-              key={reel.id}
-              onMouseEnter={() => setHoveredReelId(reel.id)}
-              onMouseLeave={() => setHoveredReelId(null)}
-              onClick={() => handleOpenReel(idx)}
-              className="group relative flex-none w-[170px] sm:w-[190px] md:w-[210px] aspect-[9/15] rounded-2xl overflow-hidden bg-slate-900 border border-slate-200/40 dark:border-slate-800 shadow-md hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1 snap-start cursor-pointer select-none"
-            >
-              {/* Media: Video or Poster with hover playback preview */}
-              <div className="absolute inset-0 w-full h-full bg-slate-950">
-                <img
-                  src={reel.thumbnailUrl}
-                  alt={reel.title}
-                  className={`w-full h-full object-cover transition-transform duration-700 ease-out ${
-                    isHovered ? 'scale-105' : 'scale-100'
-                  }`}
-                  loading="lazy"
-                />
-
-                {/* Subdued video preview on hover */}
-                {isHovered && (
-                  <video
-                    src={reel.videoUrl}
-                    playsInline
-                    autoPlay
-                    muted
-                    loop
-                    className="absolute inset-0 w-full h-full object-cover transition-opacity duration-300"
-                  />
-                )}
-              </div>
-
-              {/* Gradient Scrims for Readable Overlays */}
-              <div className="absolute inset-0 bg-gradient-to-t from-black via-black/30 to-black/60 pointer-events-none" />
-
-              {/* Top Bar on Card: Salon Story Avatar & View count */}
-              <div className="absolute top-2.5 inset-x-2.5 z-10 flex items-center justify-between">
-                {/* Story Gradient Ring Avatar */}
-                <div className="flex items-center gap-1.5 bg-black/40 backdrop-blur-md pl-1 pr-2.5 py-0.5 rounded-full border border-white/15">
-                  <div className="w-6 h-6 rounded-full p-[1.5px] bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-500 shrink-0">
-                    <img
-                      src={reel.salonImage}
-                      alt={reel.salonName}
-                      className="w-full h-full rounded-full object-cover"
-                    />
-                  </div>
-                  <span className="text-[11px] font-bold text-white truncate max-w-[85px]">
-                    {reel.salonName}
-                  </span>
-                </div>
-
-                {/* Duration chip */}
-                {reel.duration && (
-                  <span className="text-[10px] font-bold text-white/90 bg-black/50 backdrop-blur-md px-2 py-0.5 rounded-md border border-white/10 flex items-center gap-1">
-                    <Clock className="w-2.5 h-2.5 text-amber-300" />
-                    {reel.duration}
-                  </span>
-                )}
-              </div>
-
-              {/* Play Badge Icon in Center */}
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
-                <div
-                  className={`w-10 h-10 rounded-full bg-white/20 backdrop-blur-md border border-white/40 flex items-center justify-center text-white shadow-lg transition-transform duration-300 ${
-                    isHovered ? 'scale-110 bg-rose-500/80 border-rose-300' : 'group-hover:scale-105'
-                  }`}
-                >
-                  <Play className="w-4 h-4 fill-white ml-0.5 text-white" />
-                </div>
-              </div>
-
-              {/* Bottom Card Details */}
-              <div className="absolute bottom-0 inset-x-0 p-3 z-10 flex flex-col gap-1.5">
-                {/* Rating & Views Badge */}
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className="flex items-center gap-1 bg-amber-400/90 text-slate-900 font-extrabold px-1.5 py-0.5 rounded-md text-[10px]">
-                    <Star className="w-2.5 h-2.5 fill-slate-900" />
-                    {reel.salonRating.toFixed(1)}
-                  </span>
-                  <span className="flex items-center gap-1 text-[10px] text-white/80 font-medium">
-                    <Eye className="w-3 h-3 text-white/70" />
-                    {reel.views || '15K'}
-                  </span>
-                </div>
-
-                {/* Title */}
-                <h3 className="text-white text-xs font-bold leading-tight line-clamp-2 drop-shadow">
-                  {reel.title}
-                </h3>
-
-                {/* Service Tag & Instant Action */}
-                <div className="flex items-center justify-between gap-1 pt-1 border-t border-white/15">
-                  {reel.servicePrice ? (
-                    <div className="flex flex-col">
-                      <span className="text-[9px] uppercase font-semibold text-white/70">From</span>
-                      <span className="text-xs font-black text-amber-300">₹{reel.servicePrice}</span>
-                    </div>
-                  ) : (
-                    <span className="text-[10px] text-white/70 truncate">{reel.category}</span>
-                  )}
-
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (onBookSalon && matchedSalon) {
-                        const srv = matchedSalon.services.find(
-                          (s) => s.id === reel.serviceId || s.name === reel.serviceName
-                        );
-                        onBookSalon(matchedSalon, srv);
-                      } else {
-                        handleOpenReel(idx);
-                      }
-                    }}
-                    className="px-2.5 py-1 rounded-lg bg-white hover:bg-amber-300 text-slate-950 text-[11px] font-extrabold flex items-center gap-1 shadow-md transition-colors"
-                  >
-                    <CalendarCheck className="w-3 h-3" />
-                    <span>Book</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-        })}
+        {filteredReels.map((reel, idx) => (
+          <StoryReelCard
+            key={reel.id}
+            reel={reel}
+            idx={idx}
+            isHovered={hoveredReelId === reel.id}
+            matchedSalon={salons.find((s) => s.id === reel.salonId)}
+            onHover={setHoveredReelId}
+            onOpenReel={handleOpenReel}
+            onBookSalon={onBookSalon}
+          />
+        ))}
       </div>
 
       {/* Fullscreen Video Modal */}

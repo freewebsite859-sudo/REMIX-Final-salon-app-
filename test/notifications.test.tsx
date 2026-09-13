@@ -288,7 +288,15 @@ async function mount() {
     root = createRoot(container!);
     root!.render(React.createElement(AuthProvider, null, React.createElement(App)));
   });
-  await settle(900);
+  // Wait for the boot splash to finish its crossfade instead of sleeping a
+  // fixed duration: it holds for SPLASH_MINIMUM_MS and then fades for
+  // SPLASH_EXIT_MS, so a hardcoded 900 ms races the unmount.
+  const deadline = Date.now() + 6000;
+  while (Date.now() < deadline) {
+    await settle(60);
+    if (!container.querySelector('[data-testid="nexora-splash"]')) break;
+  }
+  await settle(60);
 }
 async function unmount() {
   await act(async () => {

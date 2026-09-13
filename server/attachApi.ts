@@ -12,6 +12,7 @@ import { createBookingsRouter } from './bookings';
 import { createPaymentsRouter } from './payments';
 import { createEngagementRouter } from './engagement';
 import { createReferralsRouter } from './referrals';
+import { createUserAccountRouter } from './userAccount';
 
 export function attachNexoraApi(app: Express, env: NodeJS.ProcessEnv = process.env): void {
   app.use('/api/notifications', createNotificationsRouter(env));
@@ -20,6 +21,8 @@ export function attachNexoraApi(app: Express, env: NodeJS.ProcessEnv = process.e
   app.use('/api/engagement', createEngagementRouter(env));
   // Invite-link attribution: GET /resolve, POST /accept, GET /:userId
   app.use('/api/referrals', createReferralsRouter(env));
+  // Account lifecycle: POST /delete (verifies the caller's own access token)
+  app.use('/api/user', createUserAccountRouter(env));
 
   app.get('/api/health', (_req: Request, res: Response) => {
     res.json({

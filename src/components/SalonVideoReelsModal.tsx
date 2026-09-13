@@ -20,6 +20,8 @@ import {
   RotateCcw
 } from 'lucide-react';
 import { Salon, SalonVideoReel, SalonService } from '../types';
+import { safeSetMuted } from '../lib/mediaPlayback';
+import { useReelVideo } from '../hooks/useReelVideo';
 
 interface SalonVideoReelsModalProps {
   isOpen: boolean;
@@ -42,26 +44,49 @@ export const SalonVideoReelsModal: React.FC<SalonVideoReelsModalProps> = ({
 }) => {
   const [currentIndex, setCurrentIndex] = useState<number>(initialIndex);
   const [isMuted, setIsMuted] = useState<boolean>(false);
-  const [isPlaying, setIsPlaying] = useState<boolean>(true);
   const [likedReels, setLikedReels] = useState<Record<string, boolean>>({});
   const [likeCounts, setLikeCounts] = useState<Record<string, number>>({});
   const [copiedToast, setCopiedToast] = useState<boolean>(false);
   const [progress, setProgress] = useState<number>(0);
-  const [videoError, setVideoError] = useState<boolean>(false);
   const [touchStartY, setTouchStartY] = useState<number | null>(null);
 
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const activeReel = reels[currentIndex] || reels[0];
+
+  /*
+    Source-ladder playback. This modal previously rendered
+    `activeReel.videoUrl` verbatim and flipped a `videoError` flag on the first
+    failure — so one dead CDN URL meant no video at all, with no second attempt.
+    `useReelVideo` walks the fallback list first and only reports `exhausted`
+    once every source has genuinely failed; it also owns the ref, the
+    play/pause state and the gesture-unlock retry.
+  */
+  const {
+    videoRef,
+    activeSrc,
+    exhausted: videoError,
+    isPlaying,
+    togglePlay,
+    resetLadder,
+    onVideoError,
+    onVideoPlaying,
+    onVideoPause,
+    onLoadedData,
+  } = useReelVideo({
+    videoUrl: activeReel.videoUrl,
+    posterUrl: activeReel.thumbnailUrl,
+    wantPlaying: isOpen,
+    muted: isMuted,
+  });
+
 
   useEffect(() => {
     if (isOpen) {
       setCurrentIndex(Math.max(0, Math.min(initialIndex, reels.length - 1)));
-      setIsPlaying(true);
-      setVideoError(false);
+      resetLadder();
       setProgress(0);
     }
   }, [isOpen, initialIndex, reels.length]);
 
-  const activeReel = reels[currentIndex] || reels[0];
 
   const activeSalon = activeReel
     ? salons.find((s) => s.id === activeReel.salonId) || {
@@ -116,8 +141,7 @@ export const SalonVideoReelsModal: React.FC<SalonVideoReelsModalProps> = ({
     if (currentIndex < reels.length - 1) {
       setCurrentIndex((prev) => prev + 1);
       setProgress(0);
-      setVideoError(false);
-      setIsPlaying(true);
+      resetLadder();
     }
   }, [currentIndex, reels.length]);
 
@@ -125,25 +149,15 @@ export const SalonVideoReelsModal: React.FC<SalonVideoReelsModalProps> = ({
     if (currentIndex > 0) {
       setCurrentIndex((prev) => prev - 1);
       setProgress(0);
-      setVideoError(false);
-      setIsPlaying(true);
+      resetLadder();
     }
   }, [currentIndex]);
 
-  const togglePlay = () => {
-    if (!videoRef.current) return;
-    if (isPlaying) {
-      videoRef.current.pause();
-      setIsPlaying(false);
-    } else {
-      videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
-    }
-  };
-
   const toggleMute = () => {
-    if (!videoRef.current) return;
+    const video = videoRef.current;
+    if (!video) return;
     const nextMuted = !isMuted;
-    videoRef.current.muted = nextMuted;
+    safeSetMuted(video, nextMuted);
     setIsMuted(nextMuted);
   };
 
@@ -224,24 +238,6 @@ export const SalonVideoReelsModal: React.FC<SalonVideoReelsModalProps> = ({
     setTouchStartY(null);
   };
 
-  // Update video element on reel switch
-  useEffect(() => {
-    if (videoRef.current) {
-      videoRef.current.currentTime = 0;
-      videoRef.current.muted = isMuted;
-      videoRef.current
-        .play()
-        .then(() => setIsPlaying(true))
-        .catch(() => {
-          // If browser prevents autoplay with sound, fall back to muted autoplay
-          if (videoRef.current) {
-            videoRef.current.muted = true;
-            setIsMuted(true);
-            videoRef.current.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
-          }
-        });
-    }
-  }, [currentIndex, isMuted]);
 
   if (!isOpen || !activeReel) return null;
 
@@ -313,8 +309,8 @@ export const SalonVideoReelsModal: React.FC<SalonVideoReelsModalProps> = ({
           {!videoError ? (
             <video
               ref={videoRef}
-              key={activeReel.videoUrl}
-              src={activeReel.videoUrl}
+              key={activeSrc}
+              src={activeSrc}
               poster={activeReel.thumbnailUrl}
               playsInline
               loop
@@ -327,7 +323,11 @@ export const SalonVideoReelsModal: React.FC<SalonVideoReelsModalProps> = ({
                   setProgress((curr / dur) * 100);
                 }
               }}
-              onError={() => setVideoError(true)}
+              preload="auto"
+              onError={onVideoError}
+              onPlaying={onVideoPlaying}
+              onPause={onVideoPause}
+              onLoadedData={onLoadedData}
               className="w-full h-full object-cover"
             />
           ) : (
@@ -344,7 +344,8 @@ export const SalonVideoReelsModal: React.FC<SalonVideoReelsModalProps> = ({
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    setVideoError(false);
+                    // Re-runs the entire source ladder from the first source.
+                    resetLadder();
                   }}
                   className="px-4 py-2 rounded-full bg-white/20 text-white text-xs font-semibold flex items-center gap-2 hover:bg-white/30"
                 >

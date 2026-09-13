@@ -496,6 +496,39 @@ export const BookingDetailPage: React.FC<BookingDetailPageProps> = ({
             </div>
           </div>
 
+          {/* Contact recorded on the booking (Step 5) */}
+          {appointment.contact &&
+            (appointment.contact.name ||
+              appointment.contact.phone ||
+              appointment.contact.email) && (
+              <div id="booking-detail-contact" className="py-3">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant mb-2 flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[14px]">call</span>
+                  Contact on booking
+                </p>
+                <div className="space-y-1">
+                  {appointment.contact.name && (
+                    <p className="text-[13px] font-semibold text-on-surface truncate">
+                      {appointment.contact.name}
+                    </p>
+                  )}
+                  {appointment.contact.phone && (
+                    <p className="text-[12px] text-on-surface-variant">
+                      {appointment.contact.phone}
+                    </p>
+                  )}
+                  {appointment.contact.email && (
+                    <p className="text-[12px] text-on-surface-variant break-all">
+                      {appointment.contact.email}
+                    </p>
+                  )}
+                </div>
+                <p className="mt-1.5 text-[11px] text-on-surface-variant leading-relaxed">
+                  The salon uses these details for this appointment.
+                </p>
+              </div>
+            )}
+
           {/* Date / time */}
           <div id="booking-detail-datetime" className="py-3 grid grid-cols-2 gap-3">
             <div>

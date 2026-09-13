@@ -25,6 +25,15 @@ interface BookingModalProps {
     date: string;
     time: string;
     notes?: string;
+    /**
+     * The Step 5 Customer Details. This MUST stay in the declared type: the
+     * review screen displays it and the booking payload sends it. When it was
+     * omitted here the object still carried the fields at runtime, but no
+     * consumer could see them — so the salon received the account holder's
+     * stored contact details instead of what the customer had just typed
+     * (which matters for bookings made on someone else's behalf).
+     */
+    customer: { name: string; phone: string; email: string };
   }) => void;
   fromHistory?: boolean;
   profile?: any;
@@ -35,6 +44,12 @@ interface BookingModalProps {
   themeAccentHex?: string;
   user?: any;
   onRequireAuth?: () => void;
+  /**
+   * Customer Details Screen (B11) prefill: the signed-in customer's stored
+   * contact details. Booking is already authenticated, so these arrive
+   * prefilled and only need confirming — not retyping.
+   */
+  customerDetails?: { name?: string; email?: string; phone?: string } | null;
 }
 
 export const BookingModal: React.FC<BookingModalProps> = ({
@@ -47,6 +62,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   onConfirmBooking,
   onViewAppointments,
   onOpenSummary,
+  customerDetails,
 }) => {
   const todayStr = new Date().toISOString().split('T')[0];
   const tomorrow = new Date();
@@ -58,6 +74,13 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
   const [selectedTime, setSelectedTime] = useState<string>('5:30 PM');
   const [specialNotes, setSpecialNotes] = useState<string>('');
+  // Step 5 — Customer Details. The salon needs a reachable name and phone for
+  // the appointment; email carries the confirmation.
+  const [customerName, setCustomerName] = useState<string>('');
+  const [customerPhone, setCustomerPhone] = useState<string>('');
+  const [customerEmail, setCustomerEmail] = useState<string>('');
+  const [detailsTouched, setDetailsTouched] = useState<boolean>(false);
+  const [detailsError, setDetailsError] = useState<string | null>(null);
   const [couponCode, setCouponCode] = useState<string>('');
   const [appliedDiscountPercent, setAppliedDiscountPercent] = useState<number>(0);
   const [couponMessage, setCouponMessage] = useState<string | null>(null);
@@ -126,12 +149,18 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     setSelectedDate(todayStr);
     setSelectedTime('5:30 PM');
     setSpecialNotes('');
+    setCustomerName(customerDetails?.name || '');
+    setCustomerPhone(customerDetails?.phone || '');
+    setCustomerEmail(customerDetails?.email || '');
+    setDetailsTouched(false);
+    setDetailsError(null);
     setCouponCode('');
     setAppliedDiscountPercent(0);
     setCouponMessage(null);
     setBookingError(null);
     setIsSuccess(false);
     setConfirmedBooking(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, salon, initialService, initialServices, initialStylist, todayStr]);
 
   if (!isOpen || !salon) return null;
@@ -199,11 +228,62 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     date: selectedDate,
     time: selectedTime,
     notes: specialNotes,
+    customer: {
+      name: customerName.trim(),
+      phone: customerPhone.trim(),
+      email: customerEmail.trim(),
+    },
   });
+
+  /**
+   * Validate the Customer Details step.
+   *
+   * Returns an error string, or null when the details are good enough for the
+   * salon to run the appointment. Phone is the critical field: it is how the
+   * salon reaches a customer who is running late.
+   */
+  const validateCustomerDetails = (): string | null => {
+    if (!customerName.trim()) return 'Please add the name for this appointment.';
+    if (customerName.trim().length < 2) return 'Please enter the full name.';
+
+    const phone = customerPhone.trim();
+    if (!phone) return 'Please add a contact number so the salon can reach you.';
+    if (!/^[0-9+()\-\s]{8,15}$/.test(phone)) {
+      return 'That contact number does not look right. Use 8–15 digits.';
+    }
+
+    const email = customerEmail.trim();
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return 'That email address does not look right.';
+    }
+
+    return null;
+  };
+
+  const detailsValid = validateCustomerDetails() === null;
+
+  /** Gate every "go further" action on both a service pick and valid details. */
+  const handleAdvance = (): void => {
+    if (!hasSelection) return;
+    setDetailsTouched(true);
+    const error = validateCustomerDetails();
+    setDetailsError(error);
+    if (error) {
+      setBookingError(null);
+      return;
+    }
+    if (onOpenSummary) onOpenSummary(buildDraft());
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (selectedServices.length === 0) return;
+
+    // Customer Details must be valid before any booking advances.
+    setDetailsTouched(true);
+    const detailsValidationError = validateCustomerDetails();
+    setDetailsError(detailsValidationError);
+    if (detailsValidationError) return;
 
     if (onOpenSummary) {
       // Every booking must go through the server-side payment contract. The
@@ -415,11 +495,17 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                               : 'bg-surface-container-lowest border-outline-variant/50 hover:bg-surface-container text-on-surface'
                           }`}
                         >
-                          <img
-                            src={stylist.avatar}
-                            alt={stylist.name}
-                            className="w-10 h-10 rounded-full object-cover mb-1 ring-1 ring-white"
-                          />
+                          {stylist.avatar ? (
+                            <img
+                              src={stylist.avatar}
+                              alt={stylist.name}
+                              className="w-10 h-10 rounded-full object-cover mb-1 ring-1 ring-white"
+                            />
+                          ) : (
+                            <span className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center mb-1 ring-1 ring-white">
+                              <span className="material-symbols-outlined text-[18px]">badge</span>
+                            </span>
+                          )}
                           <span className="text-[12px] font-semibold truncate max-w-[110px]">
                             {stylist.name}
                           </span>
@@ -557,6 +643,97 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 />
               </div>
 
+              {/* Step 5: Customer Details — who the appointment is for */}
+              <div>
+                <label className="font-section-heading text-[14px] text-on-surface mb-1 block flex items-center justify-between">
+                  <span>5. Your Details</span>
+                  <span
+                    className={`text-[12px] font-normal px-2 py-0.5 rounded-full ${
+                      detailsValid
+                        ? 'bg-success-emerald/10 text-success-emerald font-bold'
+                        : 'bg-surface-container text-on-surface-variant'
+                    }`}
+                  >
+                    {detailsValid ? 'Ready' : 'Required'}
+                  </span>
+                </label>
+                <p className="text-[11px] text-on-surface-variant mb-2">
+                  The salon uses this to confirm your slot and reach you if anything changes.
+                </p>
+
+                <div className="flex flex-col gap-2">
+                  <div>
+                    <label htmlFor="booking-customer-name" className="text-[11px] font-semibold text-on-surface-variant block mb-0.5">
+                      Name on appointment
+                    </label>
+                    <input
+                      id="booking-customer-name"
+                      type="text"
+                      autoComplete="name"
+                      value={customerName}
+                      onChange={(e) => setCustomerName(e.target.value)}
+                      onBlur={() => {
+                        setDetailsTouched(true);
+                        setDetailsError(validateCustomerDetails());
+                      }}
+                      placeholder="e.g. Ananya Sharma"
+                      aria-invalid={detailsTouched && !customerName.trim()}
+                      className="w-full px-3 py-2 text-[12px] bg-surface-container-highest text-on-surface rounded-xl border-0 focus:ring-1 focus:ring-nexora-pink"
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="booking-customer-phone" className="text-[11px] font-semibold text-on-surface-variant block mb-0.5">
+                      Contact number
+                    </label>
+                    <input
+                      id="booking-customer-phone"
+                      type="tel"
+                      inputMode="tel"
+                      autoComplete="tel"
+                      value={customerPhone}
+                      onChange={(e) => setCustomerPhone(e.target.value)}
+                      onBlur={() => {
+                        setDetailsTouched(true);
+                        setDetailsError(validateCustomerDetails());
+                      }}
+                      placeholder="e.g. +91 98765 43210"
+                      aria-invalid={detailsTouched && !customerPhone.trim()}
+                      className="w-full px-3 py-2 text-[12px] bg-surface-container-highest text-on-surface rounded-xl border-0 focus:ring-1 focus:ring-nexora-pink"
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="booking-customer-email" className="text-[11px] font-semibold text-on-surface-variant block mb-0.5">
+                      Email <span className="font-normal opacity-70">(optional — for the confirmation)</span>
+                    </label>
+                    <input
+                      id="booking-customer-email"
+                      type="email"
+                      autoComplete="email"
+                      value={customerEmail}
+                      onChange={(e) => setCustomerEmail(e.target.value)}
+                      onBlur={() => {
+                        setDetailsTouched(true);
+                        setDetailsError(validateCustomerDetails());
+                      }}
+                      placeholder="e.g. you@example.com"
+                      className="w-full px-3 py-2 text-[12px] bg-surface-container-highest text-on-surface rounded-xl border-0 focus:ring-1 focus:ring-nexora-pink"
+                    />
+                  </div>
+                </div>
+
+                {detailsTouched && detailsError && (
+                  <p
+                    role="alert"
+                    className="mt-2 text-[11px] font-medium text-error flex items-center gap-1"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">error</span>
+                    {detailsError}
+                  </p>
+                )}
+              </div>
+
               {bookingError && (
                 <div
                   role="alert"
@@ -611,9 +788,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 {onOpenSummary && (
                   <button
                     type="button"
-                    onClick={() => {
-                      if (hasSelection) onOpenSummary(buildDraft());
-                    }}
+                    onClick={handleAdvance}
                     disabled={!hasSelection}
                     className="w-full py-2.5 bg-surface-container border border-outline-variant/70 hover:border-nexora-pink text-nexora-pink font-bold rounded-xl hover:bg-surface-container-high transition-all flex items-center justify-center gap-2 text-[13px] shadow-2xs disabled:opacity-45 disabled:cursor-not-allowed disabled:hover:bg-surface-container disabled:hover:border-outline-variant/70"
                   >

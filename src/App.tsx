@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { ActiveTab, Salon, SalonService, Stylist, Appointment, UserProfile, SavedServiceRef, SavedStaffRef, SavedAddress } from './types';
 import { useCatalog } from './hooks/useCatalog';
 import { Header } from './components/Header';
@@ -9,11 +9,27 @@ import { AppointmentsTab } from './components/AppointmentsTab';
 import { BookingDetailPage } from './components/BookingDetailPage';
 import { SavedTab } from './components/SavedTab';
 import { RewardsTab } from './components/RewardsTab';
-import { MembershipPage } from './components/MembershipPage';
-import { SettingsPage } from './components/SettingsPage';
-import { ReferralPage } from './components/ReferralPage';
-import { ReviewsPage } from './components/ReviewsPage';
-import { NotificationsPage } from './components/NotificationsPage';
+/**
+ * Secondary, route-gated screens. None of these render on first paint — each
+ * belongs to a single `/customer/*` route the user has to navigate to — so
+ * loading them on demand keeps their weight (and their dependency tails) off
+ * the critical path for Home/Search/Bookings.
+ */
+const MembershipPage = lazy(() =>
+  import('./components/MembershipPage').then((m) => ({ default: m.MembershipPage }))
+);
+const SettingsPage = lazy(() =>
+  import('./components/SettingsPage').then((m) => ({ default: m.SettingsPage }))
+);
+const ReferralPage = lazy(() =>
+  import('./components/ReferralPage').then((m) => ({ default: m.ReferralPage }))
+);
+const ReviewsPage = lazy(() =>
+  import('./components/ReviewsPage').then((m) => ({ default: m.ReviewsPage }))
+);
+const NotificationsPage = lazy(() =>
+  import('./components/NotificationsPage').then((m) => ({ default: m.NotificationsPage }))
+);
 import { ProfileTab } from './components/ProfileTab';
 import { LocationModal } from './components/LocationModal';
 import { FirstLoginLocationScreen } from './components/FirstLoginLocationScreen';
@@ -23,6 +39,13 @@ import { NotificationsModal } from './components/NotificationsModal';
 import { ChooseProfessionalScreen } from './components/ChooseProfessionalScreen';
 import { BookingSummaryModal, type BookingPaymentRequest } from './components/BookingSummaryModal';
 import { AuthPage } from './components/auth/AuthPage';
+import {
+  SplashScreen,
+  SPLASH_EXIT_MS,
+  SPLASH_MINIMUM_MS,
+} from './components/SplashScreen';
+import { ServicesScreen } from './components/ServicesScreen';
+import { ServiceDetailScreen } from './components/ServiceDetailScreen';
 import { PasswordUpdatePage } from './components/auth/PasswordUpdatePage';
 import { isSupabaseConfigured, getSupabaseConfigStatus } from './lib/supabase';
 import { useAuth } from './providers/AuthProvider';
@@ -60,6 +83,7 @@ import {
   CUSTOMER_REVIEWS,
   CUSTOMER_REWARDS,
   CUSTOMER_SEARCH,
+  CUSTOMER_SERVICES,
   CUSTOMER_SETTINGS,
   CUSTOMER_SIGNUP,
   canonicalizeCustomerPath,
@@ -68,6 +92,9 @@ import {
   customerRouteToTab,
   customerSalonPath,
   customerSearchPath,
+  customerServicePath,
+  customerServicesPath,
+  canonicalizeServicesAlias,
   isCustomerPath,
   isProtectedCustomerRoute,
   navigateCustomer,
@@ -81,6 +108,8 @@ import {
   type CustomerRoute,
 } from './lib/customerRoutes';
 import { fetchUserProfile } from './lib/profileService';
+import { requestAccountDeletion } from './lib/accountDeletion';
+import { requestBookingCancellation } from './lib/bookingCancellation';
 import {
   listNotifications,
   resolveNotificationTarget,
@@ -349,6 +378,22 @@ export default function App() {
   const [showFirstLoginLocation, setShowFirstLoginLocation] = useState(false);
   const salons = catalog.salons;
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  /** Set when a cancellation was refused server-side; the booking stays active. */
+  const [cancellationError, setCancellationError] = useState<string | null>(null);
+  /**
+   * Splash handoff. The boot splash unmounts by early return, which made it
+   * vanish on a single frame. Instead it stays mounted for SPLASH_EXIT_MS with
+   * `exiting` set so the transition into login/home is a crossfade.
+   */
+  // Starts false: the splash only appears once a boot is actually in flight,
+  // so an app whose session resolves instantly is never held behind a brand
+  // screen it did not need.
+  const [splashMounted, setSplashMounted] = useState<boolean>(false);
+  const [splashExiting, setSplashExiting] = useState<boolean>(false);
+  /** Frozen so the status line does not flip mid-fade. */
+  const splashStatusRef = useRef<string>('Restoring your secure session…');
+  /** When the splash first appeared, so the minimum hold can be honoured. */
+  const splashMountedAtRef = useRef<number>(0);
   const [savedSalonIds, setSavedSalonIds] = useState<string[]>([]);
   const [savedServices, setSavedServices] = useState<SavedServiceRef[]>([]);
   const [savedStaff, setSavedStaff] = useState<SavedStaffRef[]>([]);
@@ -376,6 +421,23 @@ export default function App() {
     date: string;
     time: string;
     notes?: string;
+    /**
+     * Step 5 Customer Details captured in the booking modal. Optional because
+     * other entry points (Choose Professional, rebook) reach the summary
+     * without passing through that step — those fall back to the profile.
+     */
+    customer?: { name: string; phone: string; email: string };
+  } | null>(null);
+
+  /**
+   * Step 5 details to re-seed the booking modal with after the customer backs
+   * out of the review screen to change something. Null means "prefill from the
+   * stored profile", which is the normal first-entry behaviour.
+   */
+  const [bookingCustomerDetails, setBookingCustomerDetails] = useState<{
+    name: string;
+    phone: string;
+    email: string;
   } | null>(null);
 
   // Modals state
@@ -534,6 +596,9 @@ export default function App() {
               setSelectedServiceForBooking(null);
               setSelectedServicesForBooking(null);
               setSelectedStylistForBooking(null);
+              // Same rule as handleOpenBooking: a deep link into a fresh
+              // booking must not inherit the previous booking's contact.
+              setBookingCustomerDetails(null);
               setIsBookingModalOpen(true);
             }
           }
@@ -587,7 +652,18 @@ export default function App() {
    */
   useEffect(() => {
     const syncFromLocation = () => {
-      const path = currentPath();
+      const rawPath = currentPath();
+
+      // `/services` and `/services/:id` are accepted aliases for the two service
+      // screens. Rewrite them to their canonical `/customer` form first so the
+      // route gate below — which is keyed on the `/customer` prefix — sees a
+      // path it recognises, and so the address bar settles on one canonical URL
+      // instead of two spellings of the same screen.
+      const aliased = canonicalizeServicesAlias(rawPath);
+      const path = aliased ?? rawPath;
+      if (aliased && aliased !== rawPath) {
+        navigateCustomer(aliased, { replace: true });
+      }
 
       // Password recovery stays on the dedicated /auth/reset screen.
       if (path === '/auth/reset') {
@@ -1145,6 +1221,11 @@ export default function App() {
     setSelectedServiceForBooking(service || null);
     setSelectedServicesForBooking(services || (service ? [service] : null));
     setSelectedStylistForBooking(stylist || null);
+    // A fresh booking always starts from the signed-in profile. This override
+    // only exists to survive the review screen's "Change date/time" re-entry;
+    // leaving it set let one booking's contact prefill the NEXT, unrelated
+    // booking — and since the fields validate, it could be submitted unnoticed.
+    setBookingCustomerDetails(null);
     setIsBookingModalOpen(true);
     goToCustomer(bookPath);
   };
@@ -1179,15 +1260,26 @@ export default function App() {
       }
       const totals = computeBookingTotals(services, request.discountAmount ?? 0);
 
+      // The contact details the customer confirmed in Step 5 win over the
+      // stored profile. Someone booking for a family member types that
+      // person's name and number, and that is what the salon must receive —
+      // silently substituting the account holder's details sends the stylist
+      // to call the wrong phone. The account `id` always stays the signed-in
+      // user's: ownership and payment belong to the authenticated account.
+      const details = bookingSummaryDraft?.customer;
+      const contactName = details?.name?.trim() || user.name;
+      const contactPhone = details?.phone?.trim() || session?.user?.phone || user.phone;
+      const contactEmail = details?.email?.trim() || session?.user?.email;
+
       const body: BookingCreateRequest = {
         salon: toBookingSalonSnapshot(bookingSummaryDraft?.salon ?? null),
         services,
         stylist: toBookingStylistSnapshot(bookingSummaryDraft?.stylist ?? null),
         customer: {
           ...(userId ? { id: userId } : {}),
-          ...(user.name ? { name: user.name } : {}),
-          ...(session?.user?.email ? { email: session.user.email } : {}),
-          ...(session?.user?.phone || user.phone ? { phone: session?.user?.phone || user.phone } : {}),
+          ...(contactName ? { name: contactName } : {}),
+          ...(contactEmail ? { email: contactEmail } : {}),
+          ...(contactPhone ? { phone: contactPhone } : {}),
         },
         date: request.date,
         time: request.time,
@@ -1251,10 +1343,26 @@ export default function App() {
     });
   };
 
-  const handleCancelAppointment = (id: string) => {
-    setAppointments(
-      appointments.map((a) => (a.id === id ? { ...a, status: 'cancelled' } : a))
+  const handleCancelAppointment = async (id: string): Promise<boolean> => {
+    // Cancellation must be confirmed by the server before the UI changes.
+    // It used to be client-only: this flipped the row in React state and never
+    // called the API, so the salon still saw an active booking, the slot stayed
+    // occupied, and a reload restored the appointment as if nothing happened.
+    const outcome = await requestBookingCancellation(id, session?.access_token ?? null);
+
+    if (!outcome.success) {
+      console.warn(
+        `[Nexora] Cancellation not completed (${outcome.reason}): ${outcome.message}`
+      );
+      setCancellationError(outcome.message);
+      return false;
+    }
+
+    setCancellationError(null);
+    setAppointments((prev) =>
+      prev.map((a) => (a.id === id ? { ...a, status: 'cancelled' } : a))
     );
+    return true;
   };
 
   const handleRescheduleAppointment = (id: string) => {
@@ -1321,23 +1429,100 @@ export default function App() {
   };
 
   const handleDeleteAccount = async (): Promise<boolean> => {
-    // Supabase user deletion requires a trusted server/Edge Function. Signing
-    // out and deleting browser keys is not account deletion, so refuse to make
-    // a destructive promise until that canonical endpoint is wired in.
-    console.warn('[Nexora] Account deletion requested but no secure deletion service is configured.');
-    return false;
+    // Deletion goes through POST /api/user/delete, which verifies this
+    // browser's own access token and deletes exactly that account with the
+    // service-role key held server-side. Signing out and clearing browser keys
+    // is NOT account deletion, so a failure here must never be reported as a
+    // success — the caller only signs out when this returns true.
+    const outcome = await requestAccountDeletion(session?.access_token ?? null);
+
+    if (!outcome.success) {
+      console.warn(`[Nexora] Account deletion not completed (${outcome.reason}): ${outcome.message}`);
+      return false;
+    }
+
+    // The auth row is gone; drop local caches and the session so the UI cannot
+    // keep showing data for an account that no longer exists.
+    try {
+      if (userId) {
+        localStorage.removeItem(scopedStorageKey(STORAGE_KEYS.appointments, userId));
+        localStorage.removeItem(scopedStorageKey(STORAGE_KEYS.savedSalons, userId));
+        localStorage.removeItem(scopedStorageKey(STORAGE_KEYS.savedServices, userId));
+        localStorage.removeItem(scopedStorageKey(STORAGE_KEYS.savedStaff, userId));
+        localStorage.removeItem(scopedStorageKey(STORAGE_KEYS.profile, userId));
+      }
+    } catch {
+      /* storage may be unavailable; the server-side deletion already succeeded */
+    }
+
+    await nexoraSignOut();
+    redirectToCustomerLogin({ replace: true });
+    return true;
   };
+
+  const isBooting = isSupabaseConfigured && (isAuthLoading || isRoleLoading);
+
+  // Freeze the phase label so it cannot flip mid-fade, then run the crossfade.
+  // The splash unmounts by early return, which made it disappear on a single
+  // frame; keeping it mounted for SPLASH_EXIT_MS with `exiting` set turns that
+  // into a real transition into login/home.
+  useEffect(() => {
+    if (isBooting) {
+      splashStatusRef.current = isRoleLoading
+        ? 'Checking your account type…'
+        : 'Restoring your secure session…';
+      // Stamp the hold from the moment the splash first appears, not from
+      // component init, so a boot that starts late still gets its full hold.
+      if (!splashMounted) splashMountedAtRef.current = Date.now();
+      setSplashMounted(true);
+      setSplashExiting(false);
+      return;
+    }
+    if (!splashMounted) return;
+    // Honour prefers-reduced-motion: skip the hold, the CSS animation is
+    // suppressed for those users anyway.
+    const reduce =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) {
+      setSplashMounted(false);
+      return;
+    }
+    // Wait out the remainder of the minimum hold before fading. The brand
+    // mark's entrance runs 600 ms, so exiting the moment the session resolves
+    // cuts it off mid-draw and the splash reads as a glitch rather than a boot.
+    const holdRemaining = Math.max(
+      0,
+      SPLASH_MINIMUM_MS - (Date.now() - splashMountedAtRef.current)
+    );
+    let exitTimer: number | undefined;
+    const holdTimer = window.setTimeout(() => {
+      setSplashExiting(true);
+      exitTimer = window.setTimeout(() => {
+        setSplashMounted(false);
+        setSplashExiting(false);
+      }, SPLASH_EXIT_MS);
+    }, holdRemaining);
+    return () => {
+      window.clearTimeout(holdTimer);
+      if (exitTimer !== undefined) window.clearTimeout(exitTimer);
+    };
+  }, [isBooting, isRoleLoading, splashMounted]);
 
   // Do not render protected controls or guest fallback data while Supabase is
   // still restoring the session. This closes the auth/session race on refresh.
   // Session must survive page refresh - we keep loading until initial session check completes
-  if (isSupabaseConfigured && (isAuthLoading || isRoleLoading)) {
-    return (
-      <main className="min-h-screen flex items-center justify-center bg-surface-off-white text-on-surface">
-        <p className="text-sm text-on-surface-variant" role="status">Restoring your secure session…</p>
-      </main>
-    );
+  if (isBooting || splashMounted) {
+    return <SplashScreen status={splashStatusRef.current} exiting={splashExiting} />;
   }
+
+  // Splash Screen (A1): shown only while there is genuinely nothing to render —
+  // the session restore. The catalog is deliberately NOT a blocker: `useCatalog`
+  // seeds `DEMO_SALONS` synchronously and swaps in remote rows when they
+  // arrive, so gating on `catalog.isLoading` would leave a customer staring at
+  // the splash for the whole round-trip, or indefinitely if Supabase is slow or
+  // unreachable.
 
   if (showAuthScreen) {
     if (currentPath() === '/auth/reset') {
@@ -1450,6 +1635,17 @@ export default function App() {
               date: slotToIsoDate(selectedSlot),
               time: selectedSlot?.time || '2:30 PM',
               notes: '',
+              // This path reaches the review screen without passing through
+              // BookingModal step 5, so seed the contact from the stored
+              // profile. Without it the review screen rendered no contact
+              // block at all and the salon's contact was invisible here,
+              // unlike the modal path. Same resolution order as
+              // handleServerBooking, so what is shown is what is sent.
+              customer: {
+                name: user.name,
+                phone: session?.user?.phone || user.phone,
+                email: session?.user?.email || user.email,
+              },
             });
             setChooseProfessionalData(null);
             setIsBookingSummaryModalOpen(true);
@@ -1494,10 +1690,30 @@ export default function App() {
 
           {/* Main Content Area — driven by /customer/* routes via activeTab */}
           <main className="pt-16 min-h-screen flex-1 flex flex-col">
+            {/*
+              One boundary for the lazily-loaded secondary screens. The fallback
+              is deliberately minimal: it only shows while a route chunk is in
+              flight on first navigation, and it keeps the header and bottom nav
+              (rendered outside this boundary) fully interactive meanwhile.
+            */}
+            <Suspense
+              fallback={
+                <div
+                  id="route-chunk-loading"
+                  role="status"
+                  aria-live="polite"
+                  className="flex-1 flex items-center justify-center py-16"
+                >
+                  <span className="text-[13px] text-on-surface-variant">Loading…</span>
+                </div>
+              }
+            >
             {(activeTab === 'home' ||
               customerRoute.kind === 'salon' ||
               customerRoute.kind === 'book') &&
               activeTab !== 'search' &&
+              customerRoute.kind !== 'services' &&
+              customerRoute.kind !== 'service' &&
               customerRoute.kind !== 'membership' &&
               customerRoute.kind !== 'notifications' && (
               <HomeTab
@@ -1546,7 +1762,10 @@ export default function App() {
               />
             )}
 
-            {activeTab === 'search' && customerRoute.kind !== 'membership' && (
+            {activeTab === 'search' &&
+              customerRoute.kind !== 'membership' &&
+              customerRoute.kind !== 'services' &&
+              customerRoute.kind !== 'service' && (
               <SearchTab
                 user={user}
                 salons={salons}
@@ -1573,8 +1792,99 @@ export default function App() {
                 onBookSalon={handleOpenBooking}
                 onToggleSaveSalon={handleToggleSaveSalon}
                 onOpenLocation={() => setIsLocationModalOpen(true)}
+                onOpenServices={() => goToCustomer(customerServicesPath())}
               />
             )}
+
+            {/* Services Screen (B7) — /customer/services */}
+            {customerRoute.kind === 'services' && (
+              <ServicesScreen
+                salons={salons}
+                initialQuery={customerRoute.query}
+                initialCategory={customerRoute.category}
+                savedServiceRefs={savedServices}
+                onToggleSaveService={(salonId, service) =>
+                  handleToggleSaveService(salonId, service.id)
+                }
+                onOpenService={(entry) =>
+                  goToCustomer(customerServicePath(entry.service.id, entry.salon.id))
+                }
+                onBookService={(salon, service) => handleOpenBooking(salon, service)}
+                onBack={() => goToCustomer(CUSTOMER_SEARCH, { replace: true })}
+              />
+            )}
+
+            {/* Service Detail Screen (B8) — /customer/service/:serviceId */}
+            {customerRoute.kind === 'service' &&
+              (() => {
+                // The `?salon=` hint disambiguates ids that repeat across salons;
+                // without it we fall back to the first salon offering the service.
+                const scoped = customerRoute.salonId
+                  ? salons.filter((s) => s.id === customerRoute.salonId)
+                  : salons;
+                const owner =
+                  scoped.find((s) => s.services.some((sv) => sv.id === customerRoute.serviceId)) ||
+                  salons.find((s) => s.services.some((sv) => sv.id === customerRoute.serviceId)) ||
+                  null;
+                const service =
+                  owner?.services.find((sv) => sv.id === customerRoute.serviceId) || null;
+
+                if (!owner || !service) {
+                  return (
+                    <div className="px-4 pt-10 pb-28 max-w-3xl mx-auto w-full text-center">
+                      <span className="material-symbols-outlined text-[36px] text-on-surface-variant">
+                        search_off
+                      </span>
+                      <p className="mt-2 text-[14px] font-semibold text-on-surface">
+                        That service is no longer listed
+                      </p>
+                      <p className="mt-1 text-[12px] text-on-surface-variant">
+                        It may have been renamed or removed by the salon.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => goToCustomer(CUSTOMER_SERVICES)}
+                        className="mt-4 px-4 py-2 rounded-lg bg-nexora-pink text-white text-[12px] font-bold"
+                      >
+                        Browse all services
+                      </button>
+                    </div>
+                  );
+                }
+
+                // Same-named treatments at other salons, for price comparison.
+                const alternatives = salons
+                  .filter((s) => s.id !== owner.id)
+                  .flatMap((s) =>
+                    s.services
+                      .filter(
+                        (sv) => sv.name.trim().toLowerCase() === service.name.trim().toLowerCase()
+                      )
+                      .map((sv) => ({ salon: s, service: sv }))
+                  )
+                  .sort((a, b) => a.service.price - b.service.price)
+                  .slice(0, 6);
+
+                return (
+                  <ServiceDetailScreen
+                    service={service}
+                    salon={owner}
+                    alternatives={alternatives}
+                    savedServiceIds={savedServices
+                      .filter((s) => s.salonId === owner.id)
+                      .map((s) => s.serviceId)}
+                    onToggleSaveService={(salonId, svc) =>
+                      handleToggleSaveService(salonId, svc.id)
+                    }
+                    onBook={(s, svc, stylist) => handleOpenBooking(s, svc, stylist ?? undefined)}
+                    onOpenSalon={(s) => handleOpenSalonDetails(s)}
+                    onOpenAlternative={(s, svc) =>
+                      goToCustomer(customerServicePath(svc.id, s.id))
+                    }
+                    onBack={() => goToCustomer(CUSTOMER_SERVICES, { replace: true })}
+                  />
+                );
+              })()}
 
             {activeTab === 'bookings' && customerRoute.kind !== 'membership' &&
               (customerRoute.kind === 'booking' ? (
@@ -1588,9 +1898,12 @@ export default function App() {
                     ) || null
                   }
                   onBack={() => goToCustomer(CUSTOMER_BOOKINGS, { replace: true })}
-                  onCancel={(id) => {
-                    handleCancelAppointment(id);
-                    goToCustomer(CUSTOMER_BOOKINGS, { replace: true });
+                  onCancel={async (id) => {
+                    // Only leave the detail screen once the server confirms.
+                    // Navigating on a refused cancellation stranded the user on
+                    // the list with a booking that was still active.
+                    const cancelled = await handleCancelAppointment(id);
+                    if (cancelled) goToCustomer(CUSTOMER_BOOKINGS, { replace: true });
                   }}
                   onRebook={(apt) => {
                     handleBookAgain(apt);
@@ -1608,6 +1921,7 @@ export default function App() {
                 <AppointmentsTab
                   appointments={appointments}
                   highlightedBookingId={undefined}
+                  cancellationError={cancellationError}
                   onCancelAppointment={handleCancelAppointment}
                   onRescheduleAppointment={handleRescheduleAppointment}
                   onBookAgain={handleBookAgain}
@@ -1734,6 +2048,7 @@ export default function App() {
                   onDeleteAccount={handleDeleteAccount}
                 />
               )}
+            </Suspense>
           </main>
         </>
       )}
@@ -1831,6 +2146,13 @@ export default function App() {
         initialStylist={selectedStylistForBooking}
         onConfirmBooking={handleConfirmBooking}
         onViewAppointments={handleViewAppointments}
+        customerDetails={
+          bookingCustomerDetails || {
+            name: user.name,
+            email: user.email,
+            phone: user.phone,
+          }
+        }
         onOpenSummary={(draft) => {
           setIsBookingModalOpen(false);
           setBookingSummaryDraft(draft);
@@ -1850,6 +2172,7 @@ export default function App() {
         date={bookingSummaryDraft?.date || new Date().toISOString().split('T')[0]}
         time={bookingSummaryDraft?.time || '2:30 PM'}
         specialNotes={bookingSummaryDraft?.notes || ''}
+        customer={bookingSummaryDraft?.customer || null}
         onConfirmBooking={handleConfirmBooking}
         onPayDeposit={handleServerBooking}
         onViewAppointments={() => {
@@ -1915,6 +2238,9 @@ export default function App() {
           setSelectedServicesForBooking(bookingSummaryDraft.services);
           setSelectedServiceForBooking(bookingSummaryDraft.services[0] || null);
           setSelectedStylistForBooking(bookingSummaryDraft.stylist);
+          // Carry the confirmed Step 5 details back into the modal so editing
+          // the date does not silently reset the contact to the profile values.
+          setBookingCustomerDetails(bookingSummaryDraft.customer || null);
           setIsBookingModalOpen(true);
         }}
       />

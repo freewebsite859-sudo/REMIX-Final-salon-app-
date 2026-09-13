@@ -23,6 +23,11 @@ import { Salon, SalonVideoReel, SalonService, Stylist } from '../types';
 import { ALL_SALON_VIDEO_REELS, getReelsForSalon } from '../data/salonVideoReels';
 import { SalonVideoReelsModal } from './SalonVideoReelsModal';
 import { getTemplateSalons } from '../data/templateSalons';
+import {
+  ReelPlayToggle,
+  ReelPosterFallback,
+  useReelVideo,
+} from '../hooks/useReelVideo';
 
 export interface VideoReelsSectionProps {
   /** Salon list retrieved from the catalog service */
@@ -86,45 +91,27 @@ const ReelCard: React.FC<ReelCardProps> = ({
   onOpenSalonDetails,
   registerRef,
 }) => {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [isVideoLoaded, setIsVideoLoaded] = useState<boolean>(false);
+  // Shared reel controller: safe play/pause, source fallback ladder, first
+  // -gesture autoplay unlock, and a manual override the user can always reach.
+  const {
+    videoRef,
+    activeSrc,
+    exhausted,
+    isPlaying: isActuallyPlaying,
+    hasDecoded,
+    togglePlay,
+    onVideoError,
+    onVideoPlaying,
+    onVideoPause,
+    onLoadedData,
+  } = useReelVideo({
+    videoUrl: reel.videoUrl,
+    posterUrl: reel.thumbnailUrl,
+    wantPlaying: isPlaying,
+    muted: isMuted,
+  });
 
-  // Synchronize HTML5 video playback strictly with isPlaying and isMuted states
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    video.muted = isMuted;
-
-    let isSubscribed = true;
-    if (isPlaying) {
-      const playPromise = video.play();
-      if (playPromise !== undefined) {
-        playPromise
-          .then(() => {
-            if (isSubscribed) {
-              setIsVideoLoaded(true);
-            }
-          })
-          .catch((err: unknown) => {
-            // Handle browser gesture policy or rapid switch aborts gracefully
-            if (err instanceof Error && err.name === 'AbortError') {
-              return;
-            }
-            if (!video.muted) {
-              video.muted = true;
-              video.play().catch(() => {});
-            }
-          });
-      }
-    } else {
-      video.pause();
-    }
-
-    return () => {
-      isSubscribed = false;
-    };
-  }, [isPlaying, isMuted]);
+  const isVideoLoaded = hasDecoded;
 
   const salonDisplayName = matchedSalon?.name || reel.salonName;
   const salonLocation =
@@ -157,19 +144,34 @@ const ReelCard: React.FC<ReelCardProps> = ({
         />
 
         {/* Video Element rendered with smooth opacity transition */}
-        <video
-          ref={videoRef}
-          src={reel.videoUrl}
-          playsInline
-          muted={isMuted}
-          loop
-          preload="metadata"
-          onLoadedData={() => setIsVideoLoaded(true)}
-          onCanPlay={() => setIsVideoLoaded(true)}
-          className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-500 ease-out ${
-            isPlaying ? 'opacity-100' : 'opacity-0 pointer-events-none'
-          }`}
-        />
+        {activeSrc && !exhausted ? (
+          <video
+            ref={videoRef}
+            key={activeSrc}
+            src={activeSrc}
+            poster={reel.thumbnailUrl}
+            playsInline
+            muted
+            autoPlay
+            loop
+            preload="metadata"
+            onError={onVideoError}
+            onPlaying={onVideoPlaying}
+            onPause={onVideoPause}
+            onLoadedData={onLoadedData}
+            onCanPlay={onLoadedData}
+            className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-500 ease-out ${
+              isPlaying && isVideoLoaded ? 'opacity-100' : 'opacity-0 pointer-events-none'
+            }`}
+          />
+        ) : (
+          /* Every source failed — animated poster instead of a black box. */
+          <ReelPosterFallback
+            posterUrl={reel.thumbnailUrl}
+            title={reel.title}
+            onRetry={() => onVideoError()}
+          />
+        )}
       </div>
 
       {/* Multi-step Gradient Scrim for Pristine Contrast & Text Readability */}
@@ -212,6 +214,14 @@ const ReelCard: React.FC<ReelCardProps> = ({
 
         {/* Live Status Badge & Sound Toggle */}
         <div className="flex items-center gap-1">
+          {/*
+            Always rendered. Autoplay is blocked often enough (data saver,
+            low-power mode, WebViews) that a card whose controls only appear
+            once `isPlaying` is true is a dead end — the user has no way to
+            force playback.
+          */}
+          <ReelPlayToggle isPlaying={isActuallyPlaying} onToggle={togglePlay} />
+
           {isPlaying && (
             <button
               type="button"

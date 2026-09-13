@@ -493,17 +493,17 @@ function mapBookingStylists(stylists: Stylist[] = [], salonId: string, salonName
 }
 
 /**
- * Robustly merges live Supabase salon data with template salons.
- * Live Supabase salons take primary priority. Validated template salons from templateSalons.ts
- * are selectively injected ONLY if their unique ID is not already present in live data.
- * Guarantees zero ID duplicates and compatible services/staff for BookingModal.
+ * Sanitizes live Supabase salons for the booking UI — one entry per unique ID,
+ * services and stylists normalized, and a video preview resolved.
+ *
+ * This deliberately contains NO template/demo injection: a catalog whose
+ * `source` is `'remote'` must hold remote rows only, otherwise a real salon
+ * list is silently padded with seeded demo salons a customer cannot book.
  */
-export function mergeTemplateSalons(remoteSalons: Salon[]): Salon[] {
-  const templateSalons = getTemplateSalons();
+export function sanitizeRemoteSalons(remoteSalons: Salon[]): Salon[] {
   const existingIds = new Set<string>();
   const merged: Salon[] = [];
 
-  // 1. Process live Supabase salons first (Primary Priority)
   for (const remoteSalon of remoteSalons) {
     if (isValidTemplateSalon(remoteSalon) && !existingIds.has(remoteSalon.id)) {
       existingIds.add(remoteSalon.id);
@@ -526,7 +526,24 @@ export function mergeTemplateSalons(remoteSalons: Salon[]): Salon[] {
     }
   }
 
-  // 2. Selectively inject validated template salons if ID does not exist in live data
+  return merged;
+}
+
+/**
+ * Robustly merges live Supabase salon data with template salons.
+ * Live Supabase salons take primary priority. Validated template salons from templateSalons.ts
+ * are selectively injected ONLY if their unique ID is not already present in live data.
+ * Guarantees zero ID duplicates and compatible services/staff for BookingModal.
+ *
+ * Only used for demo/diagnostic paths — `fetchCatalog` must never call this on
+ * a live result, or demo rows leak into a `'remote'` catalog.
+ */
+export function mergeTemplateSalons(remoteSalons: Salon[]): Salon[] {
+  const templateSalons = getTemplateSalons();
+  const merged: Salon[] = sanitizeRemoteSalons(remoteSalons);
+  const existingIds = new Set<string>(merged.map((salon) => salon.id));
+
+  // Selectively inject validated template salons if ID does not exist in live data
   for (const tmplSalon of templateSalons) {
     if (!isValidTemplateSalon(tmplSalon)) continue;
 
@@ -617,8 +634,22 @@ export async function fetchCatalog(client: SupabaseClient | null = supabase): Pr
     };
   }
 
-  const combinedSalons = mergeTemplateSalons(normalized);
+  // Remote wins outright. Demo/template salons are NOT appended here: a
+  // `source: 'remote'` catalog must contain remote rows only, so a customer
+  // never sees (or books) a seeded salon that does not exist upstream.
+  const remoteSalons = sanitizeRemoteSalons(normalized);
 
-  return { salons: combinedSalons, source: 'remote', warnings };
+  if (remoteSalons.length === 0) {
+    return {
+      salons: DEMO_SALONS,
+      source: 'fallback',
+      warnings: [
+        ...warnings,
+        'Canonical salon rows normalized but none were bookable (missing id or coordinates).',
+      ],
+    };
+  }
+
+  return { salons: remoteSalons, source: 'remote', warnings };
 }
 
