@@ -144,10 +144,20 @@ the old "endpoint was not found" failure is gone. With keys, `/api/bookings`
 still answers 402.
 *Remaining:* live Razorpay keys + a real dual-client run against the project.
 
-**B4. Account deletion is not implemented.**
-`App.tsx` `handleDeleteAccount` deliberately returns `false` and logs a warning rather
-than pretending to delete. It needs a trusted service_role Edge Function and a
-`POST /api/user/delete` route that forwards the user's JWT. Compliance blocker.
+**B4. Account deletion — implemented 2026-09-13, still needs live keys.**
+`POST /api/user/delete` (`server/userAccount.ts`) verifies the caller's own
+access token via `auth.getUser()` and deletes exactly that account with
+`auth.admin.deleteUser()` using the server-held service-role key. Identity is
+taken from the verified token only — a `userId` in the request body is ignored,
+so a caller cannot target another account. Failures answer 401 (bad/expired
+token), 500 (upstream failure, body states "No data was deleted") or 503 with
+`configured:false` when `SUPABASE_SERVICE_ROLE_KEY` is absent — never a fake
+success. `App.tsx` `handleDeleteAccount` only signs out and clears local caches
+when the endpoint confirms deletion.
+Covered by `npm run test:account-deletion` (21 checks).
+*Remaining:* `SUPABASE_SERVICE_ROLE_KEY` is unset here, so the route has only
+been exercised against an injected store and returns 503 on this deployment.
+A real deletion has not been run against a live project.
 
 **B5. Four client-called API routes do not exist.**
 Verified against a running `npm run dev` server on 2026-09-13 — all return

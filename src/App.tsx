@@ -87,6 +87,7 @@ import {
   type CustomerRoute,
 } from './lib/customerRoutes';
 import { fetchUserProfile } from './lib/profileService';
+import { requestAccountDeletion } from './lib/accountDeletion';
 import {
   listNotifications,
   resolveNotificationTarget,
@@ -1327,11 +1328,35 @@ export default function App() {
   };
 
   const handleDeleteAccount = async (): Promise<boolean> => {
-    // Supabase user deletion requires a trusted server/Edge Function. Signing
-    // out and deleting browser keys is not account deletion, so refuse to make
-    // a destructive promise until that canonical endpoint is wired in.
-    console.warn('[Nexora] Account deletion requested but no secure deletion service is configured.');
-    return false;
+    // Deletion goes through POST /api/user/delete, which verifies this
+    // browser's own access token and deletes exactly that account with the
+    // service-role key held server-side. Signing out and clearing browser keys
+    // is NOT account deletion, so a failure here must never be reported as a
+    // success — the caller only signs out when this returns true.
+    const outcome = await requestAccountDeletion(session?.access_token ?? null);
+
+    if (!outcome.success) {
+      console.warn(`[Nexora] Account deletion not completed (${outcome.reason}): ${outcome.message}`);
+      return false;
+    }
+
+    // The auth row is gone; drop local caches and the session so the UI cannot
+    // keep showing data for an account that no longer exists.
+    try {
+      if (userId) {
+        localStorage.removeItem(scopedStorageKey(STORAGE_KEYS.appointments, userId));
+        localStorage.removeItem(scopedStorageKey(STORAGE_KEYS.savedSalons, userId));
+        localStorage.removeItem(scopedStorageKey(STORAGE_KEYS.savedServices, userId));
+        localStorage.removeItem(scopedStorageKey(STORAGE_KEYS.savedStaff, userId));
+        localStorage.removeItem(scopedStorageKey(STORAGE_KEYS.profile, userId));
+      }
+    } catch {
+      /* storage may be unavailable; the server-side deletion already succeeded */
+    }
+
+    await nexoraSignOut();
+    redirectToCustomerLogin({ replace: true });
+    return true;
   };
 
   // Do not render protected controls or guest fallback data while Supabase is

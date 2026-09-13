@@ -19,7 +19,7 @@ Everything below was run against this working tree.
 | Command | Before | After |
 |---|---|---|
 | `npx tsc --noEmit` | clean | clean |
-| `npm test` | **31/35 suites** (4 failing) | **37/37 suites** |
+| `npm test` | **31/35 suites** (4 failing) | **38/38 suites** |
 | `npm run build` | ✓ | ✓ |
 
 `node_modules` is not persisted in this workspace — run
@@ -219,6 +219,37 @@ updated to supply a customer (as a signed-in user would), preserving its actual
 intent — that the draft carries every selected service. Eight new checks cover
 the gate itself.
 
+### B16 — Account deletion (`server/userAccount.ts`, `src/lib/accountDeletion.ts`)
+
+Profile / Account (screen 16) offered "Delete Account" with a type-`DELETE`
+confirmation, but `handleDeleteAccount` in `App.tsx` was a stub that logged a
+warning and returned `false`. The user typed DELETE, pressed confirm, and got
+"Account deletion failed. Please try again." — a message that implies a
+transient failure when in fact no deletion service existed at all. This was the
+compliance blocker `RELEASE_AUDIT.md` tracked as B4.
+
+Now implemented:
+
+- `POST /api/user/delete` verifies the caller's **own** access token with
+  `auth.getUser()` and deletes exactly that account with
+  `auth.admin.deleteUser()`, using the service-role key held server-side.
+- **Identity comes only from the verified token.** A `userId` in the request
+  body is ignored, so a caller cannot target someone else's account. There is a
+  test for exactly this.
+- Failure modes are honest: 401 (missing/expired token), 500 (upstream failure,
+  body states "No data was deleted"), 503 with `configured:false` when
+  `SUPABASE_SERVICE_ROLE_KEY` is absent. None of them implies success.
+- `requestAccountDeletion()` never throws — every failure resolves to a
+  `{ success: false, reason }` outcome, so a caller cannot mistake a thrown
+  error for a completed deletion. A 200 that does not carry `success:true`, and
+  a non-JSON proxy error page, are both treated as failures.
+- `App.tsx` clears local caches and signs out **only** after the endpoint
+  confirms deletion.
+
+Verified live with `curl` against `npm run dev`: no token and a bogus token both
+return `503 {configured:false}` on this deployment (service-role key unset), and
+`/api/health` returns 200.
+
 ---
 
 ## 5. Test coverage added
@@ -227,6 +258,7 @@ the gate itself.
 |---|---|---|
 | `test:services-flow` (new) | 36 | catalog flattening, both new screens, splash |
 | `test:app-services-routing` (new) | 7 | the **real App shell** reaching both routes |
+| `test:account-deletion` (new) | 21 | deletion router + browser client |
 | `test:customer-routes` | +16 | the two new routes, encoding round trips |
 | `test:booking-modal` | +8 | the Customer Details gate |
 
@@ -244,9 +276,11 @@ These are unchanged by this work and were **not** verified here:
   are unset, so every suite stubs Supabase. No end-to-end run against a real
   project has happened — signup, email confirmation, login, refresh, booking,
   payment and cross-tenant denial remain unexercised against live infrastructure.
-- **Account deletion** (`handleDeleteAccount` in `App.tsx`) still deliberately
-  returns `false` rather than pretending. Needs a trusted service_role endpoint.
-  Compliance blocker.
+- **Account deletion is implemented but has never run against a live project.**
+  `POST /api/user/delete` verifies the caller's own access token and deletes
+  exactly that account server-side; `SUPABASE_SERVICE_ROLE_KEY` is unset here,
+  so on this deployment it answers an honest `503 {configured:false}`. Verified
+  live with `curl`. The success path is covered only against an injected store.
 - **Four client-called API endpoints do not exist.** Verified against a running
   `npm run dev` server on 2026-09-13 — all return **HTTP 404**:
   `/api/generate-bio`, `/api/generate-promo-image`, `/api/youtube/fetch-videos`,
