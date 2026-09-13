@@ -414,6 +414,51 @@ check(
   `"${(poster?.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 48)}…"`
 );
 
+/*
+  The fallback must name the stream it gave up on. "Video preview unavailable"
+  cannot distinguish a dead CDN URL from a blocked connection from a codec
+  problem; the failing host printed on the card can.
+*/
+{
+  const diagHost = document.createElement('div');
+  document.body.appendChild(diagHost);
+  let diagRoot: Root | null = null;
+  await act(async () => {
+    diagRoot = createRoot(diagHost);
+    diagRoot.render(
+      React.createElement(ReelPosterFallback, {
+        posterUrl: 'poster.jpg',
+        title: 'Diag',
+        failedSource: 'https://assets.mixkit.co/videos/preview/mixkit-hairdresser-41131-large.mp4',
+      })
+    );
+  });
+
+  const shown = diagHost.querySelector('[data-testid="reel-failed-source"]');
+  check(
+    'ReelPosterFallback names the source that failed',
+    shown !== null && (shown?.textContent || '').includes('assets.mixkit.co'),
+    shown ? (shown.textContent || '').slice(0, 60) : 'no diagnostic rendered'
+  );
+  check(
+    'the failed source is rendered without the scheme',
+    shown !== null && !(shown?.textContent || '').includes('https://')
+  );
+
+  await act(async () => {
+    diagRoot!.render(
+      React.createElement(ReelPosterFallback, { posterUrl: 'poster.jpg', title: 'Diag' })
+    );
+  });
+  check(
+    'no empty diagnostic line when nothing has failed yet',
+    diagHost.querySelector('[data-testid="reel-failed-source"]') === null
+  );
+
+  await act(async () => { diagRoot!.unmount(); });
+  diagHost.remove();
+}
+
 // The manual toggle is always rendered, even while playback is impossible.
 const toggle = container.querySelector('[data-testid="reel-play-toggle"]');
 check(
@@ -513,6 +558,28 @@ for (const rel of surfaces) {
   check(
     `${name}: no direct unguarded .play() call`,
     !/\.play\(\s*\)/.test(src.replace(/safePlay\([^)]*\)/g, ''))
+  );
+
+  /*
+    The reel video must not be hidden behind a playback-state opacity gate. When
+    a browser blocks autoplay, `isPlaying` never becomes true, so a video gated
+    on it stays fully transparent forever and the card reads as broken. The gate
+    bought nothing either: `<video poster=...>` already paints the thumbnail
+    until the first frame decodes.
+
+    Scoped to the <video> element rather than the whole file -- a file-wide
+    regex false-positives on the thumbnail <img>, which legitimately fades out
+    once playback starts. lastIndexOf, not indexOf: SalonStoriesReelFeed says
+    "<video>" in a prose comment above the element, and anchoring there would
+    slice the comment plus the neighbouring <ReelPosterFallback /> and never
+    look at the real element at all.
+  */
+  const videoStart = src.lastIndexOf('<video');
+  const videoEl = src.slice(videoStart, src.indexOf('/>', videoStart));
+  check(
+    `${name}: <video> element is not hidden behind a playback-state opacity gate`,
+    !/opacity-0/.test(videoEl),
+    videoEl.includes('opacity-0') ? 'video carries opacity-0' : 'always visible'
   );
 }
 

@@ -71,8 +71,8 @@ const StoryReelCard: React.FC<StoryReelCardProps> = ({
     videoRef,
     activeSrc,
     exhausted,
+    failedSources,
     isPlaying: isActuallyPlaying,
-    hasDecoded,
     togglePlay,
     onVideoError,
     onVideoPlaying,
@@ -115,6 +115,7 @@ const StoryReelCard: React.FC<StoryReelCardProps> = ({
                     posterUrl={reel.thumbnailUrl}
                     title={reel.title}
                     onRetry={onVideoError}
+                    failedSource={failedSources[failedSources.length - 1] ?? reel.videoUrl}
                   />
                 ) : activeSrc ? (
                   <video
@@ -131,9 +132,13 @@ const StoryReelCard: React.FC<StoryReelCardProps> = ({
                     onPlaying={onVideoPlaying}
                     onPause={onVideoPause}
                     onLoadedData={onLoadedData}
-                    className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${
-                      isActuallyPlaying && hasDecoded ? 'opacity-100' : 'opacity-0'
-                    }`}
+                    /*
+                      Always visible. A hover preview that stays fully transparent
+                      until playback starts is invisible forever on a browser that
+                      blocks autoplay, and `poster` already covers the gap until
+                      the first frame decodes.
+                    */
+                    className="absolute inset-0 w-full h-full object-cover transition-opacity duration-300 opacity-100"
                   />
                 ) : null}
               </div>

@@ -97,6 +97,7 @@ const ReelCard: React.FC<ReelCardProps> = ({
     videoRef,
     activeSrc,
     exhausted,
+    failedSources,
     isPlaying: isActuallyPlaying,
     hasDecoded,
     togglePlay,
@@ -160,9 +161,15 @@ const ReelCard: React.FC<ReelCardProps> = ({
             onPause={onVideoPause}
             onLoadedData={onLoadedData}
             onCanPlay={onLoadedData}
-            className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-500 ease-out ${
-              isPlaying && isVideoLoaded ? 'opacity-100' : 'opacity-0 pointer-events-none'
-            }`}
+            /*
+              Always visible. This element used to be rendered fully transparent
+              until playback actually started, which meant a browser that blocks
+              autoplay left the card invisible forever — a still thumbnail that
+              read as broken, with nothing on screen to explain it. The gate also
+              bought nothing: `poster` already paints the thumbnail until the
+              first frame decodes.
+            */
+            className="absolute inset-0 w-full h-full object-cover transition-opacity duration-500 ease-out opacity-100"
           />
         ) : (
           /* Every source failed — animated poster instead of a black box. */
@@ -170,6 +177,7 @@ const ReelCard: React.FC<ReelCardProps> = ({
             posterUrl={reel.thumbnailUrl}
             title={reel.title}
             onRetry={() => onVideoError()}
+            failedSource={failedSources[failedSources.length - 1] ?? reel.videoUrl}
           />
         )}
       </div>
