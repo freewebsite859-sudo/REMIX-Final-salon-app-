@@ -17,6 +17,8 @@ import { act } from 'react';
 
 import { BookingModal } from '../src/components/BookingModal';
 import { BookingSummaryModal } from '../src/components/BookingSummaryModal';
+import { createBooking } from '../src/lib/bookingCore';
+import { createMemoryBookingStore } from '../server/bookings';
 import type { Salon, SalonService } from '../src/types';
 
 const results: { name: string; pass: boolean; detail?: string }[] = [];
@@ -263,6 +265,73 @@ function resolveContact(
     'whitespace-only details fall back rather than sending an empty contact',
     blank.name === PROFILE.name && blank.phone === PROFILE.phone,
     JSON.stringify(blank)
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 4. Round trip: the typed details must survive the WRITE and come back on
+// READ so screens 13 (Booking Success) and 15 (Appointment Detail) can show
+// them. `bookingToAppointment` used to drop booking.customer entirely.
+// ---------------------------------------------------------------------------
+{
+  const store = createMemoryBookingStore();
+  const { appointment, error } = await createBooking(store, {
+    salon: { id: salon.id, name: salon.name, address: '1 St', image: '', phone: '+91 90000 00000' },
+    services: [
+      {
+        id: svc.id,
+        name: svc.name,
+        durationMinutes: svc.duration,
+        price: svc.price,
+        unitPrice: svc.price,
+      },
+    ],
+    stylist: null,
+    customer: { name: TYPED.name, phone: TYPED.phone, email: TYPED.email },
+    date: new Date().toISOString().split('T')[0],
+    time: '4:30 PM',
+    amount: Math.round(svc.price * 0.25),
+  });
+
+  check('the booking was created', appointment !== null, error ?? '');
+  check(
+    'the persisted appointment echoes the typed name back',
+    appointment?.contact?.name === TYPED.name,
+    `contact=${JSON.stringify(appointment?.contact)}`
+  );
+  check(
+    'the persisted appointment echoes the typed phone back',
+    appointment?.contact?.phone === TYPED.phone,
+    `contact=${JSON.stringify(appointment?.contact)}`
+  );
+  check(
+    'the persisted appointment echoes the typed email back',
+    appointment?.contact?.email === TYPED.email,
+    `contact=${JSON.stringify(appointment?.contact)}`
+  );
+
+  // A booking with no customer snapshot must not gain an empty contact object.
+  const store2 = createMemoryBookingStore();
+  const noCustomer = await createBooking(store2, {
+    salon: { id: salon.id, name: salon.name, address: '1 St', image: '' },
+    services: [
+      {
+        id: svc.id,
+        name: svc.name,
+        durationMinutes: svc.duration,
+        price: svc.price,
+        unitPrice: svc.price,
+      },
+    ],
+    stylist: null,
+    date: new Date().toISOString().split('T')[0],
+    time: '6:30 PM',
+    amount: Math.round(svc.price * 0.25),
+  });
+  check(
+    'a booking with no customer snapshot gains no contact field',
+    noCustomer.appointment !== null && noCustomer.appointment.contact === undefined,
+    `contact=${JSON.stringify(noCustomer.appointment?.contact)}`
   );
 }
 

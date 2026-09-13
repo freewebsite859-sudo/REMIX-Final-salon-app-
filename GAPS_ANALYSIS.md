@@ -58,17 +58,17 @@ meant to cover — so the catalog and search logic had no coverage in practice.
 | **B9** | Select Appointment Date | Present — `BookingModal` step 3 | unchanged |
 | **B10** | Select Time Slot | Present — `BookingModal` step 3 / `ChooseProfessionalScreen` | unchanged |
 | **B11** | Customer Details Screen | **PARTIAL** — only a free-text "notes" box; no name/phone/email capture | ✅ `BookingModal` step 5, validated |
-| **B12** | Booking Review Screen | Present — `BookingSummaryModal.tsx` | now receives the customer details |
-| **B13** | Booking Success Screen | Present — `BookingConfirmationPage.tsx` | unchanged |
+| **B12** | Booking Review Screen | Present — `BookingSummaryModal.tsx` | now renders the contact it will send (BUG 7/9) |
+| **B13** | Booking Success Screen | Present — `BookingConfirmationPage.tsx` | now shows the booked contact (BUG 10) |
 | **B14** | My Appointments Screen | Present — `AppointmentsTab.tsx` | unchanged |
-| **B15** | Appointment Detail Screen | Present — `BookingDetailPage.tsx` | unchanged |
+| **B15** | Appointment Detail Screen | Present — `BookingDetailPage.tsx` | now shows the booked contact (BUG 10) |
 | **B16** | Profile / Account Screen | Present — `ProfileTab.tsx` | unchanged |
 
 **Four gaps closed: A1, B7, B8, B11.**
 
 ---
 
-## 3. Bugs found and fixed (9)
+## 3. Bugs found and fixed (10)
 
 ### BUG 1 — Catalog: demo salons leaked into live remote results (data integrity)
 
@@ -207,7 +207,7 @@ the typed details and fall back to the profile only when they are absent or whit
 unaffected); and seed the modal from the confirmed details when the customer backs out via
 "Change date/time", so editing the date no longer silently resets the contact.
 
-Covered by `test:customer-details-flow` (16 checks).
+Covered by `test:customer-details-flow` (21 checks).
 
 ### BUG 8 — Services Screen marked a service as saved at *every* salon sharing its id
 
@@ -237,7 +237,24 @@ invisible — inconsistent with the modal path fixed in BUG 7.
 **Fix:** that path now seeds `customer` from the stored profile using the same resolution
 order as `handleServerBooking`, so what the review screen displays is what gets sent. The
 catalog-rebind effect spreads `...current`, so the field survives a remote catalog refresh.
-Covered by `test:customer-details-flow` (16 checks).
+Covered by `test:customer-details-flow` (21 checks).
+
+### BUG 10 — The booked contact survived the write and was dropped on read-back
+
+Downstream of BUG 7. `buildBookingRows` persists `bookings.customer` correctly, but
+`bookingToAppointment` — the single mapper that reconstructs the `Appointment` returned to
+the client — never read it, and `Appointment` had no field to hold it. So the Step 5 contact
+reached the database and then vanished from the client record: **screen 13 (Booking Success)**
+and **screen 15 (Appointment Detail)** had no way to show who the salon would contact, which
+matters most for the book-for-someone-else case BUG 7 was about.
+
+**Fix:** added `Appointment.contact`; `bookingToAppointment` now echoes the persisted
+snapshot back (omitting the field entirely when nothing was recorded, so no empty object
+appears). Screen 13 renders a **Contact on booking** row via a new `formatBookingContact`
+helper; screen 15 renders a `#booking-detail-contact` block. The round trip is covered by
+`test:customer-details-flow` running the real `createBooking` against the in-memory store
+(21 checks) — asserting the typed name/phone/email come back, and that a booking with no
+customer snapshot gains no `contact` field.
 
 ## 4. What was added
 
@@ -342,7 +359,7 @@ return `503 {configured:false}` on this deployment (service-role key unset), and
 | Suite | Checks | Covers |
 |---|---|---|
 | `test:services-flow` (new) | 38 | catalog flattening, both new screens, splash |
-| `test:customer-details-flow` (new) | 16 | Step 5 details survive the handoff, appear on the review screen, and reach the booking payload instead of the stored profile |
+| `test:customer-details-flow` (new) | 21 | Step 5 details survive the handoff, appear on the review screen, and reach the booking payload instead of the stored profile |
 | `test:app-services-routing` (new) | 7 | the **real App shell** reaching both routes |
 | `test:account-deletion` (new) | 21 | deletion router + browser client |
 | `test:customer-routes` | +16 | the two new routes, encoding round trips |
@@ -404,6 +421,6 @@ npx tsc --noEmit                   # typecheck
 npm test                           # 37 suites
 npm run build                      # vite build + esbuild server
 npm run test:services-flow         # new screens (38 checks)
-npm run test:customer-details-flow # screen 11 -> 12 -> payload (16 checks)
+npm run test:customer-details-flow # screen 11 -> 12 -> 13/15 round trip (21 checks)
 npm run test:app-services-routing  # App-shell routing (7 checks)
 ```

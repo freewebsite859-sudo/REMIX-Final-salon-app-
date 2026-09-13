@@ -507,6 +507,19 @@ export function bookingToAppointment(input: BookingCreateRequest, booking: Booki
       : {}),
     ...(booking.discount_amount > 0 ? { discountApplied: booking.discount_amount } : {}),
     ...(booking.notes ? { notes: booking.notes } : {}),
+    // Echo the persisted Step 5 contact back so the confirmation and detail
+    // screens can show the person the salon will reach. Without this the
+    // details survived the write and were dropped on read-back.
+    ...(booking.customer &&
+    (booking.customer.name || booking.customer.phone || booking.customer.email)
+      ? {
+          contact: {
+            ...(booking.customer.name ? { name: booking.customer.name } : {}),
+            ...(booking.customer.phone ? { phone: booking.customer.phone } : {}),
+            ...(booking.customer.email ? { email: booking.customer.email } : {}),
+          },
+        }
+      : {}),
     createdAt: booking.created_at,
     salonConfirmationStatus: 'pending_owner_approval',
   };

@@ -40,6 +40,21 @@ export interface BookingConfirmationPageProps {
   className?: string;
 }
 
+/**
+ * The person the salon will reach about this booking, as recorded at Step 5.
+ * Not the account holder when someone books on another person's behalf, so it
+ * is worth echoing back on the ticket.
+ */
+function formatBookingContact(
+  contact?: { name?: string; phone?: string; email?: string }
+): string {
+  if (!contact) return '';
+  const parts = [contact.name, contact.phone, contact.email]
+    .map((v) => (typeof v === 'string' ? v.trim() : ''))
+    .filter(Boolean);
+  return parts.join(' · ');
+}
+
 function DetailRow({
   icon,
   label,
@@ -119,6 +134,7 @@ export const BookingConfirmationPage: React.FC<BookingConfirmationPageProps> = (
         : appointment.services.map((s) => s.name).join(', ');
 
   const staffLabel = appointment.stylist?.name || 'Any available professional';
+  const contactLabel = formatBookingContact(appointment.contact);
   const totalLabel = `₹${appointment.totalPrice.toLocaleString('en-IN')}`;
   const advance =
     appointment.advancePaid !== undefined
@@ -300,6 +316,9 @@ export const BookingConfirmationPage: React.FC<BookingConfirmationPageProps> = (
             label="Address"
             value={appointment.salonAddress || 'Address shared by salon'}
           />
+          {contactLabel && (
+            <DetailRow icon="call" label="Contact on booking" value={contactLabel} />
+          )}
           <DetailRow
             icon="payments"
             label="Total price"
