@@ -124,6 +124,17 @@ export interface BookingStore {
   insertBookingServices(rows: BookingServiceDbRow[]): Promise<{ ok: boolean; error?: string }>;
   deleteBooking(bookingId: string): Promise<{ ok: boolean; error?: string }>;
   /**
+   * Cancel a booking owned by `ownerUserId`. The owner match is part of the
+   * store contract, not the route, so a caller can never cancel someone
+   * else's booking by guessing an id. Returns `found: false` when no row
+   * matches BOTH the id and the owner — the route reports that as 404 rather
+   * than leaking whether the id exists.
+   */
+  cancelBooking?(
+    bookingId: string,
+    ownerUserId: string
+  ): Promise<{ ok: boolean; found?: boolean; error?: string }>;
+  /**
    * Optional occupancy check used by the payment router AND createBooking so
    * two verified deposits cannot land on one chair/time. Stores that omit it
    * skip the database lookup (in-memory holds still apply).

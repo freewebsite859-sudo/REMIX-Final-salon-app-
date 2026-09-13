@@ -104,6 +104,7 @@ import {
 } from './lib/customerRoutes';
 import { fetchUserProfile } from './lib/profileService';
 import { requestAccountDeletion } from './lib/accountDeletion';
+import { requestBookingCancellation } from './lib/bookingCancellation';
 import {
   listNotifications,
   resolveNotificationTarget,
@@ -372,6 +373,8 @@ export default function App() {
   const [showFirstLoginLocation, setShowFirstLoginLocation] = useState(false);
   const salons = catalog.salons;
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  /** Set when a cancellation was refused server-side; the booking stays active. */
+  const [cancellationError, setCancellationError] = useState<string | null>(null);
   const [savedSalonIds, setSavedSalonIds] = useState<string[]>([]);
   const [savedServices, setSavedServices] = useState<SavedServiceRef[]>([]);
   const [savedStaff, setSavedStaff] = useState<SavedStaffRef[]>([]);
@@ -1302,10 +1305,26 @@ export default function App() {
     });
   };
 
-  const handleCancelAppointment = (id: string) => {
-    setAppointments(
-      appointments.map((a) => (a.id === id ? { ...a, status: 'cancelled' } : a))
+  const handleCancelAppointment = async (id: string): Promise<boolean> => {
+    // Cancellation must be confirmed by the server before the UI changes.
+    // It used to be client-only: this flipped the row in React state and never
+    // called the API, so the salon still saw an active booking, the slot stayed
+    // occupied, and a reload restored the appointment as if nothing happened.
+    const outcome = await requestBookingCancellation(id, session?.access_token ?? null);
+
+    if (!outcome.success) {
+      console.warn(
+        `[Nexora] Cancellation not completed (${outcome.reason}): ${outcome.message}`
+      );
+      setCancellationError(outcome.message);
+      return false;
+    }
+
+    setCancellationError(null);
+    setAppointments((prev) =>
+      prev.map((a) => (a.id === id ? { ...a, status: 'cancelled' } : a))
     );
+    return true;
   };
 
   const handleRescheduleAppointment = (id: string) => {
@@ -1799,9 +1818,12 @@ export default function App() {
                     ) || null
                   }
                   onBack={() => goToCustomer(CUSTOMER_BOOKINGS, { replace: true })}
-                  onCancel={(id) => {
-                    handleCancelAppointment(id);
-                    goToCustomer(CUSTOMER_BOOKINGS, { replace: true });
+                  onCancel={async (id) => {
+                    // Only leave the detail screen once the server confirms.
+                    // Navigating on a refused cancellation stranded the user on
+                    // the list with a booking that was still active.
+                    const cancelled = await handleCancelAppointment(id);
+                    if (cancelled) goToCustomer(CUSTOMER_BOOKINGS, { replace: true });
                   }}
                   onRebook={(apt) => {
                     handleBookAgain(apt);
@@ -1819,6 +1841,7 @@ export default function App() {
                 <AppointmentsTab
                   appointments={appointments}
                   highlightedBookingId={undefined}
+                  cancellationError={cancellationError}
                   onCancelAppointment={handleCancelAppointment}
                   onRescheduleAppointment={handleRescheduleAppointment}
                   onBookAgain={handleBookAgain}

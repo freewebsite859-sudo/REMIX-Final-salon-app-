@@ -27,6 +27,12 @@ interface AppointmentsTabProps {
   /** Deep-link highlight from `/customer/booking/:bookingId`. */
   highlightedBookingId?: string;
   onCancelAppointment: (id: string) => void;
+  /**
+   * Set when the server refused a cancellation. The booking is still active,
+   * so this must be visible — silently leaving it looking cancelled is what
+   * the client-only cancellation used to do.
+   */
+  cancellationError?: string | null;
   onRescheduleAppointment: (id: string) => void;
   onBookAgain?: (appointment: Appointment) => void;
   onOpenSalonDetailsById?: (salonId: string) => void;
@@ -53,6 +59,7 @@ export const AppointmentsTab: React.FC<AppointmentsTabProps> = ({
   appointments,
   highlightedBookingId,
   onCancelAppointment,
+  cancellationError,
   onRescheduleAppointment,
   onBookAgain,
   onOpenSalonDetailsById,
@@ -171,6 +178,27 @@ export const AppointmentsTab: React.FC<AppointmentsTabProps> = ({
           </button>
         )}
       </div>
+
+      {/* Server refused a cancellation — the booking is still active. */}
+      {cancellationError && (
+        <div
+          id="my-bookings-cancellation-error"
+          role="alert"
+          className="mb-4 flex items-start gap-2.5 px-3.5 py-3 rounded-xl bg-error/8 border border-error/25"
+        >
+          <span className="material-symbols-outlined text-[18px] text-error shrink-0 mt-px">
+            error
+          </span>
+          <div className="min-w-0">
+            <p className="text-[13px] font-bold text-on-surface">
+              Cancellation did not go through
+            </p>
+            <p className="text-[12px] text-on-surface-variant mt-0.5 leading-relaxed">
+              {cancellationError}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Segment Tabs: Upcoming · Completed · Cancelled */}
       <div

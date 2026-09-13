@@ -19,7 +19,7 @@ Everything below was run against this working tree.
 | Command | Before | After |
 |---|---|---|
 | `npx tsc --noEmit` | clean | clean |
-| `npm test` | **31/35 suites** (4 failing) | **39/39 suites** |
+| `npm test` | **31/35 suites** (4 failing) | **40/40 suites** |
 | `npm run build` | ✓ | ✓ |
 
 `node_modules` is not persisted in this workspace — run
@@ -60,15 +60,15 @@ meant to cover — so the catalog and search logic had no coverage in practice.
 | **B11** | Customer Details Screen | **PARTIAL** — only a free-text "notes" box; no name/phone/email capture | ✅ `BookingModal` step 5, validated |
 | **B12** | Booking Review Screen | Present — `BookingSummaryModal.tsx` | now renders the contact it will send (BUG 7/9) |
 | **B13** | Booking Success Screen | Present — `BookingConfirmationPage.tsx` | now shows the booked contact (BUG 10) |
-| **B14** | My Appointments Screen | Present — `AppointmentsTab.tsx` | unchanged |
-| **B15** | Appointment Detail Screen | Present — `BookingDetailPage.tsx` | now shows the booked contact (BUG 10) |
+| **B14** | My Appointments Screen | Present — `AppointmentsTab.tsx` | cancellation now reaches the server (BUG 11) |
+| **B15** | Appointment Detail Screen | Present — `BookingDetailPage.tsx` | now shows the booked contact (BUG 10); cancel confirms server-side (BUG 11) |
 | **B16** | Profile / Account Screen | Present — `ProfileTab.tsx` | unchanged |
 
 **Four gaps closed: A1, B7, B8, B11.**
 
 ---
 
-## 3. Bugs found and fixed (10)
+## 3. Bugs found and fixed (11)
 
 ### BUG 1 — Catalog: demo salons leaked into live remote results (data integrity)
 
@@ -256,6 +256,47 @@ helper; screen 15 renders a `#booking-detail-contact` block. The round trip is c
 (21 checks) — asserting the typed name/phone/email come back, and that a booking with no
 customer snapshot gains no `contact` field.
 
+### BUG 11 — Cancelling a booking never reached the server
+
+**Severity: high.** `handleCancelAppointment` did this and nothing else:
+
+```ts
+setAppointments(appointments.map((a) => (a.id === id ? { ...a, status: 'cancelled' } : a)));
+```
+
+There was no cancel route anywhere — `server/bookings.ts` registered exactly one route,
+`router.post('/')`. So cancelling was a client-side illusion:
+
+- the salon still saw an **active** booking;
+- `findActiveSlot` kept counting the row as occupied, so **the slot stayed locked** and
+  nobody else could book it;
+- reloading restored the appointment as if nothing had happened;
+- `BookingDetailPage`'s `onCancel` navigated away to the list immediately, so the user got
+  no signal that anything had failed.
+
+**Fix:**
+- `BookingStore.cancelBooking(bookingId, ownerUserId)` — the owner match is part of the store
+  contract, not a route post-filter, so an id guess cannot reach another customer's row.
+  Implemented for the memory and Supabase stores (`found:false` when nothing matches BOTH id
+  and owner).
+- `POST /api/bookings/:id/cancel` — identity derived **only** from the verified access token,
+  following the account-deletion pattern. 503 `configured:false` when unconfigured (never a
+  fake success), 401 for a missing/invalid token, 501 if the store cannot cancel, 500 with
+  "still active" on a store failure, and 404 that is deliberately identical for "not yours"
+  and "does not exist" so the endpoint cannot enumerate booking ids.
+- `src/lib/bookingCancellation.ts` — mirrors `accountDeletion.ts`: never throws, refuses the
+  network with a null token, and maps 401/404/503/HTML-502/thrown-fetch/200-without-`success`
+  to distinct reasons.
+- `handleCancelAppointment` is now async and only flips local state after the server confirms;
+  the detail screen only navigates away on success, and a refusal surfaces in a
+  `role="alert"` banner on My Bookings instead of silently leaving a booking that looks
+  cancelled.
+
+Covered by `test:booking-cancellation` (28 checks), including the two that matter most: a
+different user cannot cancel someone's booking, and cancelling actually **releases the slot**
+— the concrete harm the old code caused. Verified live against the production build:
+`POST /api/bookings/bk-1/cancel` → `503 {configured:false}`.
+
 ## 4. What was added
 
 ### A1 — Splash Screen (`src/components/SplashScreen.tsx`)
@@ -359,6 +400,7 @@ return `503 {configured:false}` on this deployment (service-role key unset), and
 | Suite | Checks | Covers |
 |---|---|---|
 | `test:services-flow` (new) | 38 | catalog flattening, both new screens, splash |
+| `test:booking-cancellation` (new) | 28 | cancel router, owner scoping, slot release, browser client |
 | `test:customer-details-flow` (new) | 21 | Step 5 details survive the handoff, appear on the review screen, and reach the booking payload instead of the stored profile |
 | `test:app-services-routing` (new) | 7 | the **real App shell** reaching both routes |
 | `test:account-deletion` (new) | 21 | deletion router + browser client |
@@ -368,6 +410,8 @@ return `503 {configured:false}` on this deployment (service-role key unset), and
 `test:app-services-routing` exists because the component tests render the new
 screens in isolation and would have passed even with the `App.tsx` wiring
 broken — which is exactly what caught BUG 6.
+
+**Test coverage: 35 suites → 40 suites** (31 passing at baseline, 40 passing now).
 
 ---
 
@@ -422,5 +466,6 @@ npm test                           # 37 suites
 npm run build                      # vite build + esbuild server
 npm run test:services-flow         # new screens (38 checks)
 npm run test:customer-details-flow # screen 11 -> 12 -> 13/15 round trip (21 checks)
+npm run test:booking-cancellation  # cancel route + client (28 checks)
 npm run test:app-services-routing  # App-shell routing (7 checks)
 ```
