@@ -373,9 +373,10 @@ These are unchanged by this work and were **not** verified here:
   > only prose in `RELEASE_AUDIT.md` and this file. I copied it without
   > checking. The real defect is the missing routes above.
 - **SQL never applied** to a live database (`supabase/policies/*`).
-- **Browser bundle is still 1,245 kB** (335 kB gzip) after code-splitting —
-  down from 1,380 kB (360 kB gzip), but still above the 795 kB recorded before
-  this work. See §4.1 for what was split and what remains.
+- **Browser bundle is still 1,247.50 kB** (335.16 kB gzip) after code-splitting
+  and the BUG 7/8 fixes — down from 1,380.29 kB (360.52 kB gzip), but still
+  above the 795 kB recorded before this work. See §4.1 for what was split and
+  what remains.
 - The **Services Screen is not in the bottom nav.** It is reachable from the
   Search tab and by URL. Adding a fifth nav item is a product decision, not a
   bug, so it was left alone.
