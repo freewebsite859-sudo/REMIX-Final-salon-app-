@@ -185,9 +185,14 @@ in-repo catalog when the remote root is empty or unreachable. The fallback must 
 mix with remote rows — `test:catalog` covers this — but the real column names still
 need confirming against the canonical schema.
 
-**B7. Browser bundle is 1,379 kB (360 kB gzip).** Lazy-load AI, gallery, profile,
-booking and category surfaces. Grew from the 795 kB previously recorded here,
-partly due to the new Services / Service Detail / Splash screens.
+**B7. Browser bundle is 1,245 kB (335 kB gzip).** Partially split on
+2026-09-13: `PaymentOverviewDashboard` (and with it the 64 kB `d3-vendor`) plus
+five route-gated screens (`MembershipPage`, `SettingsPage`, `ReferralPage`,
+`ReviewsPage`, `NotificationsPage`) are now `React.lazy`, taking the main chunk
+from 1,380 kB / 360 kB gzip to 1,245 kB / 335 kB gzip and removing d3 from the
+preload list. The bottom-nav tabs stay eager on purpose. Still above the 795 kB
+recorded before this work — the remaining weight is the catalog data
+(`categoryTemplates.ts`, ~144 kB source) and the eager tab surfaces.
 
 **B8. No end-to-end run against a real backend.** Every suite here stubs Supabase.
 Signup, email confirmation, login, refresh, direct protected URL, booking, payment

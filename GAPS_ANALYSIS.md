@@ -219,6 +219,32 @@ updated to supply a customer (as a signed-in user would), preserving its actual
 intent — that the draft carries every selected service. Eight new checks cover
 the gate itself.
 
+### 4.1 Code-splitting the critical path
+
+The bundle had grown to 1,380 kB (360 kB gzip), partly from the new screens.
+Two changes moved weight off the first paint — both verified by re-running
+`npm run build` and reading the emitted chunk list:
+
+| | Before | After |
+|---|---|---|
+| Main `index` chunk | 1,380.29 kB (360.52 kB gzip) | **1,245.45 kB (334.71 kB gzip)** |
+| `d3-vendor` preloaded on first paint | yes (64.04 kB) | **no** |
+
+- **`PaymentOverviewDashboard` is now `React.lazy`.** It pulls in d3 (~64 kB)
+  purely to draw two charts that sit well below the fold on Profile. It now
+  splits into its own 24.28 kB chunk and `d3-vendor` is gone from
+  `index.html`'s preload list, so no other screen pays for it.
+- **Five route-gated screens are `React.lazy`:** `MembershipPage`,
+  `SettingsPage`, `ReferralPage`, `ReviewsPage`, `NotificationsPage`. None
+  render on first paint — each belongs to one `/customer/*` route the user
+  navigates to — so they split into 11–33 kB chunks behind a single Suspense
+  boundary that keeps the header and bottom nav interactive while a chunk is in
+  flight.
+
+Home, Search, Bookings, Rewards and Profile stay eager: they are the bottom-nav
+tabs, so splitting them would trade a measurable win for a visible delay on the
+app's primary surfaces.
+
 ### B16 — Account deletion (`server/userAccount.ts`, `src/lib/accountDeletion.ts`)
 
 Profile / Account (screen 16) offered "Delete Account" with a type-`DELETE`
@@ -300,8 +326,9 @@ These are unchanged by this work and were **not** verified here:
   > only prose in `RELEASE_AUDIT.md` and this file. I copied it without
   > checking. The real defect is the missing routes above.
 - **SQL never applied** to a live database (`supabase/policies/*`).
-- **Browser bundle is 1,379 kB** (360 kB gzip) — larger than the 795 kB
-  previously recorded, partly because of the new screens. Worth code-splitting.
+- **Browser bundle is still 1,245 kB** (335 kB gzip) after code-splitting —
+  down from 1,380 kB (360 kB gzip), but still above the 795 kB recorded before
+  this work. See §4.1 for what was split and what remains.
 - The **Services Screen is not in the bottom nav.** It is reachable from the
   Search tab and by URL. Adding a fifth nav item is a product decision, not a
   bug, so it was left alone.

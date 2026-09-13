@@ -1,6 +1,13 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { Suspense, lazy, useState, useEffect, useRef, useMemo } from 'react';
 import { UserProfile, Appointment, SavedAddress } from '../types';
-import { PaymentOverviewDashboard } from './PaymentOverviewDashboard';
+/**
+ * The spending dashboard pulls in d3 (~64 kB) purely to draw two charts that
+ * sit well below the fold on the Profile screen. Loading it lazily keeps that
+ * weight off the critical path for every other screen in the app.
+ */
+const PaymentOverviewDashboard = lazy(() =>
+  import('./PaymentOverviewDashboard').then((m) => ({ default: m.PaymentOverviewDashboard }))
+);
 import { PaymentHistorySection } from './PaymentHistorySection';
 import { ProfileMenu } from './ProfileMenu';
 import { ProfileLegalModal, type LegalDocument } from './ProfileLegalModal';
@@ -1618,12 +1625,25 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({
       {/* 4. PAYMENT OVERVIEW & SPENDING TRENDS (D3.JS LIVE ANALYTICS)              */}
       {/* ========================================================================= */}
       <div id="section-payment-overview" className="mb-4">
-        <PaymentOverviewDashboard
-          appointments={appointments}
-          userName={user.name}
-          onNavigateToBooking={onNavigateToBooking}
-          onViewAppointments={onViewAppointments}
-        />
+        <Suspense
+          fallback={
+            <div
+              id="payment-overview-loading"
+              role="status"
+              aria-live="polite"
+              className="rounded-2xl border border-outline-variant/50 bg-surface-container-low p-4 text-[12px] text-on-surface-variant"
+            >
+              Loading your spending overview…
+            </div>
+          }
+        >
+          <PaymentOverviewDashboard
+            appointments={appointments}
+            userName={user.name}
+            onNavigateToBooking={onNavigateToBooking}
+            onViewAppointments={onViewAppointments}
+          />
+        </Suspense>
         <div className="mt-4">
           <PaymentHistorySection
             user={user}

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { ActiveTab, Salon, SalonService, Stylist, Appointment, UserProfile, SavedServiceRef, SavedStaffRef, SavedAddress } from './types';
 import { useCatalog } from './hooks/useCatalog';
 import { Header } from './components/Header';
@@ -9,11 +9,27 @@ import { AppointmentsTab } from './components/AppointmentsTab';
 import { BookingDetailPage } from './components/BookingDetailPage';
 import { SavedTab } from './components/SavedTab';
 import { RewardsTab } from './components/RewardsTab';
-import { MembershipPage } from './components/MembershipPage';
-import { SettingsPage } from './components/SettingsPage';
-import { ReferralPage } from './components/ReferralPage';
-import { ReviewsPage } from './components/ReviewsPage';
-import { NotificationsPage } from './components/NotificationsPage';
+/**
+ * Secondary, route-gated screens. None of these render on first paint — each
+ * belongs to a single `/customer/*` route the user has to navigate to — so
+ * loading them on demand keeps their weight (and their dependency tails) off
+ * the critical path for Home/Search/Bookings.
+ */
+const MembershipPage = lazy(() =>
+  import('./components/MembershipPage').then((m) => ({ default: m.MembershipPage }))
+);
+const SettingsPage = lazy(() =>
+  import('./components/SettingsPage').then((m) => ({ default: m.SettingsPage }))
+);
+const ReferralPage = lazy(() =>
+  import('./components/ReferralPage').then((m) => ({ default: m.ReferralPage }))
+);
+const ReviewsPage = lazy(() =>
+  import('./components/ReviewsPage').then((m) => ({ default: m.ReviewsPage }))
+);
+const NotificationsPage = lazy(() =>
+  import('./components/NotificationsPage').then((m) => ({ default: m.NotificationsPage }))
+);
 import { ProfileTab } from './components/ProfileTab';
 import { LocationModal } from './components/LocationModal';
 import { FirstLoginLocationScreen } from './components/FirstLoginLocationScreen';
@@ -1536,6 +1552,24 @@ export default function App() {
 
           {/* Main Content Area — driven by /customer/* routes via activeTab */}
           <main className="pt-16 min-h-screen flex-1 flex flex-col">
+            {/*
+              One boundary for the lazily-loaded secondary screens. The fallback
+              is deliberately minimal: it only shows while a route chunk is in
+              flight on first navigation, and it keeps the header and bottom nav
+              (rendered outside this boundary) fully interactive meanwhile.
+            */}
+            <Suspense
+              fallback={
+                <div
+                  id="route-chunk-loading"
+                  role="status"
+                  aria-live="polite"
+                  className="flex-1 flex items-center justify-center py-16"
+                >
+                  <span className="text-[13px] text-on-surface-variant">Loading…</span>
+                </div>
+              }
+            >
             {(activeTab === 'home' ||
               customerRoute.kind === 'salon' ||
               customerRoute.kind === 'book') &&
@@ -1872,6 +1906,7 @@ export default function App() {
                   onDeleteAccount={handleDeleteAccount}
                 />
               )}
+            </Suspense>
           </main>
         </>
       )}
