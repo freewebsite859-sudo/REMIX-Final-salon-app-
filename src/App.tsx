@@ -596,6 +596,9 @@ export default function App() {
               setSelectedServiceForBooking(null);
               setSelectedServicesForBooking(null);
               setSelectedStylistForBooking(null);
+              // Same rule as handleOpenBooking: a deep link into a fresh
+              // booking must not inherit the previous booking's contact.
+              setBookingCustomerDetails(null);
               setIsBookingModalOpen(true);
             }
           }
@@ -1218,6 +1221,11 @@ export default function App() {
     setSelectedServiceForBooking(service || null);
     setSelectedServicesForBooking(services || (service ? [service] : null));
     setSelectedStylistForBooking(stylist || null);
+    // A fresh booking always starts from the signed-in profile. This override
+    // only exists to survive the review screen's "Change date/time" re-entry;
+    // leaving it set let one booking's contact prefill the NEXT, unrelated
+    // booking — and since the fields validate, it could be submitted unnoticed.
+    setBookingCustomerDetails(null);
     setIsBookingModalOpen(true);
     goToCustomer(bookPath);
   };

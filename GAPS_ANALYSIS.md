@@ -19,7 +19,7 @@ Everything below was run against this working tree.
 | Command | Before | After |
 |---|---|---|
 | `npx tsc --noEmit` | clean | clean |
-| `npm test` | **31/35 suites** (4 failing) | **40/40 suites** |
+| `npm test` | **31/35 suites** (4 failing) | **41/41 suites** |
 | `npm run build` | ✓ | ✓ |
 
 `node_modules` is not persisted in this workspace — run
@@ -68,7 +68,7 @@ meant to cover — so the catalog and search logic had no coverage in practice.
 
 ---
 
-## 3. Bugs found and fixed (14)
+## 3. Bugs found and fixed (15)
 
 ### BUG 1 — Catalog: demo salons leaked into live remote results (data integrity)
 
@@ -365,6 +365,33 @@ All now fall back to a sized icon placeholder. The remaining unguarded `<img>` t
 here, and left deliberately. `ProfileTab`'s avatar picker is safe: its `url` values are
 hardcoded non-empty Unsplash constants, verified.
 
+### BUG 15 — One booking's contact leaked into the next booking
+
+Introduced by my own BUG 7 fix. `bookingCustomerDetails` exists for exactly one purpose: to
+survive the review screen's **"Change date/time"** re-entry so editing the date does not
+reset the contact. But nothing ever cleared it — the state had only three occurrences in the
+whole file: declaration, prefill, and the one `set` in `onChangeDateTime`.
+
+**Symptom:** enter a contact for one appointment, take "Change date/time", then abandon that
+booking. Every *subsequent* booking prefilled the previous appointment's name and phone
+instead of the signed-in profile. Because those values validate, the booking could be
+submitted unnoticed — sending the salon the wrong person's phone number.
+
+**Fix:** cleared at both entry points that open the booking modal —
+`handleOpenBooking` and the `/customer/book/:salonId` deep-link handler in `syncFromLocation`.
+The deep-link path was easy to miss: it opens the modal *without* going through
+`handleOpenBooking`, so fixing only the handler would have left the leak reachable by URL.
+
+**Note on the test.** My first regression test **passed against the buggy code**. It clicked
+"Back" to dismiss the review screen, which never sets the override, so it never exercised the
+leak. It only became a real test once it clicked `#change-datetime-btn` — the one code path
+that sets the state. Verified: the corrected test **fails** against the old code
+(`name="Grandma Sharma"` leaking into booking #2) and passes after the fix.
+
+Covered by `test:booking-contact-leak` (10 checks), which drives the real `App` shell with a
+real demo session, because the defect lives in `App.tsx` state management rather than in any
+single component.
+
 ## 4. What was added
 
 ### A1 — Splash Screen (`src/components/SplashScreen.tsx`)
@@ -468,6 +495,7 @@ return `503 {configured:false}` on this deployment (service-role key unset), and
 | Suite | Checks | Covers |
 |---|---|---|
 | `test:services-flow` (new) | 44 | catalog flattening, both new screens, splash incl. crossfade |
+| `test:booking-contact-leak` (new) | 10 | a booking's contact cannot leak into the next booking |
 | `test:booking-cancellation` (new) | 28 | cancel router, owner scoping, slot release, browser client |
 | `test:customer-details-flow` (new) | 23 | Step 5 details survive the handoff, appear on the review screen, and reach the booking payload instead of the stored profile |
 | `test:app-services-routing` (new) | 13 | the **real App shell** reaching both routes via both spellings |
@@ -479,7 +507,7 @@ return `503 {configured:false}` on this deployment (service-role key unset), and
 screens in isolation and would have passed even with the `App.tsx` wiring
 broken — which is exactly what caught BUG 6.
 
-**Test coverage: 35 suites → 40 suites** (31 passing at baseline, 40 passing now).
+**Test coverage: 35 suites → 41 suites** (31 passing at baseline, 41 passing now).
 
 ---
 
@@ -535,5 +563,6 @@ npm run build                      # vite build + esbuild server
 npm run test:services-flow         # new screens (38 checks)
 npm run test:customer-details-flow # screen 11 -> 12 -> 13/15 round trip (23 checks)
 npm run test:booking-cancellation  # cancel route + client (28 checks)
+npm run test:booking-contact-leak  # contact cannot leak across bookings (10 checks)
 npm run test:app-services-routing  # App-shell routing (7 checks)
 ```

@@ -54,7 +54,8 @@
     "test:app-services-routing": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/appServicesRouting.test.tsx",
     "test:account-deletion": "tsx test/accountDeletion.test.mts",
     "test:customer-details-flow": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/customerDetailsFlow.test.tsx",
-    "test:booking-cancellation": "tsx --import ./test/asset-loader-register.mjs test/bookingCancellation.test.mts"
+    "test:booking-cancellation": "tsx --import ./test/asset-loader-register.mjs test/bookingCancellation.test.mts",
+    "test:booking-contact-leak": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs --import ./test/force-demo-auth.mjs test/bookingContactLeak.test.tsx"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",
