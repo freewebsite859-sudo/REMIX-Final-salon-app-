@@ -149,10 +149,23 @@ still answers 402.
 than pretending to delete. It needs a trusted service_role Edge Function and a
 `POST /api/user/delete` route that forwards the user's JWT. Compliance blocker.
 
-**B5. Invalid Gemini model names.**
-`server.ts` requests `gemini-3.6-flash` (lines 114, 164) and `gemini-3.7-flash`
-(lines 289, 381). These model ids do not exist, so every AI endpoint fails. Replace
-with a supported model and make it configurable via `GEMINI_MODEL`.
+**B5. Four client-called API routes do not exist.**
+Verified against a running `npm run dev` server on 2026-09-13 — all return
+**HTTP 404**: `/api/generate-bio`, `/api/generate-promo-image`,
+`/api/youtube/fetch-videos`, `/api/fetch-youtube-meta`. `/api/health` returns
+200, so the shared API surface from `server/attachApi.ts` is mounted; these four
+were simply never implemented on either side of it. Callers degrade rather than
+crash (`AIBioModal` uses a local fallback generator, `youtubeMetadata` returns
+its fallback on `!response.ok`, `OffersManagement` and `SocialConnectivityStep`
+catch and surface a message), so the impact is lost functionality, not a blank
+screen. All four sit in salon-owner surfaces, outside the 16 customer screens.
+
+> **Correction (2026-09-13).** This blocker previously read "Invalid Gemini
+> model names — `server.ts` requests `gemini-3.6-flash` (lines 114, 164) and
+> `gemini-3.7-flash` (lines 289, 381)". That was wrong against this tree:
+> `server.ts` is 39 lines long and contains no model reference, and a repo-wide
+> grep for `gemini` matches only prose in this file. The model ids may have
+> existed in an earlier revision; they do not exist now.
 
 ### HIGH
 

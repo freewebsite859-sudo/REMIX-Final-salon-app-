@@ -247,8 +247,24 @@ These are unchanged by this work and were **not** verified here:
 - **Account deletion** (`handleDeleteAccount` in `App.tsx`) still deliberately
   returns `false` rather than pretending. Needs a trusted service_role endpoint.
   Compliance blocker.
-- **Invalid Gemini model names** in `server.ts` (`gemini-3.6-flash`,
-  `gemini-3.7-flash`) — every AI endpoint will fail until these are replaced.
+- **Four client-called API endpoints do not exist.** Verified against a running
+  `npm run dev` server on 2026-09-13 — all return **HTTP 404**:
+  `/api/generate-bio`, `/api/generate-promo-image`, `/api/youtube/fetch-videos`,
+  `/api/fetch-youtube-meta`. (`/api/health` returns 200, so the API surface
+  itself is mounted.) Every caller degrades rather than crashing —
+  `AIBioModal` falls back to a local generator, `youtubeMetadata` returns its
+  fallback on `!response.ok`, `OffersManagement` and `SocialConnectivityStep`
+  catch and show a message — so this is degraded functionality, not a blank
+  screen. All four live in **salon-owner** surfaces, outside the 16 customer
+  screens in scope here.
+
+  > **Correction.** The previous revision of this section repeated
+  > `RELEASE_AUDIT.md`'s claim that `server.ts` requests invalid Gemini model
+  > names (`gemini-3.6-flash`, `gemini-3.7-flash`) at "lines 114, 164, 289,
+  > 381". **That claim is false against this tree.** `server.ts` is 39 lines
+  > long and contains no model reference; a repo-wide grep for `gemini` matches
+  > only prose in `RELEASE_AUDIT.md` and this file. I copied it without
+  > checking. The real defect is the missing routes above.
 - **SQL never applied** to a live database (`supabase/policies/*`).
 - **Browser bundle is 1,379 kB** (360 kB gzip) — larger than the 795 kB
   previously recorded, partly because of the new screens. Worth code-splitting.
