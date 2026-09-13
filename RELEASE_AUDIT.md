@@ -29,15 +29,28 @@ Commands and results, run against this working tree:
 |---|---|
 | `npm run lint` (`tsc --noEmit`) | clean |
 | `npm run build` | ✓ `dist/` + `dist/server.cjs` |
-| `npm run test:referral` | 64/64 |
-| `npm run test:notifications` | 51/51 |
-| `npm run test:profile` | 130/130 |
+| `npm test` (all 37 suites) | **37/37** |
+| `npm run test:referral` | 37/37 |
+| `npm run test:notifications` | 52/52 |
+| `npm run test:profile` | 110/110 |
 | `npm run test:nexora` | 22/22 |
-| `npm run test:catalog` | 7/7 |
+| `npm run test:catalog` | 9/9 |
 | `npm run test:smoke` | PASS |
+| `npm run test:services-flow` | 36/36 |
+| `npm run test:app-services-routing` | 7/7 |
+
+> **Correction (2026-09-13).** The previous revision of this table was wrong
+> against the tree it claimed to describe. It listed `test:catalog 7/7` and
+> `test:smoke PASS`, but on re-run `test:catalog` and `test:salon-search` died
+> at module load (`ERR_UNKNOWN_FILE_EXTENSION`, so both were silently not
+> running), `test:search-location` was 99/100, and `test:smoke` failed. The
+> suite was 31/35, not green. See `GAPS_ANALYSIS.md` §1 and §3 for root causes
+> and fixes. Numbers above are from a fresh run on 2026-09-13.
 
 `node_modules` is not persisted between sessions in this workspace — run
-`npm ci --no-audit --no-fund` before any of the above.
+`npm install --no-audit --no-fund` before any of the above. (The repo's
+committed lockfile is `bun.lock`; `npm ci` requires a `package-lock.json` that
+is not tracked.)
 
 ---
 
@@ -149,8 +162,9 @@ in-repo catalog when the remote root is empty or unreachable. The fallback must 
 mix with remote rows — `test:catalog` covers this — but the real column names still
 need confirming against the canonical schema.
 
-**B7. Browser bundle is 795 kB (195 kB gzip).** Lazy-load AI, gallery, profile,
-booking and category surfaces.
+**B7. Browser bundle is 1,379 kB (360 kB gzip).** Lazy-load AI, gallery, profile,
+booking and category surfaces. Grew from the 795 kB previously recorded here,
+partly due to the new Services / Service Detail / Splash screens.
 
 **B8. No end-to-end run against a real backend.** Every suite here stubs Supabase.
 Signup, email confirmation, login, refresh, direct protected URL, booking, payment

@@ -23,6 +23,7 @@ import { Salon, SalonVideoReel, SalonService, Stylist } from '../types';
 import { ALL_SALON_VIDEO_REELS, getReelsForSalon } from '../data/salonVideoReels';
 import { SalonVideoReelsModal } from './SalonVideoReelsModal';
 import { getTemplateSalons } from '../data/templateSalons';
+import { safePause, safePlay, safeSetMuted } from '../lib/mediaPlayback';
 
 export interface VideoReelsSectionProps {
   /** Salon list retrieved from the catalog service */
@@ -94,31 +95,18 @@ const ReelCard: React.FC<ReelCardProps> = ({
     const video = videoRef.current;
     if (!video) return;
 
-    video.muted = isMuted;
+    safeSetMuted(video, isMuted);
 
     let isSubscribed = true;
     if (isPlaying) {
-      const playPromise = video.play();
-      if (playPromise !== undefined) {
-        playPromise
-          .then(() => {
-            if (isSubscribed) {
-              setIsVideoLoaded(true);
-            }
-          })
-          .catch((err: unknown) => {
-            // Handle browser gesture policy or rapid switch aborts gracefully
-            if (err instanceof Error && err.name === 'AbortError') {
-              return;
-            }
-            if (!video.muted) {
-              video.muted = true;
-              video.play().catch(() => {});
-            }
-          });
-      }
+      // `safePlay` swallows both synchronous throws and rejections, and retries
+      // once muted. A rejected autoplay attempt must never escape the effect —
+      // an error thrown from here unmounts the whole app.
+      safePlay(video, (played) => {
+        if (played && isSubscribed) setIsVideoLoaded(true);
+      });
     } else {
-      video.pause();
+      safePause(video);
     }
 
     return () => {

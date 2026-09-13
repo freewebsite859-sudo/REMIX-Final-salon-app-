@@ -20,6 +20,7 @@ import {
   RotateCcw
 } from 'lucide-react';
 import { Salon, SalonVideoReel, SalonService } from '../types';
+import { safePause, safePlay, safeSeek, safeSetMuted } from '../lib/mediaPlayback';
 
 interface SalonVideoReelsModalProps {
   isOpen: boolean;
@@ -131,19 +132,21 @@ export const SalonVideoReelsModal: React.FC<SalonVideoReelsModalProps> = ({
   }, [currentIndex]);
 
   const togglePlay = () => {
-    if (!videoRef.current) return;
+    const video = videoRef.current;
+    if (!video) return;
     if (isPlaying) {
-      videoRef.current.pause();
+      safePause(video);
       setIsPlaying(false);
     } else {
-      videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+      safePlay(video, (played) => setIsPlaying(played));
     }
   };
 
   const toggleMute = () => {
-    if (!videoRef.current) return;
+    const video = videoRef.current;
+    if (!video) return;
     const nextMuted = !isMuted;
-    videoRef.current.muted = nextMuted;
+    safeSetMuted(video, nextMuted);
     setIsMuted(nextMuted);
   };
 
@@ -226,21 +229,27 @@ export const SalonVideoReelsModal: React.FC<SalonVideoReelsModalProps> = ({
 
   // Update video element on reel switch
   useEffect(() => {
-    if (videoRef.current) {
-      videoRef.current.currentTime = 0;
-      videoRef.current.muted = isMuted;
-      videoRef.current
-        .play()
-        .then(() => setIsPlaying(true))
-        .catch(() => {
-          // If browser prevents autoplay with sound, fall back to muted autoplay
-          if (videoRef.current) {
-            videoRef.current.muted = true;
-            setIsMuted(true);
-            videoRef.current.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
-          }
-        });
-    }
+    const video = videoRef.current;
+    if (!video) return;
+
+    safeSeek(video, 0);
+    safeSetMuted(video, isMuted);
+
+    let isSubscribed = true;
+    // safePlay retries once muted when autoplay with sound is blocked, then
+    // reports the final outcome. Any throw here would otherwise escape the
+    // effect and unmount the modal (and the app tree above it).
+    safePlay(video, (played) => {
+      if (!isSubscribed) return;
+      setIsPlaying(played);
+      // A blocked autoplay means the retry ran muted — mirror that in state so
+      // the sound icon matches what the user actually hears.
+      if (played && video.muted) setIsMuted(true);
+    });
+
+    return () => {
+      isSubscribed = false;
+    };
   }, [currentIndex, isMuted]);
 
   if (!isOpen || !activeReel) return null;

@@ -36,6 +36,8 @@ export const CUSTOMER_HOME = '/customer/home';
 export const CUSTOMER_LOGIN = '/customer/login';
 export const CUSTOMER_SIGNUP = '/customer/signup';
 export const CUSTOMER_SEARCH = '/customer/search';
+/** Service catalog browser: `/customer/services` (optionally `?q=` / `?category=`). */
+export const CUSTOMER_SERVICES = '/customer/services';
 export const CUSTOMER_BOOKINGS = '/customer/bookings';
 export const CUSTOMER_REWARDS = '/customer/rewards';
 export const CUSTOMER_MEMBERSHIP = '/customer/membership';
@@ -52,6 +54,8 @@ export const CUSTOMER_SALON_PREFIX = '/customer/salon/';
 export const CUSTOMER_BOOK_PREFIX = '/customer/book/';
 /** Prefix used for a single booking detail: `/customer/booking/:bookingId`. */
 export const CUSTOMER_BOOKING_PREFIX = '/customer/booking/';
+/** Prefix used for a single service detail: `/customer/service/:serviceId`. */
+export const CUSTOMER_SERVICE_PREFIX = '/customer/service/';
 
 /** Session key for the post-login return path (e.g. a book attempt while logged out). */
 export const CUSTOMER_RETURN_PATH_KEY = 'nexora-customer-return-path';
@@ -66,6 +70,8 @@ export type CustomerRouteKind =
   | 'signup'
   | 'home'
   | 'search'
+  | 'services'
+  | 'service'
   | 'salon'
   | 'book'
   | 'bookings'
@@ -89,6 +95,10 @@ export interface CustomerRoute {
   salonId?: string;
   /** Present for `/customer/booking/:bookingId`. */
   bookingId?: string;
+  /** Present for `/customer/service/:serviceId`. */
+  serviceId?: string;
+  /** Present for `/customer/services?category=`. */
+  category?: string;
   /** Optional free-text query (`?q=` on search). */
   query?: string;
 }
@@ -177,6 +187,26 @@ export function customerBookingPath(bookingId: string): string {
   return `${CUSTOMER_BOOKING_PREFIX}${encodeURIComponent(bookingId)}`;
 }
 
+/**
+ * Build the service-detail path.
+ *
+ * Service ids are only unique *within* a salon in this catalog, so the path
+ * carries the owning salon id too. Both are optional-safe: a service that is
+ * somehow shared still resolves by `serviceId` alone.
+ */
+export function customerServicePath(serviceId: string, salonId?: string): string {
+  const base = `${CUSTOMER_SERVICE_PREFIX}${encodeURIComponent(serviceId)}`;
+  return salonId ? `${base}?salon=${encodeURIComponent(salonId)}` : base;
+}
+
+export function customerServicesPath(options: { query?: string; category?: string } = {}): string {
+  const params = new URLSearchParams();
+  if (options.query && options.query.trim()) params.set('q', options.query.trim());
+  if (options.category && options.category.trim()) params.set('category', options.category.trim());
+  const qs = params.toString();
+  return qs ? `${CUSTOMER_SERVICES}?${qs}` : CUSTOMER_SERVICES;
+}
+
 export function customerSearchPath(query?: string): string {
   if (!query || !query.trim()) return CUSTOMER_SEARCH;
   return `${CUSTOMER_SEARCH}?q=${encodeURIComponent(query.trim())}`;
@@ -194,9 +224,22 @@ export function parseCustomerRoute(
   path: string = currentPathname(),
   search: string = currentSearch()
 ): CustomerRoute {
-  const normalized = path.replace(/\/+$/, '') || '/';
+  // Tolerate being handed a full URL ("path?query") as well as a bare pathname.
+  // Callers build paths with `customerServicePath`/`customerServicesPath`, which
+  // append `?salon=`/`?q=`, and re-parsing that output must not treat the query
+  // string as part of the last path segment.
+  let pathname = path;
+  let searchPart = search;
+  const qIndex = path.indexOf('?');
+  if (qIndex >= 0) {
+    pathname = path.slice(0, qIndex);
+    // An explicit `search` argument still wins over an inline query string.
+    if (!searchPart) searchPart = path.slice(qIndex);
+  }
+
+  const normalized = pathname.replace(/\/+$/, '') || '/';
   const params = new URLSearchParams(
-    search.startsWith('?') ? search.slice(1) : search
+    searchPart.startsWith('?') ? searchPart.slice(1) : searchPart
   );
   const q = params.get('q') || undefined;
 
@@ -214,6 +257,15 @@ export function parseCustomerRoute(
   }
   if (normalized === CUSTOMER_SEARCH) {
     return { kind: 'search', path: normalized, query: q };
+  }
+  if (normalized === CUSTOMER_SERVICES) {
+    return {
+      kind: 'services',
+      path: normalized,
+      query: q,
+      // `category` narrows the catalog browser to one treatment group.
+      category: params.get('category') || undefined,
+    };
   }
   if (normalized === CUSTOMER_BOOKINGS) {
     return { kind: 'bookings', path: normalized };
@@ -241,6 +293,21 @@ export function parseCustomerRoute(
   }
   if (normalized === CUSTOMER_NOTIFICATIONS) {
     return { kind: 'notifications', path: normalized };
+  }
+
+  if (normalized.startsWith(CUSTOMER_SERVICE_PREFIX)) {
+    const serviceId = safeDecode(
+      normalized.slice(CUSTOMER_SERVICE_PREFIX.length).split('/')[0] || ''
+    );
+    if (serviceId) {
+      return {
+        kind: 'service',
+        path: normalized,
+        serviceId,
+        // The owning salon disambiguates ids that repeat across salons.
+        salonId: params.get('salon') || undefined,
+      };
+    }
   }
 
   if (normalized.startsWith(CUSTOMER_SALON_PREFIX)) {
@@ -280,6 +347,8 @@ export function isProtectedCustomerRoute(route: CustomerRoute = parseCustomerRou
 export function customerRouteToTab(route: CustomerRoute): ActiveTab {
   switch (route.kind) {
     case 'search':
+    case 'services':
+    case 'service':
       return 'search';
     case 'bookings':
     case 'booking':
@@ -524,6 +593,8 @@ export const CUSTOMER_ROUTE_CATALOG: readonly string[] = [
   CUSTOMER_SIGNUP,
   CUSTOMER_HOME,
   CUSTOMER_SEARCH,
+  CUSTOMER_SERVICES,
+  `${CUSTOMER_SERVICE_PREFIX}:serviceId`,
   `${CUSTOMER_SALON_PREFIX}:salonSlug`,
   `${CUSTOMER_BOOK_PREFIX}:salonId`,
   CUSTOMER_BOOKINGS,

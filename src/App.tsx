@@ -23,6 +23,9 @@ import { NotificationsModal } from './components/NotificationsModal';
 import { ChooseProfessionalScreen } from './components/ChooseProfessionalScreen';
 import { BookingSummaryModal, type BookingPaymentRequest } from './components/BookingSummaryModal';
 import { AuthPage } from './components/auth/AuthPage';
+import { SplashScreen } from './components/SplashScreen';
+import { ServicesScreen } from './components/ServicesScreen';
+import { ServiceDetailScreen } from './components/ServiceDetailScreen';
 import { PasswordUpdatePage } from './components/auth/PasswordUpdatePage';
 import { isSupabaseConfigured, getSupabaseConfigStatus } from './lib/supabase';
 import { useAuth } from './providers/AuthProvider';
@@ -60,6 +63,7 @@ import {
   CUSTOMER_REVIEWS,
   CUSTOMER_REWARDS,
   CUSTOMER_SEARCH,
+  CUSTOMER_SERVICES,
   CUSTOMER_SETTINGS,
   CUSTOMER_SIGNUP,
   canonicalizeCustomerPath,
@@ -68,6 +72,8 @@ import {
   customerRouteToTab,
   customerSalonPath,
   customerSearchPath,
+  customerServicePath,
+  customerServicesPath,
   isCustomerPath,
   isProtectedCustomerRoute,
   navigateCustomer,
@@ -1333,11 +1339,22 @@ export default function App() {
   // Session must survive page refresh - we keep loading until initial session check completes
   if (isSupabaseConfigured && (isAuthLoading || isRoleLoading)) {
     return (
-      <main className="min-h-screen flex items-center justify-center bg-surface-off-white text-on-surface">
-        <p className="text-sm text-on-surface-variant" role="status">Restoring your secure session…</p>
-      </main>
+      <SplashScreen
+        status={
+          isRoleLoading
+            ? 'Checking your account type…'
+            : 'Restoring your secure session…'
+        }
+      />
     );
   }
+
+  // Splash Screen (A1): shown only while there is genuinely nothing to render —
+  // the session restore. The catalog is deliberately NOT a blocker: `useCatalog`
+  // seeds `DEMO_SALONS` synchronously and swaps in remote rows when they
+  // arrive, so gating on `catalog.isLoading` would leave a customer staring at
+  // the splash for the whole round-trip, or indefinitely if Supabase is slow or
+  // unreachable.
 
   if (showAuthScreen) {
     if (currentPath() === '/auth/reset') {
@@ -1498,6 +1515,8 @@ export default function App() {
               customerRoute.kind === 'salon' ||
               customerRoute.kind === 'book') &&
               activeTab !== 'search' &&
+              customerRoute.kind !== 'services' &&
+              customerRoute.kind !== 'service' &&
               customerRoute.kind !== 'membership' &&
               customerRoute.kind !== 'notifications' && (
               <HomeTab
@@ -1546,7 +1565,10 @@ export default function App() {
               />
             )}
 
-            {activeTab === 'search' && customerRoute.kind !== 'membership' && (
+            {activeTab === 'search' &&
+              customerRoute.kind !== 'membership' &&
+              customerRoute.kind !== 'services' &&
+              customerRoute.kind !== 'service' && (
               <SearchTab
                 user={user}
                 salons={salons}
@@ -1573,8 +1595,99 @@ export default function App() {
                 onBookSalon={handleOpenBooking}
                 onToggleSaveSalon={handleToggleSaveSalon}
                 onOpenLocation={() => setIsLocationModalOpen(true)}
+                onOpenServices={() => goToCustomer(customerServicesPath())}
               />
             )}
+
+            {/* Services Screen (B7) — /customer/services */}
+            {customerRoute.kind === 'services' && (
+              <ServicesScreen
+                salons={salons}
+                initialQuery={customerRoute.query}
+                initialCategory={customerRoute.category}
+                savedServiceIds={savedServices.map((s) => s.serviceId)}
+                onToggleSaveService={(salonId, service) =>
+                  handleToggleSaveService(salonId, service.id)
+                }
+                onOpenService={(entry) =>
+                  goToCustomer(customerServicePath(entry.service.id, entry.salon.id))
+                }
+                onBookService={(salon, service) => handleOpenBooking(salon, service)}
+                onBack={() => goToCustomer(CUSTOMER_SEARCH, { replace: true })}
+              />
+            )}
+
+            {/* Service Detail Screen (B8) — /customer/service/:serviceId */}
+            {customerRoute.kind === 'service' &&
+              (() => {
+                // The `?salon=` hint disambiguates ids that repeat across salons;
+                // without it we fall back to the first salon offering the service.
+                const scoped = customerRoute.salonId
+                  ? salons.filter((s) => s.id === customerRoute.salonId)
+                  : salons;
+                const owner =
+                  scoped.find((s) => s.services.some((sv) => sv.id === customerRoute.serviceId)) ||
+                  salons.find((s) => s.services.some((sv) => sv.id === customerRoute.serviceId)) ||
+                  null;
+                const service =
+                  owner?.services.find((sv) => sv.id === customerRoute.serviceId) || null;
+
+                if (!owner || !service) {
+                  return (
+                    <div className="px-4 pt-10 pb-28 max-w-3xl mx-auto w-full text-center">
+                      <span className="material-symbols-outlined text-[36px] text-on-surface-variant">
+                        search_off
+                      </span>
+                      <p className="mt-2 text-[14px] font-semibold text-on-surface">
+                        That service is no longer listed
+                      </p>
+                      <p className="mt-1 text-[12px] text-on-surface-variant">
+                        It may have been renamed or removed by the salon.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => goToCustomer(CUSTOMER_SERVICES)}
+                        className="mt-4 px-4 py-2 rounded-lg bg-nexora-pink text-white text-[12px] font-bold"
+                      >
+                        Browse all services
+                      </button>
+                    </div>
+                  );
+                }
+
+                // Same-named treatments at other salons, for price comparison.
+                const alternatives = salons
+                  .filter((s) => s.id !== owner.id)
+                  .flatMap((s) =>
+                    s.services
+                      .filter(
+                        (sv) => sv.name.trim().toLowerCase() === service.name.trim().toLowerCase()
+                      )
+                      .map((sv) => ({ salon: s, service: sv }))
+                  )
+                  .sort((a, b) => a.service.price - b.service.price)
+                  .slice(0, 6);
+
+                return (
+                  <ServiceDetailScreen
+                    service={service}
+                    salon={owner}
+                    alternatives={alternatives}
+                    savedServiceIds={savedServices
+                      .filter((s) => s.salonId === owner.id)
+                      .map((s) => s.serviceId)}
+                    onToggleSaveService={(salonId, svc) =>
+                      handleToggleSaveService(salonId, svc.id)
+                    }
+                    onBook={(s, svc, stylist) => handleOpenBooking(s, svc, stylist ?? undefined)}
+                    onOpenSalon={(s) => handleOpenSalonDetails(s)}
+                    onOpenAlternative={(s, svc) =>
+                      goToCustomer(customerServicePath(svc.id, s.id))
+                    }
+                    onBack={() => goToCustomer(CUSTOMER_SERVICES, { replace: true })}
+                  />
+                );
+              })()}
 
             {activeTab === 'bookings' && customerRoute.kind !== 'membership' &&
               (customerRoute.kind === 'booking' ? (
@@ -1831,6 +1944,11 @@ export default function App() {
         initialStylist={selectedStylistForBooking}
         onConfirmBooking={handleConfirmBooking}
         onViewAppointments={handleViewAppointments}
+        customerDetails={{
+          name: user.name,
+          email: user.email,
+          phone: user.phone,
+        }}
         onOpenSummary={(draft) => {
           setIsBookingModalOpen(false);
           setBookingSummaryDraft(draft);

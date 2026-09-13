@@ -990,40 +990,67 @@ function relevanceScore(
   return score;
 }
 
+/**
+ * Wraps a sort comparator so a literal hit can never be pushed underneath a
+ * typo-corrected ("fuzzy") one.
+ *
+ * The relevance penalty applied to `score` only affects the default
+ * (`relevance`) ordering — every other mode sorts by distance, rating, price
+ * or popularity and would otherwise happily rank a corrected extra above the
+ * salon the customer actually typed. Partitioning first keeps each mode's
+ * ordering intact *within* the exact group and *within* the fuzzy group.
+ */
+function exactMatchesFirst(
+  comparator: (a: SearchResult, b: SearchResult) => number
+): (a: SearchResult, b: SearchResult) => number {
+  return (a, b) => {
+    if (a.fuzzy !== b.fuzzy) return a.fuzzy ? 1 : -1;
+    return comparator(a, b);
+  };
+}
+
 export function sortResults(results: SearchResult[], sort: SearchSort): SearchResult[] {
   const list = [...results];
   switch (sort) {
     case 'nearest':
       return list.sort(
-        (a, b) => distanceKm(a.salon) - distanceKm(b.salon) || b.salon.rating - a.salon.rating
+        exactMatchesFirst(
+          (a, b) => distanceKm(a.salon) - distanceKm(b.salon) || b.salon.rating - a.salon.rating
+        )
       );
     case 'top_rated':
       return list.sort(
-        (a, b) =>
-          b.salon.rating - a.salon.rating ||
-          b.salon.reviewCount - a.salon.reviewCount ||
-          distanceKm(a.salon) - distanceKm(b.salon)
+        exactMatchesFirst(
+          (a, b) =>
+            b.salon.rating - a.salon.rating ||
+            b.salon.reviewCount - a.salon.reviewCount ||
+            distanceKm(a.salon) - distanceKm(b.salon)
+        )
       );
     case 'lowest_price':
       return list.sort(
-        (a, b) => a.fromPrice - b.fromPrice || b.salon.rating - a.salon.rating
+        exactMatchesFirst((a, b) => a.fromPrice - b.fromPrice || b.salon.rating - a.salon.rating)
       );
     case 'most_popular':
       return list.sort(
-        (a, b) =>
-          b.salon.reviewCount - a.salon.reviewCount ||
-          b.salon.rating - a.salon.rating ||
-          (b.salon.trending ? 1 : 0) - (a.salon.trending ? 1 : 0)
+        exactMatchesFirst(
+          (a, b) =>
+            b.salon.reviewCount - a.salon.reviewCount ||
+            b.salon.rating - a.salon.rating ||
+            (b.salon.trending ? 1 : 0) - (a.salon.trending ? 1 : 0)
+        )
       );
     case 'available_today':
-      return list.sort((a, b) => {
-        const ao = a.salon.isOpen ? 0 : 1;
-        const bo = b.salon.isOpen ? 0 : 1;
-        if (ao !== bo) return ao - bo;
-        return distanceKm(a.salon) - distanceKm(b.salon) || b.salon.rating - a.salon.rating;
-      });
+      return list.sort(
+        exactMatchesFirst((a, b) => {
+          const ao = a.salon.isOpen ? 0 : 1;
+          const bo = b.salon.isOpen ? 0 : 1;
+          if (ao !== bo) return ao - bo;
+          return distanceKm(a.salon) - distanceKm(b.salon) || b.salon.rating - a.salon.rating;
+        })
+      );
     default:
-      return list.sort((a, b) => b.score - a.score);
+      return list.sort(exactMatchesFirst((a, b) => b.score - a.score));
   }
 }
 

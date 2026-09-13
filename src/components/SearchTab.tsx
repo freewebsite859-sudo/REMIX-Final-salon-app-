@@ -52,6 +52,8 @@ interface SearchTabProps {
   onBookSalon: (salon: Salon, service?: SalonService, stylist?: Stylist) => void;
   onToggleSaveSalon: (salonId: string) => void;
   onOpenLocation?: () => void;
+  /** Opens the Services Screen (B7) at `/customer/services`. */
+  onOpenServices?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -318,6 +320,7 @@ export const SearchTab: React.FC<SearchTabProps> = ({
   onBookSalon,
   onToggleSaveSalon,
   onOpenLocation,
+  onOpenServices,
 }) => {
   const [query, setQuery] = useState(initialSearchQuery || '');
   const [filters, setFilters] = useState<SearchFilters>({ ...DEFAULT_SEARCH_FILTERS });
@@ -1142,6 +1145,32 @@ export const SearchTab: React.FC<SearchTabProps> = ({
               </ul>
             </section>
           )}
+
+          {/* Entry point to the Services Screen (B7) — /customer/services */}
+          <section className="px-page-margin mb-6">
+            <button
+              type="button"
+              id="browse-all-services"
+              onClick={() => onOpenServices?.()}
+              disabled={!onOpenServices}
+              className="w-full rounded-2xl border border-outline-variant/50 bg-white p-4 flex items-center gap-3 text-left hover:border-primary/40 hover:shadow-xs transition-all cursor-pointer disabled:cursor-default disabled:opacity-60"
+            >
+              <span className="material-symbols-outlined text-[22px] text-nexora-pink shrink-0">
+                format_list_bulleted
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block font-card-title text-[14px] text-on-surface">
+                  Browse all services
+                </span>
+                <span className="block text-[12px] text-on-surface-variant">
+                  Every treatment, by category, with prices
+                </span>
+              </span>
+              <span className="material-symbols-outlined text-[20px] text-on-surface-variant shrink-0">
+                chevron_right
+              </span>
+            </button>
+          </section>
 
           {/* Trending / example NL queries */}
           <section id="search-trending" className="px-page-margin mb-6">

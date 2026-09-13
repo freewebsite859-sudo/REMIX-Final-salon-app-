@@ -15,12 +15,16 @@ import {
   CUSTOMER_REWARDS,
   CUSTOMER_ROUTE_CATALOG,
   CUSTOMER_SEARCH,
+  CUSTOMER_SERVICES,
+  CUSTOMER_SERVICE_PREFIX,
   CUSTOMER_SIGNUP,
   customerBookPath,
   customerBookingPath,
   customerRouteToTab,
   customerSalonPath,
   customerSearchPath,
+  customerServicePath,
+  customerServicesPath,
   isProtectedCustomerRoute,
   parseCustomerRoute,
   requireAuthForBooking,
@@ -44,6 +48,8 @@ const expected = [
   '/customer/signup',
   '/customer/home',
   '/customer/search',
+  '/customer/services',
+  '/customer/service/:serviceId',
   '/customer/salon/:salonSlug',
   '/customer/book/:salonId',
   '/customer/bookings',
@@ -211,8 +217,71 @@ check(
 );
 check('return path consumed', consumeCustomerReturnPath() === null);
 
+// ---------------------------------------------------------------------------
+// Services catalog routes (B7 / B8)
+// ---------------------------------------------------------------------------
+{
+  const services = parseCustomerRoute(CUSTOMER_SERVICES, '');
+  check('services route parses', services.kind === 'services', services.kind);
+  check(
+    'services route carries the search query',
+    parseCustomerRoute(CUSTOMER_SERVICES, '?q=facial').query === 'facial'
+  );
+  check(
+    'services route carries the category filter',
+    parseCustomerRoute(CUSTOMER_SERVICES, '?category=Hair').category === 'Hair'
+  );
+  check(
+    'services route maps to the search tab',
+    customerRouteToTab(services) === 'search',
+    String(customerRouteToTab(services))
+  );
+  check('services route is public (browsable while signed out)', !isProtectedCustomerRoute(services));
+
+  const detail = parseCustomerRoute(customerServicePath('svc-1', 'salon-9'), '');
+  check('service detail route parses', detail.kind === 'service', detail.kind);
+  check('service detail carries the service id', detail.serviceId === 'svc-1', String(detail.serviceId));
+  check(
+    'service detail carries the owning salon for disambiguation',
+    detail.salonId === 'salon-9',
+    String(detail.salonId)
+  );
+  check('service detail is public', !isProtectedCustomerRoute(detail));
+
+  // A service id with no salon hint still resolves.
+  const bare = parseCustomerRoute('/customer/service/svc-2', '');
+  check(
+    'service detail resolves without a salon hint',
+    bare.kind === 'service' && bare.serviceId === 'svc-2' && bare.salonId === undefined
+  );
+
+  // `/customer/services` must not be mistaken for `/customer/service/…`.
+  check(
+    'the plural path is not parsed as a service detail',
+    parseCustomerRoute('/customer/services', '').kind === 'services'
+  );
+
+  // Special characters survive the round trip.
+  const odd = parseCustomerRoute(customerServicePath('svc/odd id', 'salon x'), '');
+  check(
+    'service ids with spaces and slashes survive a round trip',
+    odd.serviceId === 'svc/odd id' && odd.salonId === 'salon x',
+    `${odd.serviceId} @ ${odd.salonId}`
+  );
+
+  check(
+    'customerServicesPath encodes query and category',
+    customerServicesPath({ query: 'hydra facial', category: 'Skin' }) ===
+      '/customer/services?q=hydra+facial&category=Skin',
+    customerServicesPath({ query: 'hydra facial', category: 'Skin' })
+  );
+  check('customerServicesPath with no options is the bare path', customerServicesPath() === CUSTOMER_SERVICES);
+}
+
 // Constants sanity
 check('CUSTOMER_BOOK_PREFIX', CUSTOMER_BOOK_PREFIX === '/customer/book/');
+check('CUSTOMER_SERVICES', CUSTOMER_SERVICES === '/customer/services');
+check('CUSTOMER_SERVICE_PREFIX', CUSTOMER_SERVICE_PREFIX === '/customer/service/');
 check('CUSTOMER_HOME', CUSTOMER_HOME === '/customer/home');
 check('CUSTOMER_LOGIN', CUSTOMER_LOGIN === '/customer/login');
 check('CUSTOMER_SIGNUP', CUSTOMER_SIGNUP === '/customer/signup');
