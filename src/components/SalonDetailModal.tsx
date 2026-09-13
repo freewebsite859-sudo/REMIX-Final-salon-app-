@@ -37,6 +37,126 @@ interface SalonDetailModalProps {
 
 type ModalTab = 'services' | 'videos' | 'reviews' | 'about';
 
+function SalonDetailReelCard({
+  reel,
+  rIdx,
+  onOpen,
+}: {
+  reel: SalonVideoReel;
+  rIdx: number;
+  onOpen: (idx: number) => void;
+}) {
+  const [isHovered, setIsHovered] = useState(false);
+  const [isVideoLoaded, setIsVideoLoaded] = useState(false);
+  const videoRef = React.useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (isHovered) {
+      video.muted = true;
+      const p = video.play();
+      if (p !== undefined) {
+        p.then(() => setIsVideoLoaded(true)).catch(() => {});
+      }
+    } else {
+      video.pause();
+      try {
+        video.currentTime = 0;
+      } catch {
+        // Safe catch
+      }
+    }
+  }, [isHovered]);
+
+  return (
+    <div
+      key={reel.id}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => {
+        const video = videoRef.current;
+        if (video) {
+          video.pause();
+          try {
+            video.currentTime = 0;
+          } catch {}
+        }
+        setIsHovered(false);
+      }}
+      onClick={() => onOpen(rIdx)}
+      className={`group relative aspect-[9/15] rounded-2xl overflow-hidden bg-slate-950 border transition-all cursor-pointer flex flex-col justify-between p-2.5 select-none ${
+        isHovered
+          ? 'border-rose-500 ring-2 ring-rose-500/40 shadow-xl -translate-y-0.5'
+          : 'border-outline-variant/30 shadow-sm hover:shadow-lg'
+      }`}
+    >
+      <img
+        src={reel.thumbnailUrl}
+        alt={reel.title}
+        className={`absolute inset-0 w-full h-full object-cover transition-all duration-500 ${
+          isHovered && isVideoLoaded ? 'scale-105 opacity-0' : 'scale-100 opacity-100'
+        }`}
+        loading="lazy"
+      />
+      <video
+        ref={videoRef}
+        src={reel.videoUrl}
+        playsInline
+        muted
+        loop
+        preload="metadata"
+        onPlaying={() => setIsVideoLoaded(true)}
+        className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${
+          isHovered ? 'opacity-100' : 'opacity-0 pointer-events-none'
+        }`}
+      />
+      <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-black/60 pointer-events-none" />
+
+      {/* Top Bar */}
+      <div className="relative z-10 flex items-center justify-between">
+        <span className="bg-rose-600/90 text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1">
+          <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+          Reel
+        </span>
+        {reel.duration && (
+          <span className="bg-black/60 backdrop-blur-md text-white text-[9px] font-semibold px-1.5 py-0.5 rounded">
+            {reel.duration}
+          </span>
+        )}
+      </div>
+
+      {/* Center Play Button */}
+      <div className="relative z-10 flex items-center justify-center my-auto">
+        <div
+          className={`w-10 h-10 rounded-full border flex items-center justify-center text-white transition-all shadow-md ${
+            isHovered
+              ? 'bg-rose-600 border-rose-400 scale-110'
+              : 'bg-white/20 backdrop-blur-md border-white/40 group-hover:scale-110 group-hover:bg-rose-600'
+          }`}
+        >
+          <span className="material-symbols-outlined text-[18px] ml-0.5">play_arrow</span>
+        </div>
+      </div>
+
+      {/* Bottom Info */}
+      <div className="relative z-10 flex flex-col gap-1">
+        <h4 className="text-white text-[11px] font-bold leading-tight line-clamp-2 drop-shadow">
+          {reel.title}
+        </h4>
+        {reel.servicePrice ? (
+          <div className="flex items-center justify-between pt-1 border-t border-white/20 text-[10px]">
+            <span className="text-amber-300 font-extrabold">₹{reel.servicePrice}</span>
+            <span className="text-white font-bold underline">Watch &amp; Book</span>
+          </div>
+        ) : (
+          <span className="text-[10px] text-white/80">{reel.category}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
   salon,
   isOpen,
@@ -659,54 +779,12 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                   {salonReels.map((reel, rIdx) => (
-                    <div
+                    <SalonDetailReelCard
                       key={reel.id}
-                      onClick={() => setActiveReelModalIndex(rIdx)}
-                      className="group relative aspect-[9/15] rounded-2xl overflow-hidden bg-slate-950 border border-outline-variant/30 shadow-sm hover:shadow-lg transition-all cursor-pointer flex flex-col justify-between p-2.5 select-none"
-                    >
-                      <img
-                        src={reel.thumbnailUrl}
-                        alt={reel.title}
-                        className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                        loading="lazy"
-                      />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-black/60 pointer-events-none" />
-
-                      {/* Top Bar */}
-                      <div className="relative z-10 flex items-center justify-between">
-                        <span className="bg-rose-600/90 text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1">
-                          <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-                          Reel
-                        </span>
-                        {reel.duration && (
-                          <span className="bg-black/60 backdrop-blur-md text-white text-[9px] font-semibold px-1.5 py-0.5 rounded">
-                            {reel.duration}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Center Play Button */}
-                      <div className="relative z-10 flex items-center justify-center my-auto">
-                        <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-md border border-white/40 flex items-center justify-center text-white group-hover:scale-110 group-hover:bg-rose-600 transition-all shadow-md">
-                          <span className="material-symbols-outlined text-[18px] ml-0.5">play_arrow</span>
-                        </div>
-                      </div>
-
-                      {/* Bottom Info */}
-                      <div className="relative z-10 flex flex-col gap-1">
-                        <h4 className="text-white text-[11px] font-bold leading-tight line-clamp-2 drop-shadow">
-                          {reel.title}
-                        </h4>
-                        {reel.servicePrice ? (
-                          <div className="flex items-center justify-between pt-1 border-t border-white/20 text-[10px]">
-                            <span className="text-amber-300 font-extrabold">₹{reel.servicePrice}</span>
-                            <span className="text-white font-bold underline">Watch &amp; Book</span>
-                          </div>
-                        ) : (
-                          <span className="text-[10px] text-white/80">{reel.category}</span>
-                        )}
-                      </div>
-                    </div>
+                      reel={reel}
+                      rIdx={rIdx}
+                      onOpen={setActiveReelModalIndex}
+                    />
                   ))}
                 </div>
               )}

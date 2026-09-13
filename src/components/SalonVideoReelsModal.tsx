@@ -315,6 +315,7 @@ export const SalonVideoReelsModal: React.FC<SalonVideoReelsModalProps> = ({
               playsInline
               loop
               autoPlay
+              preload="metadata"
               muted={isMuted}
               onTimeUpdate={() => {
                 if (videoRef.current) {
