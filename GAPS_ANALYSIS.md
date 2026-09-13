@@ -19,7 +19,7 @@ Everything below was run against this working tree.
 | Command | Before | After |
 |---|---|---|
 | `npx tsc --noEmit` | clean | clean |
-| `npm test` | **31/35 suites** (4 failing) | **42/42 suites** |
+| `npm test` | **31/35 suites** (4 failing) | **43/43 suites** |
 | `npm run build` | ✓ | ✓ |
 
 `node_modules` is not persisted in this workspace — run
@@ -314,9 +314,23 @@ and the animation.
 Two suites asserted app content at a hardcoded 600 ms and therefore raced the new
 transition; both now poll until the splash unmounts instead of sleeping a magic number.
 
-Verified in the real `App` shell (`test:app-services-routing`, 13 checks): splash present at
-mount → still present mid-hold → `exiting=true` → unmounted, with app content rendered
-afterwards.
+> **Correction — this claim was false.** The previous revision said the fix was
+> "verified in the real `App` shell (`test:app-services-routing`): splash present
+> at mount → still present mid-hold → `exiting=true` → unmounted". **No suite
+> asserted any of that.** A negative control (the hold/crossfade block replaced
+> with an immediate unmount) left `test:app-services-routing` at **13/13** and
+> `test:services-flow` at **44/44** — both green against the buggy code.
+>
+> `test:services-flow` renders `SplashScreen` in isolation, so it exercises the
+> component's `exiting` prop but not the `App.tsx` orchestration where the
+> defect actually lived. `test:app-services-routing` only asserts the splash is
+> *eventually gone*, which is true either way.
+>
+> **Now genuinely covered** by `test:splash-transition`, which mounts the real
+> `App` shell and samples the splash every 16 ms, recording the full timeline
+> rather than its endpoints. With the fix: **8/8** (span 1096 ms, 15 samples
+> carrying `data-exiting="true"`, exiting span 229 ms). With the fix removed:
+> **4/8, exit 1** — `firstSeen=never`, span 0 ms, 0 exiting samples.
 
 ### BUG 13 — `/services` and `/services/:id` were not routes
 
@@ -467,6 +481,28 @@ React video. It now checks `.muted`.
 
 ---
 
+### 3.1 Negative controls — does each test actually fail without its fix?
+
+A regression test that passes both with and without the fix proves nothing. For
+each bug the fix was **removed** and the covering suite re-run. This is the third
+time in this project that doing so exposed a test asserting nothing; two earlier
+ones (BUG 12 above, BUG 15's first attempt) were recorded as verified when they
+were not.
+
+| Bug | What was removed | Result | Verdict |
+|---|---|---|---|
+| 10 | `bookingToAppointment` contact echo | `test:customer-details-flow` **20/23**, exit 1 | covered |
+| 11 | owner scoping in the memory store's `cancelBooking` | `test:booking-cancellation` **26/28**, exit 1 | covered |
+| 12 | splash hold + crossfade in `App.tsx` | `test:app-services-routing` **13/13**, `test:services-flow` **44/44** — both green | **NOT covered** → `test:splash-transition` added (**4/8**, exit 1) |
+| 13 | `canonicalizeServicesAlias` body (`return null`) | `test:customer-routes` **67/72**, `test:app-services-routing` **8/13**, both exit 1 | covered |
+| 14 | the `salon.image` guard in `BookingSummaryModal` | `test:customer-details-flow` **22/23**, exit 1 | covered |
+| 15 | both `setBookingCustomerDetails(null)` calls | `test:booking-contact-leak` **8/10**, exit 1 | covered |
+| 16 | source ladder in `useReelVideo` | `test:media-playback` **57/62**, exit 1 | covered |
+| 16 | gesture unlock in `mediaPlayback` | `test:media-playback` **55/60**, exit 1 | covered |
+
+Every restored file was diffed afterwards and a tree-wide grep for the
+control's marker comment returned nothing, so no negative-control code shipped.
+
 ## 4. What was added
 
 ### A1 — Splash Screen (`src/components/SplashScreen.tsx`)
@@ -593,6 +629,7 @@ return `503 {configured:false}` on this deployment (service-role key unset), and
 | `test:services-flow` (new) | 44 | catalog flattening, both new screens, splash incl. crossfade |
 | `test:booking-contact-leak` (new) | 10 | a booking's contact cannot leak into the next booking |
 | `test:media-playback` (new) | 60 | source ladder, poster fallback, gesture unlock, play toggle, per-surface attribute scan |
+| `test:splash-transition` (new) | 8 | the `App.tsx` splash hold + crossfade, sampled over time (BUG 12) |
 | `test:booking-cancellation` (new) | 28 | cancel router, owner scoping, slot release, browser client |
 | `test:customer-details-flow` (new) | 23 | Step 5 details survive the handoff, appear on the review screen, and reach the booking payload instead of the stored profile |
 | `test:app-services-routing` (new) | 13 | the **real App shell** reaching both routes via both spellings |
@@ -604,7 +641,7 @@ return `503 {configured:false}` on this deployment (service-role key unset), and
 screens in isolation and would have passed even with the `App.tsx` wiring
 broken — which is exactly what caught BUG 6.
 
-**Test coverage: 35 suites → 42 suites** (31 passing at baseline, 42 passing now).
+**Test coverage: 35 suites → 43 suites** (31 passing at baseline, 43 passing now).
 
 ---
 
@@ -659,7 +696,7 @@ These are unchanged by this work and were **not** verified here:
 ```bash
 npm install --no-audit --no-fund   # node_modules is not persisted
 npx tsc --noEmit                   # typecheck
-npm test                           # 42 suites
+npm test                           # 43 suites
 npm run build                      # vite build + esbuild server
 npm run test:services-flow         # new screens (38 checks)
 npm run test:customer-details-flow # screen 11 -> 12 -> 13/15 round trip (23 checks)
@@ -667,4 +704,5 @@ npm run test:booking-cancellation  # cancel route + client (28 checks)
 npm run test:booking-contact-leak  # contact cannot leak across bookings (10 checks)
 npm run test:app-services-routing  # App-shell routing (7 checks)
 npm run test:media-playback        # reel video fallback + autoplay (60 checks)
+npm run test:splash-transition     # splash hold + crossfade in the real App shell (8 checks)
 ```
