@@ -68,7 +68,7 @@ meant to cover — so the catalog and search logic had no coverage in practice.
 
 ---
 
-## 3. Bugs found and fixed (13)
+## 3. Bugs found and fixed (14)
 
 ### BUG 1 — Catalog: demo salons leaked into live remote results (data integrity)
 
@@ -333,6 +333,22 @@ ever consulted. The server returned 200 for them only because the SPA fallback s
 Rewriting is idempotent — applying it to its own output returns `null` — so there is no
 redirect loop (asserted in test).
 
+### BUG 14 — Unguarded `<img src>` re-requested the whole page
+
+`BookingSummaryModal` rendered `src={salon.image}` and `src={stylist.avatar}`, and
+`BookingModal` rendered `src={stylist.avatar}`, with no guard. Catalog rows frequently
+carry no image, so an empty `src=""` reached the DOM — which makes the browser re-request
+the **current page** over the network. That is a wasted request per image plus a visible
+flash, and it surfaced as a console warning during the booking-flow tests.
+
+The rest of the codebase already guards these (`BookingConfirmationPage`,
+`BookingDetailPage`, `ServiceDetailScreen`), so this was an inconsistency rather than a
+missing convention.
+
+**Fix:** all three now fall back to a sized icon placeholder, matching the existing pattern.
+Covered by a regression check in `test:customer-details-flow` asserting zero empty-`src`
+images when the salon has no image (23 checks).
+
 ## 4. What was added
 
 ### A1 — Splash Screen (`src/components/SplashScreen.tsx`)
@@ -437,7 +453,7 @@ return `503 {configured:false}` on this deployment (service-role key unset), and
 |---|---|---|
 | `test:services-flow` (new) | 44 | catalog flattening, both new screens, splash incl. crossfade |
 | `test:booking-cancellation` (new) | 28 | cancel router, owner scoping, slot release, browser client |
-| `test:customer-details-flow` (new) | 21 | Step 5 details survive the handoff, appear on the review screen, and reach the booking payload instead of the stored profile |
+| `test:customer-details-flow` (new) | 23 | Step 5 details survive the handoff, appear on the review screen, and reach the booking payload instead of the stored profile |
 | `test:app-services-routing` (new) | 13 | the **real App shell** reaching both routes via both spellings |
 | `test:account-deletion` (new) | 21 | deletion router + browser client |
 | `test:customer-routes` | +30 | the two new routes, encoding round trips, the `/services` aliases |
@@ -501,7 +517,7 @@ npx tsc --noEmit                   # typecheck
 npm test                           # 37 suites
 npm run build                      # vite build + esbuild server
 npm run test:services-flow         # new screens (38 checks)
-npm run test:customer-details-flow # screen 11 -> 12 -> 13/15 round trip (21 checks)
+npm run test:customer-details-flow # screen 11 -> 12 -> 13/15 round trip (23 checks)
 npm run test:booking-cancellation  # cancel route + client (28 checks)
 npm run test:app-services-routing  # App-shell routing (7 checks)
 ```

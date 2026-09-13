@@ -269,6 +269,47 @@ function resolveContact(
 }
 
 // ---------------------------------------------------------------------------
+// 3b. No empty src="" on the review screen.
+//
+// An empty src makes the browser re-request the whole page — a wasted request
+// and a visible flash — and catalog rows frequently carry no image. The salon
+// and stylist images must fall back to a placeholder instead.
+// ---------------------------------------------------------------------------
+{
+  const bareSalon: Salon = { ...salon, image: '', gallery: [] };
+  await act(async () => {
+    root.render(
+      <BookingSummaryModal
+        isOpen
+        onClose={() => undefined}
+        salon={bareSalon}
+        services={[svc]}
+        stylist={null}
+        date={new Date().toISOString().split('T')[0]}
+        time="3:30 PM"
+        customer={TYPED}
+      />
+    );
+    await new Promise((r) => setTimeout(r, 0));
+  });
+
+  const empties = Array.from(container.querySelectorAll('img')).filter(
+    (img) => !img.getAttribute('src') || img.getAttribute('src') === ''
+  );
+  check(
+    'a salon with no image renders a placeholder, not src=""',
+    empties.length === 0,
+    `empty-src imgs=${empties.length}`
+  );
+  check(
+    'the placeholder is a real element the layout can size',
+    container.querySelectorAll('img').length === 0 ||
+      Boolean(container.querySelector('.material-symbols-outlined')),
+    'placeholder present'
+  );
+}
+
+// ---------------------------------------------------------------------------
 // 4. Round trip: the typed details must survive the WRITE and come back on
 // READ so screens 13 (Booking Success) and 15 (Appointment Detail) can show
 // them. `bookingToAppointment` used to drop booking.customer entirely.

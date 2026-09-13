@@ -465,11 +465,22 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
                 </div>
 
                 <div className="flex items-center gap-3.5">
-                  <img
-                    src={salon.image}
-                    alt={salon.name}
-                    className="w-14 h-14 rounded-xl object-cover ring-1 ring-outline-variant/40 flex-shrink-0"
-                  />
+                  {/*
+                    Guarded: an empty src="" makes the browser re-request the
+                    whole page, which is both a wasted request and a visible
+                    flash. Catalog rows frequently carry no image.
+                  */}
+                  {salon.image ? (
+                    <img
+                      src={salon.image}
+                      alt={salon.name}
+                      className="w-14 h-14 rounded-xl object-cover ring-1 ring-outline-variant/40 flex-shrink-0"
+                    />
+                  ) : (
+                    <span className="w-14 h-14 rounded-xl bg-primary/10 text-primary flex items-center justify-center flex-shrink-0 ring-1 ring-outline-variant/40">
+                      <span className="material-symbols-outlined text-[22px]">content_cut</span>
+                    </span>
+                  )}
                   <div className="flex-1 min-w-0">
                     <h3 className="font-bold text-[15px] text-on-surface truncate leading-snug">
                       {salon.name}
@@ -615,11 +626,17 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
 
                 {stylist ? (
                   <div className="flex items-center gap-3.5">
-                    <img
-                      src={stylist.avatar}
-                      alt={stylist.name}
-                      className="w-13 h-13 rounded-full object-cover ring-2 ring-primary/20 flex-shrink-0"
-                    />
+                    {stylist.avatar ? (
+                      <img
+                        src={stylist.avatar}
+                        alt={stylist.name}
+                        className="w-13 h-13 rounded-full object-cover ring-2 ring-primary/20 flex-shrink-0"
+                      />
+                    ) : (
+                      <span className="w-13 h-13 rounded-full bg-primary/10 text-primary flex items-center justify-center flex-shrink-0 ring-2 ring-primary/20">
+                        <span className="material-symbols-outlined text-[20px]">badge</span>
+                      </span>
+                    )}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
                         <h4 className="font-bold text-[14px] text-on-surface">{stylist.name}</h4>

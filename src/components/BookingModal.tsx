@@ -495,11 +495,17 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                               : 'bg-surface-container-lowest border-outline-variant/50 hover:bg-surface-container text-on-surface'
                           }`}
                         >
-                          <img
-                            src={stylist.avatar}
-                            alt={stylist.name}
-                            className="w-10 h-10 rounded-full object-cover mb-1 ring-1 ring-white"
-                          />
+                          {stylist.avatar ? (
+                            <img
+                              src={stylist.avatar}
+                              alt={stylist.name}
+                              className="w-10 h-10 rounded-full object-cover mb-1 ring-1 ring-white"
+                            />
+                          ) : (
+                            <span className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center mb-1 ring-1 ring-white">
+                              <span className="material-symbols-outlined text-[18px]">badge</span>
+                            </span>
+                          )}
                           <span className="text-[12px] font-semibold truncate max-w-[110px]">
                             {stylist.name}
                           </span>
