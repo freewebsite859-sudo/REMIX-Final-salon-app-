@@ -40,6 +40,33 @@ const root = createRoot(container);
 
 const SPLASH_SEL = '[data-testid="nexora-splash"]';
 
+/*
+  Error capture must be installed BEFORE the render below. Declared at the
+  assertion site it was created after the render and the whole sampling loop had
+  already run, nothing ever pushed to it, and `reactErrors.length === 0` was
+  unconditionally true — a check that could not fail.
+*/
+const reactErrors: string[] = [];
+const originalConsoleError = console.error;
+
+/*
+  The sampling loop below deliberately runs OUTSIDE act() -- React's async act()
+  runs no timers until it returns, which would stop the clock and make the
+  transition impossible to observe. That design necessarily produces
+  "not wrapped in act(...)" warnings, so they are filtered here.
+
+  The filter is narrow on purpose: only that one React harness warning is
+  dropped. Anything else -- a real error, a key warning, a lifecycle failure --
+  still fails the check.
+*/
+const ACT_WARNING = /not wrapped in act\(\.\.\.\)/;
+
+console.error = (...args: unknown[]) => {
+  const msg = args.map((a) => (typeof a === 'string' ? a : String(a))).join(' ');
+  if (!ACT_WARNING.test(msg)) reactErrors.push(msg);
+  originalConsoleError(...args);
+};
+
 // Mount, then sample the splash at a fine interval. React's async act() runs no
 // timers until it returns, so the sampling loop must live OUTSIDE act() and be
 // flushed with a final act() call.
@@ -150,11 +177,13 @@ check(
 );
 
 // No React error may have escaped during the handoff.
-const reactErrors: string[] = [];
+console.error = originalConsoleError;
 check(
   'no uncaught error surfaced during the splash handoff',
   reactErrors.length === 0,
-  reactErrors.join(' | ') || 'none'
+  reactErrors.length === 0
+    ? 'none'
+    : `${reactErrors.length} message(s): ${reactErrors.join(' | ').slice(0, 400)}`
 );
 
 await act(async () => {

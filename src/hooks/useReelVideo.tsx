@@ -44,6 +44,11 @@ export interface ReelVideoState {
   activeSrc: string | null;
   /** True once every candidate source has failed; show the animated poster. */
   exhausted: boolean;
+  /**
+   * Every source that has errored, in the order it was tried. Lets the fallback
+   * UI name the stream that failed rather than only reporting that one did.
+   */
+  failedSources: string[];
   /** True while the element is actually playing (not merely requested). */
   isPlaying: boolean;
   /** True once the first frame has decoded, so callers can crossfade. */
@@ -175,6 +180,7 @@ export function useReelVideo(options: UseReelVideoOptions): ReelVideoState {
     videoRef,
     activeSrc,
     exhausted,
+    failedSources: attempted,
     isPlaying,
     hasDecoded,
     togglePlay,
@@ -199,10 +205,17 @@ export function ReelPosterFallback({
   posterUrl,
   title,
   onRetry,
+  failedSource,
 }: {
   posterUrl: string;
   title: string;
   onRetry?: () => void;
+  /**
+   * The stream that was given up on. Printed so a dead CDN URL can be diagnosed
+   * straight off the screen — "Video preview unavailable" alone cannot tell a
+   * dead URL from a blocked connection from a codec problem.
+   */
+  failedSource?: string | null;
 }) {
   return (
     <div
@@ -227,6 +240,15 @@ export function ReelPosterFallback({
           Your connection or browser blocked the stream. The salon details below
           are still accurate.
         </p>
+        {failedSource ? (
+          <p
+            data-testid="reel-failed-source"
+            className="text-white/45 text-[9px] leading-tight max-w-[210px] break-all font-mono"
+            title={failedSource}
+          >
+            {failedSource.replace(/^https?:\/\//, '').slice(0, 96)}
+          </p>
+        ) : null}
         {onRetry && (
           <button
             type="button"
