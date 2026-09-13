@@ -1536,6 +1536,17 @@ export default function App() {
               date: slotToIsoDate(selectedSlot),
               time: selectedSlot?.time || '2:30 PM',
               notes: '',
+              // This path reaches the review screen without passing through
+              // BookingModal step 5, so seed the contact from the stored
+              // profile. Without it the review screen rendered no contact
+              // block at all and the salon's contact was invisible here,
+              // unlike the modal path. Same resolution order as
+              // handleServerBooking, so what is shown is what is sent.
+              customer: {
+                name: user.name,
+                phone: session?.user?.phone || user.phone,
+                email: session?.user?.email || user.email,
+              },
             });
             setChooseProfessionalData(null);
             setIsBookingSummaryModalOpen(true);

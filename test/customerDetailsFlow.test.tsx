@@ -187,6 +187,41 @@ check(
 );
 
 // ---------------------------------------------------------------------------
+// 2b. The "Choose Professional" path reaches the review screen WITHOUT going
+// through step 5. It seeds the contact from the stored profile so the salon's
+// contact is still visible there, matching what handleServerBooking sends.
+// ---------------------------------------------------------------------------
+{
+  const profileSeeded = {
+    name: PROFILE.name,
+    phone: PROFILE.phone,
+    email: PROFILE.email,
+  };
+  await act(async () => {
+    root.render(
+      <BookingSummaryModal
+        isOpen
+        onClose={() => undefined}
+        salon={salon}
+        services={[svc]}
+        stylist={null}
+        date={new Date().toISOString().split('T')[0]}
+        time="2:30 PM"
+        customer={profileSeeded}
+      />
+    );
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  const block = container.querySelector('[data-testid="review-contact-details"]');
+  const text = block?.textContent || '';
+  check(
+    'a profile-seeded draft still shows the contact on the review screen',
+    Boolean(block) && text.includes(PROFILE.name) && text.includes(PROFILE.phone),
+    text.slice(0, 70)
+  );
+}
+
+// ---------------------------------------------------------------------------
 // 3. The booking payload must prefer the typed details over the profile
 // ---------------------------------------------------------------------------
 // Mirrors App.tsx handleServerBooking's resolution order exactly.

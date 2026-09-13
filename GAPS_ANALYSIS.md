@@ -68,7 +68,7 @@ meant to cover — so the catalog and search logic had no coverage in practice.
 
 ---
 
-## 3. Bugs found and fixed (8)
+## 3. Bugs found and fixed (9)
 
 ### BUG 1 — Catalog: demo salons leaked into live remote results (data integrity)
 
@@ -207,7 +207,7 @@ the typed details and fall back to the profile only when they are absent or whit
 unaffected); and seed the modal from the confirmed details when the customer backs out via
 "Change date/time", so editing the date no longer silently resets the contact.
 
-Covered by `test:customer-details-flow` (15 checks).
+Covered by `test:customer-details-flow` (16 checks).
 
 ### BUG 8 — Services Screen marked a service as saved at *every* salon sharing its id
 
@@ -225,6 +225,19 @@ Services Screen got this wrong.
 deliberately reuse the id `svc-cut` and asserts only the saved one shows a filled heart —
 confirmed to **fail** against the old flat-id comparison (`savedAtClash=true`) and to pass
 after the fix.
+
+### BUG 9 — The "Choose Professional" booking path never showed the contact
+
+`ChooseProfessionalScreen`'s `onContinueBooking` wrote `bookingSummaryDraft` with no
+`customer` field and opened `BookingSummaryModal` directly, bypassing `BookingModal`
+step 5. So this entire booking entry point reached the review screen with
+`customer` undefined, the contact block rendered nothing, and the salon's contact was
+invisible — inconsistent with the modal path fixed in BUG 7.
+
+**Fix:** that path now seeds `customer` from the stored profile using the same resolution
+order as `handleServerBooking`, so what the review screen displays is what gets sent. The
+catalog-rebind effect spreads `...current`, so the field survives a remote catalog refresh.
+Covered by `test:customer-details-flow` (16 checks).
 
 ## 4. What was added
 
@@ -329,7 +342,7 @@ return `503 {configured:false}` on this deployment (service-role key unset), and
 | Suite | Checks | Covers |
 |---|---|---|
 | `test:services-flow` (new) | 38 | catalog flattening, both new screens, splash |
-| `test:customer-details-flow` (new) | 15 | Step 5 details survive the handoff, appear on the review screen, and reach the booking payload instead of the stored profile |
+| `test:customer-details-flow` (new) | 16 | Step 5 details survive the handoff, appear on the review screen, and reach the booking payload instead of the stored profile |
 | `test:app-services-routing` (new) | 7 | the **real App shell** reaching both routes |
 | `test:account-deletion` (new) | 21 | deletion router + browser client |
 | `test:customer-routes` | +16 | the two new routes, encoding round trips |
@@ -391,6 +404,6 @@ npx tsc --noEmit                   # typecheck
 npm test                           # 37 suites
 npm run build                      # vite build + esbuild server
 npm run test:services-flow         # new screens (38 checks)
-npm run test:customer-details-flow # screen 11 -> 12 -> payload (15 checks)
+npm run test:customer-details-flow # screen 11 -> 12 -> payload (16 checks)
 npm run test:app-services-routing  # App-shell routing (7 checks)
 ```
