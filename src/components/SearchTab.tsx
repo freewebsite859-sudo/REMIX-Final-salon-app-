@@ -118,12 +118,18 @@ const SearchResultCard: React.FC<{
       className="bg-white border border-outline-variant/50 rounded-2xl overflow-hidden shadow-xs hover:shadow-md transition-shadow flex flex-col sm:flex-row"
     >
       <div className="relative sm:w-[140px] h-[140px] sm:h-auto shrink-0 cursor-pointer" onClick={onOpen}>
-        <img
-          src={salon.image}
-          alt={salon.name}
-          loading="lazy"
-          className="w-full h-full object-cover min-h-[140px]"
-        />
+        {salon.image ? (
+          <img
+            src={salon.image}
+            alt={salon.name}
+            loading="lazy"
+            className="w-full h-full object-cover min-h-[140px]"
+          />
+        ) : (
+          <div className="w-full h-full min-h-[140px] bg-surface-container flex items-center justify-center text-on-surface-variant">
+            <span className="material-symbols-outlined text-[30px]">content_cut</span>
+          </div>
+        )}
         <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent sm:bg-gradient-to-r" />
         <button
           type="button"

@@ -1072,11 +1072,17 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
                         {/* User Header */}
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex items-center gap-2.5">
-                            <img
-                              src={rev.userAvatar}
-                              alt={rev.userName}
-                              className="w-8 h-8 rounded-full object-cover ring-1 ring-outline-variant/40"
-                            />
+                            {rev.userAvatar ? (
+                              <img
+                                src={rev.userAvatar}
+                                alt={rev.userName}
+                                className="w-8 h-8 rounded-full object-cover ring-1 ring-outline-variant/40"
+                              />
+                            ) : (
+                              <span className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center ring-1 ring-outline-variant/40">
+                                <span className="material-symbols-outlined text-[14px]">person</span>
+                              </span>
+                            )}
                             <div>
                               <div className="flex items-center gap-1.5">
                                 <h5 className="font-semibold text-[13px] text-on-surface leading-tight">
@@ -1165,11 +1171,17 @@ export const SalonDetailModal: React.FC<SalonDetailModalProps> = ({
                         key={st.id}
                         className="p-3 rounded-xl bg-surface-container-lowest border border-outline-variant/40 flex items-center gap-3"
                       >
-                        <img
-                          src={st.avatar}
-                          alt={st.name}
-                          className="w-12 h-12 rounded-full object-cover ring-2 ring-surface-container shrink-0"
-                        />
+                        {st.avatar ? (
+                          <img
+                            src={st.avatar}
+                            alt={st.name}
+                            className="w-12 h-12 rounded-full object-cover ring-2 ring-surface-container shrink-0"
+                          />
+                        ) : (
+                          <span className="w-12 h-12 rounded-full bg-primary/10 text-primary flex items-center justify-center ring-2 ring-surface-container shrink-0">
+                            <span className="material-symbols-outlined text-[18px]">badge</span>
+                          </span>
+                        )}
                         <div className="flex-1 min-w-0">
                           <h4 className="font-card-title text-[13px] text-on-surface leading-tight font-bold truncate">
                             {st.name}

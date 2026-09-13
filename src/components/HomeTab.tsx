@@ -267,12 +267,18 @@ const SalonDiscoveryCard: React.FC<{
     >
       {/* Cover */}
       <div className="relative h-[140px] cursor-pointer" onClick={onOpen}>
-        <img
-          src={salon.image}
-          alt={salon.name}
-          loading="lazy"
-          className="w-full h-full object-cover"
-        />
+        {salon.image ? (
+          <img
+            src={salon.image}
+            alt={salon.name}
+            loading="lazy"
+            className="w-full h-full object-cover"
+          />
+        ) : (
+          <div className="w-full h-full bg-surface-container flex items-center justify-center text-on-surface-variant">
+            <span className="material-symbols-outlined text-[30px]">content_cut</span>
+          </div>
+        )}
         <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/10" />
         <button
           type="button"
@@ -1023,13 +1029,22 @@ export const HomeTab: React.FC<HomeTabProps> = ({
                   key={salon.id}
                   className="bg-white border border-outline-variant/50 rounded-2xl p-3 flex items-center gap-3 shadow-xs"
                 >
-                  <img
-                    src={salon.image}
-                    alt={salon.name}
-                    loading="lazy"
-                    onClick={() => onOpenSalonDetails(salon)}
-                    className="w-[72px] h-[72px] rounded-xl object-cover shrink-0 cursor-pointer"
-                  />
+                  {salon.image ? (
+                    <img
+                      src={salon.image}
+                      alt={salon.name}
+                      loading="lazy"
+                      onClick={() => onOpenSalonDetails(salon)}
+                      className="w-[72px] h-[72px] rounded-xl object-cover shrink-0 cursor-pointer"
+                    />
+                  ) : (
+                    <span
+                      onClick={() => onOpenSalonDetails(salon)}
+                      className="w-[72px] h-[72px] rounded-xl bg-primary/10 text-primary flex items-center justify-center shrink-0 cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-[24px]">content_cut</span>
+                    </span>
+                  )}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
                       <h3

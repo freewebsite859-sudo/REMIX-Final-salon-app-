@@ -326,11 +326,17 @@ export const SavedTab: React.FC<SavedTabProps> = ({
                   className="bg-surface-container-low border border-outline-variant/50 hover:border-primary/40 rounded-2xl p-4 shadow-xs flex flex-col justify-between transition-all"
                 >
                   <div className="flex items-start gap-3 mb-3">
-                    <img
-                      src={salon.image}
-                      alt={salon.name}
-                      className="w-16 h-16 rounded-xl object-cover ring-1 ring-outline-variant/30 shrink-0"
-                    />
+                    {salon.image ? (
+                      <img
+                        src={salon.image}
+                        alt={salon.name}
+                        className="w-16 h-16 rounded-xl object-cover ring-1 ring-outline-variant/30 shrink-0"
+                      />
+                    ) : (
+                      <span className="w-16 h-16 rounded-xl bg-primary/10 text-primary flex items-center justify-center ring-1 ring-outline-variant/30 shrink-0">
+                        <span className="material-symbols-outlined text-[22px]">content_cut</span>
+                      </span>
+                    )}
                     <div className="flex-1 min-w-0">
                       <h3 className="font-bold text-[15px] text-on-surface truncate">{salon.name}</h3>
                       <p className="text-[12px] text-on-surface-variant truncate mt-0.5">

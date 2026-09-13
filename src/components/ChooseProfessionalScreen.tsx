@@ -811,11 +811,17 @@ export const ChooseProfessionalScreen: React.FC<ChooseProfessionalScreenProps> =
                     >
                       {/* Avatar */}
                       <div className="relative flex-shrink-0">
-                        <img
-                          className="w-16 h-16 rounded-full object-cover shadow-sm ring-1 ring-outline-variant/40"
-                          src={prof.avatar}
-                          alt={prof.name}
-                        />
+                        {prof.avatar ? (
+                          <img
+                            className="w-16 h-16 rounded-full object-cover shadow-sm ring-1 ring-outline-variant/40"
+                            src={prof.avatar}
+                            alt={prof.name}
+                          />
+                        ) : (
+                          <span className="w-16 h-16 rounded-full bg-primary/10 text-primary flex items-center justify-center shadow-sm ring-1 ring-outline-variant/40">
+                            <span className="material-symbols-outlined text-[24px]">badge</span>
+                          </span>
+                        )}
                         <div
                           className={`absolute bottom-0 right-0 w-4 h-4 border-2 border-surface rounded-full shadow-xs ${
                             prof.statusColor === 'emerald'

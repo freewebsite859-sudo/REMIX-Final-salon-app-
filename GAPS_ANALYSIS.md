@@ -349,6 +349,22 @@ missing convention.
 Covered by a regression check in `test:customer-details-flow` asserting zero empty-`src`
 images when the salon has no image (23 checks).
 
+### BUG 14 (continued) — the same unguarded `<img src>` existed across nine customer screens
+
+After fixing the three in the booking flow, I swept the whole `src/` tree for the same
+pattern rather than assuming it was isolated. Nine more customer-facing images had no guard
+and no `||` fallback, so any catalog row or profile without an image emitted `src=""`:
+
+`HomeTab` (×2), `SearchTab`, `SavedTab`, `AppointmentsTab`, `MembershipPage`,
+`ChooseProfessionalScreen`, `SalonDetailModal` (reviewer avatar, staff avatar).
+
+All now fall back to a sized icon placeholder. The remaining unguarded `<img>` tags are in
+**salon-owner** surfaces (`SalonWebsitePreview`, `SidePanelCustomizer`,
+`SocialConnectivityStep`, `OffersManagement`, reels modals, `AILogoSuiteModal`,
+`ImageCompressorWidget`, `QrEngagementCard`) — outside the 16 customer screens in scope
+here, and left deliberately. `ProfileTab`'s avatar picker is safe: its `url` values are
+hardcoded non-empty Unsplash constants, verified.
+
 ## 4. What was added
 
 ### A1 — Splash Screen (`src/components/SplashScreen.tsx`)

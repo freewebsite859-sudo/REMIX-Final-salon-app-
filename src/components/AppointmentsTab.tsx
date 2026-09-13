@@ -338,12 +338,18 @@ export const AppointmentsTab: React.FC<AppointmentsTabProps> = ({
                     className="shrink-0 cursor-pointer"
                     aria-label={`View ${apt.salonName} booking`}
                   >
-                    <img
-                      src={apt.salonImage}
-                      alt={apt.salonName}
-                      loading="lazy"
-                      className="w-[72px] h-[72px] rounded-xl object-cover ring-1 ring-outline-variant/40"
-                    />
+                    {apt.salonImage ? (
+                      <img
+                        src={apt.salonImage}
+                        alt={apt.salonName}
+                        loading="lazy"
+                        className="w-[72px] h-[72px] rounded-xl object-cover ring-1 ring-outline-variant/40"
+                      />
+                    ) : (
+                      <span className="w-[72px] h-[72px] rounded-xl bg-primary/10 text-primary flex items-center justify-center ring-1 ring-outline-variant/40">
+                        <span className="material-symbols-outlined text-[24px]">content_cut</span>
+                      </span>
+                    )}
                   </button>
 
                   <div className="flex-1 min-w-0">
