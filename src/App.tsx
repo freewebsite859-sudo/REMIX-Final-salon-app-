@@ -399,6 +399,23 @@ export default function App() {
     date: string;
     time: string;
     notes?: string;
+    /**
+     * Step 5 Customer Details captured in the booking modal. Optional because
+     * other entry points (Choose Professional, rebook) reach the summary
+     * without passing through that step — those fall back to the profile.
+     */
+    customer?: { name: string; phone: string; email: string };
+  } | null>(null);
+
+  /**
+   * Step 5 details to re-seed the booking modal with after the customer backs
+   * out of the review screen to change something. Null means "prefill from the
+   * stored profile", which is the normal first-entry behaviour.
+   */
+  const [bookingCustomerDetails, setBookingCustomerDetails] = useState<{
+    name: string;
+    phone: string;
+    email: string;
   } | null>(null);
 
   // Modals state
@@ -1202,15 +1219,26 @@ export default function App() {
       }
       const totals = computeBookingTotals(services, request.discountAmount ?? 0);
 
+      // The contact details the customer confirmed in Step 5 win over the
+      // stored profile. Someone booking for a family member types that
+      // person's name and number, and that is what the salon must receive —
+      // silently substituting the account holder's details sends the stylist
+      // to call the wrong phone. The account `id` always stays the signed-in
+      // user's: ownership and payment belong to the authenticated account.
+      const details = bookingSummaryDraft?.customer;
+      const contactName = details?.name?.trim() || user.name;
+      const contactPhone = details?.phone?.trim() || session?.user?.phone || user.phone;
+      const contactEmail = details?.email?.trim() || session?.user?.email;
+
       const body: BookingCreateRequest = {
         salon: toBookingSalonSnapshot(bookingSummaryDraft?.salon ?? null),
         services,
         stylist: toBookingStylistSnapshot(bookingSummaryDraft?.stylist ?? null),
         customer: {
           ...(userId ? { id: userId } : {}),
-          ...(user.name ? { name: user.name } : {}),
-          ...(session?.user?.email ? { email: session.user.email } : {}),
-          ...(session?.user?.phone || user.phone ? { phone: session?.user?.phone || user.phone } : {}),
+          ...(contactName ? { name: contactName } : {}),
+          ...(contactEmail ? { email: contactEmail } : {}),
+          ...(contactPhone ? { phone: contactPhone } : {}),
         },
         date: request.date,
         time: request.time,
@@ -1664,7 +1692,7 @@ export default function App() {
                 salons={salons}
                 initialQuery={customerRoute.query}
                 initialCategory={customerRoute.category}
-                savedServiceIds={savedServices.map((s) => s.serviceId)}
+                savedServiceRefs={savedServices}
                 onToggleSaveService={(salonId, service) =>
                   handleToggleSaveService(salonId, service.id)
                 }
@@ -2004,11 +2032,13 @@ export default function App() {
         initialStylist={selectedStylistForBooking}
         onConfirmBooking={handleConfirmBooking}
         onViewAppointments={handleViewAppointments}
-        customerDetails={{
-          name: user.name,
-          email: user.email,
-          phone: user.phone,
-        }}
+        customerDetails={
+          bookingCustomerDetails || {
+            name: user.name,
+            email: user.email,
+            phone: user.phone,
+          }
+        }
         onOpenSummary={(draft) => {
           setIsBookingModalOpen(false);
           setBookingSummaryDraft(draft);
@@ -2028,6 +2058,7 @@ export default function App() {
         date={bookingSummaryDraft?.date || new Date().toISOString().split('T')[0]}
         time={bookingSummaryDraft?.time || '2:30 PM'}
         specialNotes={bookingSummaryDraft?.notes || ''}
+        customer={bookingSummaryDraft?.customer || null}
         onConfirmBooking={handleConfirmBooking}
         onPayDeposit={handleServerBooking}
         onViewAppointments={() => {
@@ -2093,6 +2124,9 @@ export default function App() {
           setSelectedServicesForBooking(bookingSummaryDraft.services);
           setSelectedServiceForBooking(bookingSummaryDraft.services[0] || null);
           setSelectedStylistForBooking(bookingSummaryDraft.stylist);
+          // Carry the confirmed Step 5 details back into the modal so editing
+          // the date does not silently reset the contact to the profile values.
+          setBookingCustomerDetails(bookingSummaryDraft.customer || null);
           setIsBookingModalOpen(true);
         }}
       />

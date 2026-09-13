@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import type { Salon, SalonService } from '../types';
+import type { Salon, SalonService, SavedServiceRef } from '../types';
 
 /** Indian-rupee formatting with thousands separators (e.g. ₹3,150). */
 export function formatServiceINR(amount: number): string {
@@ -30,7 +30,13 @@ export interface ServicesScreenProps {
   onOpenService: (entry: CatalogServiceEntry) => void;
   onBookService: (salon: Salon, service: SalonService) => void;
   onBack?: () => void;
-  savedServiceIds?: string[];
+  /**
+   * Favourites as `(salonId, serviceId)` pairs. A flat list of service ids is
+   * NOT sufficient: service ids are only unique within a salon in this catalog,
+   * so matching on the id alone marks a same-id treatment at every other salon
+   * as saved.
+   */
+  savedServiceRefs?: SavedServiceRef[];
   onToggleSaveService?: (salonId: string, service: SalonService) => void;
 }
 
@@ -111,7 +117,7 @@ export const ServicesScreen: React.FC<ServicesScreenProps> = ({
   onOpenService,
   onBookService,
   onBack,
-  savedServiceIds = [],
+  savedServiceRefs = [],
   onToggleSaveService,
 }) => {
   const [query, setQuery] = useState(initialQuery);
@@ -120,6 +126,12 @@ export const ServicesScreen: React.FC<ServicesScreenProps> = ({
   const [popularOnly, setPopularOnly] = useState(false);
 
   const allEntries = useMemo(() => buildCatalogServiceEntries(salons), [salons]);
+
+  /** Favourite lookup keyed by salon + service so ids cannot collide. */
+  const savedKeys = useMemo(
+    () => new Set(savedServiceRefs.map((ref) => `${ref.salonId}:${ref.serviceId}`)),
+    [savedServiceRefs]
+  );
   const categories = useMemo(() => listServiceCategories(allEntries), [allEntries]);
 
   const filtered = useMemo(() => {
@@ -306,7 +318,7 @@ export const ServicesScreen: React.FC<ServicesScreenProps> = ({
             </h2>
 
             {rows.map((entry) => {
-              const isSaved = savedServiceIds.includes(entry.service.id);
+              const isSaved = savedKeys.has(`${entry.salon.id}:${entry.service.id}`);
               return (
                 <article
                   key={entry.key}

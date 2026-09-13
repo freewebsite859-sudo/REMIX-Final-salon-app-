@@ -19,7 +19,7 @@ Everything below was run against this working tree.
 | Command | Before | After |
 |---|---|---|
 | `npx tsc --noEmit` | clean | clean |
-| `npm test` | **31/35 suites** (4 failing) | **38/38 suites** |
+| `npm test` | **31/35 suites** (4 failing) | **39/39 suites** |
 | `npm run build` | ✓ | ✓ |
 
 `node_modules` is not persisted in this workspace — run
@@ -68,7 +68,7 @@ meant to cover — so the catalog and search logic had no coverage in practice.
 
 ---
 
-## 3. Bugs found and fixed
+## 3. Bugs found and fixed (8)
 
 ### BUG 1 — Catalog: demo salons leaked into live remote results (data integrity)
 
@@ -180,6 +180,52 @@ moment there is genuinely nothing to render.
 
 ---
 
+### BUG 7 (self-inflicted) — Step 5 "Customer Details" collected the contact details, then threw them away
+
+**Severity: high — data loss on every booking.** Introduced by the screen-11 work in this
+same session.
+
+`BookingModal.buildDraft()` returned `customer: { name, phone, email }`, but:
+
+- the `onOpenSummary` prop type did **not** declare `customer`, so no consumer could see it
+  (`tsc` did not complain — excess-property checks do not apply to non-fresh literals);
+- `App.tsx`'s `bookingSummaryDraft` state had no `customer` field;
+- `handleServerBooking` assembled the payload from the **stored profile**
+  (`user.name`, `session.user.email`, `user.phone`);
+- `BookingSummaryModal` contained **zero** references to `customer`.
+
+**Symptom:** anyone booking on someone else's behalf — a common salon case — typed a
+relative's name and phone into Step 5, and the salon received the *account holder's* details
+instead. The Booking Review screen never displayed the contact, so the substitution was
+invisible to the customer.
+
+**Fix (verified end-to-end):** declare `customer` on the `onOpenSummary` draft and on the
+draft state; carry it into `BookingSummaryModal`, which now renders a **Contact For This
+Appointment** block so it can be verified before payment; make `handleServerBooking` prefer
+the typed details and fall back to the profile only when they are absent or whitespace-only
+(the account `id` always stays the signed-in user's, so ownership and payment are
+unaffected); and seed the modal from the confirmed details when the customer backs out via
+"Change date/time", so editing the date no longer silently resets the contact.
+
+Covered by `test:customer-details-flow` (15 checks).
+
+### BUG 8 — Services Screen marked a service as saved at *every* salon sharing its id
+
+`ServicesScreen` computed `isSaved` from a **flat list of service ids**
+(`savedServices.map((s) => s.serviceId)`), but a favourite is a `(salonId, serviceId)` pair
+(`SavedServiceRef`) and, as `customerServicePath` documents, **service ids are only unique
+within a salon** in this catalog. Saving "Precision Cut" at one salon therefore rendered
+every same-id treatment at every other salon as saved.
+
+`SalonDetailModal` and `ServiceDetailScreen` already filtered by `salonId`; only the new
+Services Screen got this wrong.
+
+**Fix:** the screen now takes `savedServiceRefs: SavedServiceRef[]` and matches on a
+`salonId:serviceId` key. The regression check in `test:services-flow` builds two salons that
+deliberately reuse the id `svc-cut` and asserts only the saved one shows a filled heart —
+confirmed to **fail** against the old flat-id comparison (`savedAtClash=true`) and to pass
+after the fix.
+
 ## 4. What was added
 
 ### A1 — Splash Screen (`src/components/SplashScreen.tsx`)
@@ -282,7 +328,8 @@ return `503 {configured:false}` on this deployment (service-role key unset), and
 
 | Suite | Checks | Covers |
 |---|---|---|
-| `test:services-flow` (new) | 36 | catalog flattening, both new screens, splash |
+| `test:services-flow` (new) | 38 | catalog flattening, both new screens, splash |
+| `test:customer-details-flow` (new) | 15 | Step 5 details survive the handoff, appear on the review screen, and reach the booking payload instead of the stored profile |
 | `test:app-services-routing` (new) | 7 | the **real App shell** reaching both routes |
 | `test:account-deletion` (new) | 21 | deletion router + browser client |
 | `test:customer-routes` | +16 | the two new routes, encoding round trips |
@@ -342,6 +389,7 @@ npm install --no-audit --no-fund   # node_modules is not persisted
 npx tsc --noEmit                   # typecheck
 npm test                           # 37 suites
 npm run build                      # vite build + esbuild server
-npm run test:services-flow         # new screens (36 checks)
+npm run test:services-flow         # new screens (38 checks)
+npm run test:customer-details-flow # screen 11 -> 12 -> payload (15 checks)
 npm run test:app-services-routing  # App-shell routing (7 checks)
 ```

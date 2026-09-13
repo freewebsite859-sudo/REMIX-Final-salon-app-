@@ -52,7 +52,8 @@
     "diagnose:loader": "tsx --import ./test/asset-loader-register.mjs src/scripts/diagnostic-template-loader.ts",
     "test:services-flow": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/customerServicesFlow.test.tsx",
     "test:app-services-routing": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/appServicesRouting.test.tsx",
-    "test:account-deletion": "tsx test/accountDeletion.test.mts"
+    "test:account-deletion": "tsx test/accountDeletion.test.mts",
+    "test:customer-details-flow": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/customerDetailsFlow.test.tsx"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",

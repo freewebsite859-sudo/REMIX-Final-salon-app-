@@ -415,6 +415,50 @@ check(
   `elapsed=${elapsed}`
 );
 
+// ---------------------------------------------------------------------------
+// 5. Favourites are scoped per salon.
+//
+// Regression: ServicesScreen matched favourites on the bare service id, but
+// service ids are only unique WITHIN a salon in this catalog. Two salons that
+// both offer a service with the same id would show both as saved.
+// ---------------------------------------------------------------------------
+{
+  // salonB deliberately reuses salonA's service id.
+  const clashing: SalonService = { ...cut, id: 'svc-cut', name: 'Budget Cut', price: 400 };
+  const salonClash = makeSalon('salon-clash', 'Clash Barbers', [clashing]);
+
+  await act(async () => {
+    root.render(
+      <ServicesScreen
+        salons={[salonA, salonClash]}
+        savedServiceRefs={[{ salonId: 'salon-a', serviceId: 'svc-cut' }]}
+        onOpenService={() => undefined}
+        onBookService={() => undefined}
+        onToggleSaveService={() => undefined}
+      />
+    );
+    await new Promise((r) => setTimeout(r, 0));
+  });
+
+  const rows = cards();
+  const fromA = rows.find((c) => c.dataset.serviceId === 'svc-cut' && c.textContent?.includes('Glam Studio'));
+  const fromClash = rows.find((c) => c.dataset.serviceId === 'svc-cut' && c.textContent?.includes('Clash Barbers'));
+
+  check(
+    'both same-id services from different salons are listed',
+    Boolean(fromA) && Boolean(fromClash),
+    `a=${Boolean(fromA)} clash=${Boolean(fromClash)}`
+  );
+
+  const savedA = fromA?.querySelector('[aria-pressed="true"]');
+  const savedClash = fromClash?.querySelector('[aria-pressed="true"]');
+  check(
+    'only the saved salon shows the service as a favourite',
+    Boolean(savedA) && !savedClash,
+    `savedAtA=${Boolean(savedA)} savedAtClash=${Boolean(savedClash)}`
+  );
+}
+
 // Cleanup
 await act(async () => {
   root.unmount();

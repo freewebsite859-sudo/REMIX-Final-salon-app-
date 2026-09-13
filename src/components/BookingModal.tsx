@@ -25,6 +25,15 @@ interface BookingModalProps {
     date: string;
     time: string;
     notes?: string;
+    /**
+     * The Step 5 Customer Details. This MUST stay in the declared type: the
+     * review screen displays it and the booking payload sends it. When it was
+     * omitted here the object still carried the fields at runtime, but no
+     * consumer could see them — so the salon received the account holder's
+     * stored contact details instead of what the customer had just typed
+     * (which matters for bookings made on someone else's behalf).
+     */
+    customer: { name: string; phone: string; email: string };
   }) => void;
   fromHistory?: boolean;
   profile?: any;
