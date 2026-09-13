@@ -170,3 +170,121 @@ export function safeSetMuted(
     return false;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Source fallback
+// ---------------------------------------------------------------------------
+
+/**
+ * Alternate stream tried when a reel's own `videoUrl` fails to load.
+ *
+ * Ordered so the first entry that the browser can actually fetch wins. Set
+ * `VITE_NEXORA_FALLBACK_VIDEO_URL` to point at a mirror you control.
+ *
+ * NOTE ON VERIFICATION: the automated environment this was written in has no
+ * outbound network access, so none of these URLs were fetched successfully
+ * during development. Treat this list as a starting point to confirm against a
+ * real browser, not as a verified set. The animated poster fallback below is
+ * what actually guarantees the card is never blank.
+ */
+export const FALLBACK_VIDEO_SOURCES: readonly string[] = [
+  'https://assets.mixkit.co/videos/preview/mixkit-hairdresser-cutting-hair-with-scissors-and-a-comb-41131-large.mp4',
+  'https://assets.mixkit.co/videos/preview/mixkit-barber-styling-a-mans-hair-with-a-brush-41139-large.mp4',
+];
+
+/**
+ * Pick the next source to try for a reel whose current one failed.
+ *
+ * Returns the reel's own URL first, then each configured fallback that has not
+ * already been attempted, then `null` when every option is exhausted — at which
+ * point the caller shows the animated poster instead of a dead player.
+ */
+export function nextPlayableSource(
+  primaryUrl: string,
+  attempted: readonly string[],
+  fallbacks: readonly string[] = FALLBACK_VIDEO_SOURCES
+): string | null {
+  const tried = new Set(attempted);
+  if (primaryUrl && !tried.has(primaryUrl)) return primaryUrl;
+  for (const candidate of fallbacks) {
+    if (candidate && !tried.has(candidate)) return candidate;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// First-gesture autoplay unlock
+// ---------------------------------------------------------------------------
+
+let gestureUnlockInstalled = false;
+let userHasInteracted = false;
+const pendingAutoplay = new Set<PlaybackTarget>();
+
+function runFirstGestureUnlock(): void {
+  userHasInteracted = true;
+  // Copy: safePlay callbacks can unregister during iteration.
+  for (const video of Array.from(pendingAutoplay)) {
+    safePlay(video);
+  }
+  pendingAutoplay.clear();
+}
+
+/**
+ * Install the one-time page-level interaction listener that releases blocked
+ * autoplay.
+ *
+ * Browsers allow muted autoplay but routinely block it anyway (data-saver
+ * modes, low-power mode, WebViews, aggressive privacy settings). A real user
+ * gesture is always sufficient, so the first pointer/key interaction retries
+ * every video that asked to play and was refused.
+ *
+ * Singleton by design: many reel cards mount at once and each would otherwise
+ * attach its own listener.
+ */
+export function installGestureAutoplayUnlock(): void {
+  if (gestureUnlockInstalled || typeof window === 'undefined') return;
+  gestureUnlockInstalled = true;
+
+  const options: AddEventListenerOptions = { once: false, capture: true, passive: true };
+  const onGesture = () => {
+    runFirstGestureUnlock();
+    window.removeEventListener('pointerdown', onGesture, options);
+    window.removeEventListener('touchstart', onGesture, options);
+    window.removeEventListener('keydown', onGesture, options);
+  };
+
+  window.addEventListener('pointerdown', onGesture, options);
+  window.addEventListener('touchstart', onGesture, options);
+  window.addEventListener('keydown', onGesture, options);
+}
+
+/** True once the user has clicked/tapped/typed anywhere on the page. */
+export function hasUserInteracted(): boolean {
+  return userHasInteracted;
+}
+
+/**
+ * Ask for playback to be retried on the next user gesture.
+ *
+ * Returns an unregister function for effect cleanup.
+ */
+export function requestAutoplayOnGesture(video: PlaybackTarget | null | undefined): () => void {
+  if (!video) return () => undefined;
+  installGestureAutoplayUnlock();
+  if (userHasInteracted) {
+    // Already unlocked — no need to wait for a gesture that may never come.
+    safePlay(video);
+    return () => undefined;
+  }
+  pendingAutoplay.add(video);
+  return () => {
+    pendingAutoplay.delete(video);
+  };
+}
+
+/** Test/reset hook so suites can exercise the gesture path repeatedly. */
+export function resetGestureAutoplayUnlockForTests(): void {
+  gestureUnlockInstalled = false;
+  userHasInteracted = false;
+  pendingAutoplay.clear();
+}

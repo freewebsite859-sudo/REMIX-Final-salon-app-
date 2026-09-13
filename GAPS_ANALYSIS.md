@@ -19,7 +19,7 @@ Everything below was run against this working tree.
 | Command | Before | After |
 |---|---|---|
 | `npx tsc --noEmit` | clean | clean |
-| `npm test` | **31/35 suites** (4 failing) | **41/41 suites** |
+| `npm test` | **31/35 suites** (4 failing) | **42/42 suites** |
 | `npm run build` | ✓ | ✓ |
 
 `node_modules` is not persisted in this workspace — run
@@ -68,7 +68,7 @@ meant to cover — so the catalog and search logic had no coverage in practice.
 
 ---
 
-## 3. Bugs found and fixed (15)
+## 3. Bugs found and fixed (16)
 
 ### BUG 1 — Catalog: demo salons leaked into live remote results (data integrity)
 
@@ -392,6 +392,69 @@ Covered by `test:booking-contact-leak` (10 checks), which drives the real `App` 
 real demo session, because the defect lives in `App.tsx` state management rather than in any
 single component.
 
+### BUG 16 — Reel videos had no recovery path when a stream failed
+
+**Symptom.** On a slow connection, a dead CDN URL, or a browser that refuses
+autoplay, the salon reel surfaces showed a black rectangle with no controls.
+The user had no way to tell "loading" from "broken", and no way to force
+playback.
+
+**Cause.** Four separate surfaces each implemented video playback by hand, and
+each drifted:
+
+| Surface | State before |
+|---|---|
+| `VideoReelsSection.tsx` | `autoPlay`/`loop`/`muted`, but a single hard-coded `src`; first failure was terminal |
+| `SalonVideoReelsModal.tsx` | flipped one `videoError` flag on the first failure and gave up |
+| `SalonStoriesReelFeed.tsx` | hover video with **no ref, no `onError`, no manual control** |
+| `SalonDetailModal.tsx` | renders **no `<video>` at all** — its Videos tab is a thumbnail grid that delegates to `SalonVideoReelsModal` (`grep -c "<video"` → **0**) |
+
+None of them registered a gesture-unlock listener, so a blocked autoplay stayed
+blocked even after the user clicked.
+
+**Fix.** Extracted `src/hooks/useReelVideo.tsx` — one controller, four call
+sites:
+
+1. **Source ladder.** `nextPlayableSource()` serves the reel's own URL, then
+   each entry in `FALLBACK_VIDEO_SOURCES`, then `null`. A failed stream steps
+   down instead of dying; the ladder resets when the reel changes.
+2. **Animated poster fallback.** Once every source has genuinely failed,
+   `ReelPosterFallback` shows the reel thumbnail with a slow Ken Burns drift, an
+   explanation, and a "Try again" button that restarts the ladder. Opt-outs for
+   `prefers-reduced-motion`.
+3. **Global gesture unlock.** `installGestureAutoplayUnlock()` is called once in
+   `main.tsx`. The first `pointerdown`/`touchstart`/`keydown` releases every
+   video whose autoplay was refused. Singleton and idempotent — one listener for
+   the whole page, not one per card.
+4. **Always-visible play/pause toggle.** `ReelPlayToggle` renders regardless of
+   playback state. Previously the card controls only appeared once `isPlaying`
+   was true, so a blocked autoplay was a dead end with no affordance.
+
+`SalonStoriesReelFeed`'s card was extracted from its `.map()` body into
+`StoryReelCard` — hooks cannot run inside a render callback.
+
+**Note on the fallback URLs.** This environment has **no outbound network
+access** (`curl` returns `000` / `SSL_ERROR_SYSCALL` for `example.com`,
+`google.com`, and both Mixkit URLs), so **the fallback MP4 list could not be
+verified**. It is documented in-source as a starting point to confirm against a
+real browser. The animated poster fallback is the part that is actually
+guaranteed — it is generated locally from the reel's own thumbnail and needs no
+network.
+
+**Verified.** `test:media-playback` (60 checks) covers the ladder, the poster
+fallback, the gesture unlock, the toggle, and a source scan asserting every
+surface carries `muted`/`playsInline`/`autoPlay`/`loop`/`onError` and no
+unguarded `.play()`. Negative controls: disabling the ladder →
+**58/60** (fails on the step-down checks); disabling the gesture unlock →
+**55/60** (fails on all five gesture checks).
+
+**Also note.** One test assertion was itself wrong before it was right: it
+checked `video.hasAttribute('muted')`. React sets `muted` as a DOM *property*
+and never emits the attribute, so that assertion fails against correctly-muted
+React video. It now checks `.muted`.
+
+---
+
 ## 4. What was added
 
 ### A1 — Splash Screen (`src/components/SplashScreen.tsx`)
@@ -430,6 +493,27 @@ review with no contact details. That asserted the old behaviour, so it was
 updated to supply a customer (as a signed-in user would), preserving its actual
 intent — that the draft carries every selected service. Eight new checks cover
 the gate itself.
+
+### Shared reel playback controller (`src/hooks/useReelVideo.tsx`)
+
+One controller behind all four reel surfaces, extracted because each had
+re-implemented playback separately and drifted (see BUG 16). Exports:
+
+- `useReelVideo({ videoUrl, posterUrl, wantPlaying, muted, fallbackSources? })`
+  → `{ videoRef, activeSrc, exhausted, isPlaying, hasDecoded, togglePlay,
+  userOverride, clearUserOverride, resetLadder, onVideoError, onVideoPlaying,
+  onPause, onLoadedData }`. Components own their *intent* (hover, viewport
+  visibility, active modal index); the hook turns intent into safe DOM calls.
+- `ReelPosterFallback` — animated thumbnail shown once every source has failed.
+- `ReelPlayToggle` — always-rendered play/pause affordance.
+
+Supporting additions in `src/lib/mediaPlayback.ts`: `FALLBACK_VIDEO_SOURCES`,
+`nextPlayableSource()`, `installGestureAutoplayUnlock()`,
+`hasUserInteracted()`, `requestAutoplayOnGesture()`. The global unlock is
+installed once from `src/main.tsx`.
+
+Must be a **`.tsx`** file — the hook module exports JSX components, and a `.ts`
+extension fails with `TS1005`/`TS1109`.
 
 ### 4.1 Code-splitting the critical path
 
@@ -496,6 +580,7 @@ return `503 {configured:false}` on this deployment (service-role key unset), and
 |---|---|---|
 | `test:services-flow` (new) | 44 | catalog flattening, both new screens, splash incl. crossfade |
 | `test:booking-contact-leak` (new) | 10 | a booking's contact cannot leak into the next booking |
+| `test:media-playback` (new) | 60 | source ladder, poster fallback, gesture unlock, play toggle, per-surface attribute scan |
 | `test:booking-cancellation` (new) | 28 | cancel router, owner scoping, slot release, browser client |
 | `test:customer-details-flow` (new) | 23 | Step 5 details survive the handoff, appear on the review screen, and reach the booking payload instead of the stored profile |
 | `test:app-services-routing` (new) | 13 | the **real App shell** reaching both routes via both spellings |
@@ -507,7 +592,7 @@ return `503 {configured:false}` on this deployment (service-role key unset), and
 screens in isolation and would have passed even with the `App.tsx` wiring
 broken — which is exactly what caught BUG 6.
 
-**Test coverage: 35 suites → 41 suites** (31 passing at baseline, 41 passing now).
+**Test coverage: 35 suites → 42 suites** (31 passing at baseline, 42 passing now).
 
 ---
 
@@ -558,11 +643,12 @@ These are unchanged by this work and were **not** verified here:
 ```bash
 npm install --no-audit --no-fund   # node_modules is not persisted
 npx tsc --noEmit                   # typecheck
-npm test                           # 37 suites
+npm test                           # 42 suites
 npm run build                      # vite build + esbuild server
 npm run test:services-flow         # new screens (38 checks)
 npm run test:customer-details-flow # screen 11 -> 12 -> 13/15 round trip (23 checks)
 npm run test:booking-cancellation  # cancel route + client (28 checks)
 npm run test:booking-contact-leak  # contact cannot leak across bookings (10 checks)
 npm run test:app-services-routing  # App-shell routing (7 checks)
+npm run test:media-playback        # reel video fallback + autoplay (60 checks)
 ```
