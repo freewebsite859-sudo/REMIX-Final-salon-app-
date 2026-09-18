@@ -3,6 +3,9 @@ import { AppView, BusinessTypeId } from '../types';
 import { CATEGORY_TEMPLATES } from '../categoryTemplates';
 import { VideoReelsSection } from './VideoReelsSection';
 import { getTemplateSalons } from '../data/templateSalons';
+import { SalonComparisonSection } from './landing/SalonComparisonSection';
+import { ServiceCategoryShowcase } from './landing/ServiceCategoryShowcase';
+import { CustomerBenefitsSection } from './landing/CustomerBenefitsSection';
 
 interface LandingPageProps {
   setCurrentView: (view: AppView) => void;
@@ -78,7 +81,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ setCurrentView, onSele
           <div className="w-full lg:w-1/2 relative flex items-center justify-center lg:justify-end z-10">
             <div 
               onClick={() => setCurrentView('preview')}
-              className="relative w-full max-w-md bg-white border border-outline-variant/30 rounded-2xl shadow-2xl overflow-hidden flex flex-col cursor-pointer group hover:scale-[1.01] transition-transform duration-300"
+              className="animate-float-slow relative w-full max-w-md bg-white border border-outline-variant/30 rounded-2xl shadow-2xl overflow-hidden flex flex-col cursor-pointer group hover:scale-[1.01] transition-transform duration-300"
             >
               <div className="h-12 bg-slate-50 flex items-center justify-between px-4 border-b border-slate-200">
                 <div className="flex gap-1.5">
@@ -130,6 +133,18 @@ export const LandingPage: React.FC<LandingPageProps> = ({ setCurrentView, onSele
           </div>
         </div>
 
+        {/* Old vs Smart Salon split-screen comparison */}
+        <SalonComparisonSection onCta={() => setCurrentView('preview')} />
+
+        {/* Service category showcase grid */}
+        <ServiceCategoryShowcase
+          onSelectCategory={handleTemplateClick}
+          onViewAll={() => setCurrentView('preview')}
+        />
+
+        {/* Customer benefit highlight cards */}
+        <CustomerBenefitsSection />
+
         {/* Salon Video Previews & Stories Reel Feed */}
         <VideoReelsSection
           salons={templateSalons}
@@ -174,7 +189,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ setCurrentView, onSele
               <div
                 key={tmpl.id}
                 onClick={() => handleTemplateClick(tmpl.id)}
-                className="group p-5 rounded-2xl border border-slate-200 bg-white hover:border-primary hover:shadow-lg transition-all cursor-pointer flex flex-col justify-between gap-3 relative overflow-hidden"
+                className="floating-card group p-5 rounded-2xl border border-slate-200 bg-white hover:border-primary cursor-pointer flex flex-col justify-between gap-3 relative overflow-hidden"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="w-10 h-10 rounded-xl bg-slate-100 group-hover:bg-primary group-hover:text-white transition-colors flex items-center justify-center shrink-0">
