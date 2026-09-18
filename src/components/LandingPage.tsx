@@ -6,6 +6,8 @@ import { getTemplateSalons } from '../data/templateSalons';
 import { SalonComparisonSection } from './landing/SalonComparisonSection';
 import { ServiceCategoryShowcase } from './landing/ServiceCategoryShowcase';
 import { CustomerBenefitsSection } from './landing/CustomerBenefitsSection';
+import { TrustSocialProofSection } from './landing/TrustSocialProofSection';
+import { JaipurNetworkMap } from './landing/JaipurNetworkMap';
 
 interface LandingPageProps {
   setCurrentView: (view: AppView) => void;
@@ -157,6 +159,16 @@ export const LandingPage: React.FC<LandingPageProps> = ({ setCurrentView, onSele
             else setCurrentView('preview');
           }}
           className="pt-2"
+        />
+
+        {/* Trust & social proof: QR demo, rewards preview, transparency, testimonials */}
+        <TrustSocialProofSection />
+
+        {/* Interactive Jaipur network map */}
+        <JaipurNetworkMap
+          salons={templateSalons}
+          onOpenSalon={(s) => handleTemplateClick(s.id as BusinessTypeId)}
+          onBookSalon={(s) => handleTemplateClick(s.id as BusinessTypeId)}
         />
 
         {/* 14 Category Templates Showcase Section */}
