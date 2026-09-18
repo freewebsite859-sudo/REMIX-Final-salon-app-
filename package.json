@@ -59,7 +59,8 @@
     "test:media-playback": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/mediaPlayback.test.tsx",
     "test:splash-transition": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/splashTransition.test.tsx",
     "test:landing-sections": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/landingSections.test.tsx",
-    "test:landing-trust-map": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/landingTrustMap.test.tsx"
+    "test:landing-trust-map": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/landingTrustMap.test.tsx",
+    "test:salon-discovery": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/salonDiscovery.test.tsx"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",

@@ -11,7 +11,8 @@
  *   /customer/signup
  *   /customer/home
  *   /customer/search
- *   /customer/salon/:salonSlug
+ *   /customer/salons            (alias: /salons)
+ *   /customer/salon/:salonSlug  (alias: /salon/:salonSlug)
  *   /customer/book/:salonId
  *   /customer/bookings
  *   /customer/booking/:bookingId
@@ -36,6 +37,8 @@ export const CUSTOMER_HOME = '/customer/home';
 export const CUSTOMER_LOGIN = '/customer/login';
 export const CUSTOMER_SIGNUP = '/customer/signup';
 export const CUSTOMER_SEARCH = '/customer/search';
+/** Salon discovery page: `/customer/salons` (optionally `?q=` / `?sort=` / `?view=`). */
+export const CUSTOMER_SALONS = '/customer/salons';
 /** Service catalog browser: `/customer/services` (optionally `?q=` / `?category=`). */
 export const CUSTOMER_SERVICES = '/customer/services';
 export const CUSTOMER_BOOKINGS = '/customer/bookings';
@@ -69,6 +72,14 @@ export const CUSTOMER_SERVICE_PREFIX = '/customer/service/';
 export const SERVICES_ALIAS = '/services';
 export const SERVICES_ALIAS_PREFIX = '/services/';
 
+/**
+ * Short aliases for salon discovery and salon detail: `/salons` and
+ * `/salon/:salonSlug`. Canonicalised to their `/customer` forms the same way
+ * as the services aliases.
+ */
+export const SALONS_ALIAS = '/salons';
+export const SALON_ALIAS_PREFIX = '/salon/';
+
 /** Session key for the post-login return path (e.g. a book attempt while logged out). */
 export const CUSTOMER_RETURN_PATH_KEY = 'nexora-customer-return-path';
 
@@ -82,6 +93,7 @@ export type CustomerRouteKind =
   | 'signup'
   | 'home'
   | 'search'
+  | 'salons'
   | 'services'
   | 'service'
   | 'salon'
@@ -113,6 +125,10 @@ export interface CustomerRoute {
   category?: string;
   /** Optional free-text query (`?q=` on search). */
   query?: string;
+  /** Present for `/customer/salons?sort=`. */
+  sort?: string;
+  /** Present for `/customer/salons?view=`. */
+  view?: 'grid' | 'list';
 }
 
 /** Auth screens under the customer namespace (and their legacy aliases). */
@@ -177,6 +193,36 @@ export function canonicalizeServicesAlias(
     return `${CUSTOMER_SERVICE_PREFIX}${serviceId}${search}`;
   }
   return null;
+}
+
+/**
+ * Map `/salons` and `/salon/:slug` onto their canonical `/customer` URLs,
+ * preserving the query string. Returns null for non-salon aliases.
+ */
+export function canonicalizeSalonAlias(
+  path: string = currentPathname()
+): string | null {
+  const qIndex = path.indexOf('?');
+  const pathname = qIndex >= 0 ? path.slice(0, qIndex) : path;
+  const search = qIndex >= 0 ? path.slice(qIndex) : '';
+  const normalized = pathname.replace(/\/+$/, '') || '/';
+
+  if (normalized === SALONS_ALIAS) {
+    return `${CUSTOMER_SALONS}${search}`;
+  }
+  if (normalized.startsWith(SALON_ALIAS_PREFIX)) {
+    const slug = normalized.slice(SALON_ALIAS_PREFIX.length).split('/')[0] || '';
+    if (!slug) return `${CUSTOMER_SALONS}${search}`;
+    return `${CUSTOMER_SALON_PREFIX}${slug}${search}`;
+  }
+  return null;
+}
+
+/** Any short alias (`/services*`, `/salons`, `/salon/*`) → canonical `/customer` path. */
+export function canonicalizeCustomerAlias(
+  path: string = currentPathname()
+): string | null {
+  return canonicalizeServicesAlias(path) ?? canonicalizeSalonAlias(path);
 }
 
 export function isCustomerAuthPath(path: string = currentPathname()): boolean {
@@ -247,6 +293,18 @@ export function customerServicesPath(options: { query?: string; category?: strin
   return qs ? `${CUSTOMER_SERVICES}?${qs}` : CUSTOMER_SERVICES;
 }
 
+export function customerSalonsPath(
+  options: { query?: string; sort?: string; view?: 'grid' | 'list'; category?: string } = {}
+): string {
+  const params = new URLSearchParams();
+  if (options.query && options.query.trim()) params.set('q', options.query.trim());
+  if (options.sort) params.set('sort', options.sort);
+  if (options.view) params.set('view', options.view);
+  if (options.category) params.set('category', options.category);
+  const qs = params.toString();
+  return qs ? `${CUSTOMER_SALONS}?${qs}` : CUSTOMER_SALONS;
+}
+
 export function customerSearchPath(query?: string): string {
   if (!query || !query.trim()) return CUSTOMER_SEARCH;
   return `${CUSTOMER_SEARCH}?q=${encodeURIComponent(query.trim())}`;
@@ -297,6 +355,16 @@ export function parseCustomerRoute(
   }
   if (normalized === CUSTOMER_SEARCH) {
     return { kind: 'search', path: normalized, query: q };
+  }
+  if (normalized === CUSTOMER_SALONS || normalized === SALONS_ALIAS) {
+    return {
+      kind: 'salons',
+      path: normalized,
+      query: q,
+      category: params.get('category') || undefined,
+      sort: params.get('sort') || undefined,
+      view: params.get('view') === 'list' ? 'list' : params.get('view') === 'grid' ? 'grid' : undefined,
+    };
   }
   if (normalized === CUSTOMER_SERVICES || normalized === SERVICES_ALIAS) {
     return {
@@ -354,8 +422,13 @@ export function parseCustomerRoute(
     }
   }
 
-  if (normalized.startsWith(CUSTOMER_SALON_PREFIX)) {
-    const slug = safeDecode(normalized.slice(CUSTOMER_SALON_PREFIX.length).split('/')[0] || '');
+  const salonMatch = normalized.startsWith(CUSTOMER_SALON_PREFIX)
+    ? normalized.slice(CUSTOMER_SALON_PREFIX.length)
+    : normalized.startsWith(SALON_ALIAS_PREFIX)
+    ? normalized.slice(SALON_ALIAS_PREFIX.length)
+    : null;
+  if (salonMatch !== null) {
+    const slug = safeDecode(salonMatch.split('/')[0] || '');
     if (slug) return { kind: 'salon', path: normalized, salonSlug: slug };
   }
 
@@ -391,6 +464,7 @@ export function isProtectedCustomerRoute(route: CustomerRoute = parseCustomerRou
 export function customerRouteToTab(route: CustomerRoute): ActiveTab {
   switch (route.kind) {
     case 'search':
+    case 'salons':
     case 'services':
     case 'service':
       return 'search';
@@ -637,6 +711,9 @@ export const CUSTOMER_ROUTE_CATALOG: readonly string[] = [
   CUSTOMER_SIGNUP,
   CUSTOMER_HOME,
   CUSTOMER_SEARCH,
+  CUSTOMER_SALONS,
+  SALONS_ALIAS,
+  `${SALON_ALIAS_PREFIX}:salonSlug`,
   CUSTOMER_SERVICES,
   `${CUSTOMER_SERVICE_PREFIX}:serviceId`,
   // Accepted aliases for the two service screens (see canonicalizeServicesAlias).

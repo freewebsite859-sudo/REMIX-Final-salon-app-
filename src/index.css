@@ -152,3 +152,29 @@
   .floating-card:hover { transform: none; }
   .shimmer-on-hover:hover::after { animation: none; }
 }
+
+/* ---- Dual-thumb price range slider ---- */
+.range-thumb::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 9999px;
+  background: #fff;
+  border: 3px solid var(--color-primary);
+  box-shadow: 0 2px 6px rgba(120, 0, 50, 0.3);
+  cursor: grab;
+  pointer-events: auto;
+}
+.range-thumb::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 9999px;
+  background: #fff;
+  border: 3px solid var(--color-primary);
+  box-shadow: 0 2px 6px rgba(120, 0, 50, 0.3);
+  cursor: grab;
+  pointer-events: auto;
+}
+.range-thumb::-webkit-slider-runnable-track { background: transparent; }
+.range-thumb::-moz-range-track { background: transparent; }

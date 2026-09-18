@@ -15,6 +15,12 @@ import { RewardsTab } from './components/RewardsTab';
  * loading them on demand keeps their weight (and their dependency tails) off
  * the critical path for Home/Search/Bookings.
  */
+const SalonDiscoveryPage = lazy(() =>
+  import('./components/salons/SalonDiscoveryPage').then((m) => ({ default: m.SalonDiscoveryPage }))
+);
+const SalonDetailPage = lazy(() =>
+  import('./components/salons/SalonDetailPage').then((m) => ({ default: m.SalonDetailPage }))
+);
 const MembershipPage = lazy(() =>
   import('./components/MembershipPage').then((m) => ({ default: m.MembershipPage }))
 );
@@ -91,10 +97,12 @@ import {
   customerBookingPath,
   customerRouteToTab,
   customerSalonPath,
+  customerSalonsPath,
   customerSearchPath,
   customerServicePath,
   customerServicesPath,
-  canonicalizeServicesAlias,
+  canonicalizeCustomerAlias,
+  CUSTOMER_SALONS,
   isCustomerPath,
   isProtectedCustomerRoute,
   navigateCustomer,
@@ -572,17 +580,18 @@ export default function App() {
 
       switch (route.kind) {
         case 'salon': {
+          // `/customer/salon/:slug` renders the full-page salon detail screen;
+          // the modal is reserved for in-place opens from Home/Search cards.
           if (route.salonSlug) {
             const match =
               salons.find((s) => slugifySalon(s.name) === route.salonSlug) ||
               salons.find((s) => s.id === route.salonSlug) ||
               salons.find((s) => slugifySalon(s.id) === route.salonSlug) ||
               null;
-            if (match) {
-              setSelectedSalonForDetail(match);
-              setIsSalonDetailModalOpen(true);
-            }
+            if (match) setSelectedSalonForDetail(match);
           }
+          setIsSalonDetailModalOpen(false);
+          setIsBookingModalOpen(false);
           break;
         }
         case 'book': {
@@ -630,6 +639,7 @@ export default function App() {
           // back-navigation does not leave a stale modal on top.
           if (
             route.kind === 'home' ||
+            route.kind === 'salons' ||
             route.kind === 'bookings' ||
             route.kind === 'favourites' ||
             route.kind === 'profile' ||
@@ -659,7 +669,7 @@ export default function App() {
       // route gate below — which is keyed on the `/customer` prefix — sees a
       // path it recognises, and so the address bar settles on one canonical URL
       // instead of two spellings of the same screen.
-      const aliased = canonicalizeServicesAlias(rawPath);
+      const aliased = canonicalizeCustomerAlias(rawPath);
       const path = aliased ?? rawPath;
       if (aliased && aliased !== rawPath) {
         navigateCustomer(aliased, { replace: true });
@@ -1187,11 +1197,23 @@ export default function App() {
   // Handlers
   const handleOpenSalonDetails = (salon: Salon) => {
     setSelectedSalonForDetail(salon);
-    setIsSalonDetailModalOpen(true);
-    // Reflect salon detail in the URL: /customer/salon/:salonSlug
+    // Full-page salon detail at /customer/salon/:salonSlug (also /salon/:slug).
     const slug = slugifySalon(salon.name || salon.id);
     goToCustomer(customerSalonPath(slug));
   };
+
+  /** Resolve the salon a `/customer/salon/:slug` route points at. */
+  const routedSalon: Salon | null = (() => {
+    if (customerRoute.kind !== 'salon' || !customerRoute.salonSlug) return null;
+    const slug = customerRoute.salonSlug;
+    return (
+      salons.find((s) => slugifySalon(s.name) === slug) ||
+      salons.find((s) => s.id === slug) ||
+      salons.find((s) => slugifySalon(s.id) === slug) ||
+      selectedSalonForDetail ||
+      null
+    );
+  })();
 
   const handleOpenBooking = (
     salon: Salon,
@@ -1709,9 +1731,10 @@ export default function App() {
               }
             >
             {(activeTab === 'home' ||
-              customerRoute.kind === 'salon' ||
               customerRoute.kind === 'book') &&
               activeTab !== 'search' &&
+              customerRoute.kind !== 'salon' &&
+              customerRoute.kind !== 'salons' &&
               customerRoute.kind !== 'services' &&
               customerRoute.kind !== 'service' &&
               customerRoute.kind !== 'membership' &&
@@ -1757,13 +1780,79 @@ export default function App() {
                 onOpenLocation={() => setIsLocationModalOpen(true)}
                 onOpenMembership={() => goToCustomer(CUSTOMER_MEMBERSHIP)}
                 onOpenReferral={() => goToCustomer(CUSTOMER_REFERRAL)}
+                onOpenDiscovery={(sort) => goToCustomer(customerSalonsPath({ sort }))}
                 playingVideoId={playingVideoId}
                 onPlayingVideoChange={setPlayingVideoId}
               />
             )}
 
+            {/* Salon Discovery — /customer/salons (alias /salons) */}
+            {customerRoute.kind === 'salons' && (
+              <SalonDiscoveryPage
+                salons={salons}
+                savedSalonIds={savedSalonIds}
+                isLoading={catalog.isLoading}
+                currentLocation={currentLocation}
+                initialQuery={customerRoute.query}
+                initialSort={customerRoute.sort}
+                initialView={customerRoute.view}
+                initialCategory={customerRoute.category}
+                onStateChange={({ query, sort, view }) => {
+                  const next = customerSalonsPath({
+                    query,
+                    sort: sort === 'nearest' ? undefined : sort,
+                    view: view === 'grid' ? undefined : view,
+                    category: customerRoute.category,
+                  });
+                  if (typeof window !== 'undefined') {
+                    const current = `${window.location.pathname}${window.location.search}`;
+                    if (current !== next) {
+                      window.history.replaceState({ nexoraCustomer: 'salons' }, '', next);
+                    }
+                  }
+                }}
+                onOpenSalon={handleOpenSalonDetails}
+                onBookSalon={(salon) => handleOpenBooking(salon)}
+                onToggleSaveSalon={handleToggleSaveSalon}
+                onOpenLocation={() => setIsLocationModalOpen(true)}
+                onBack={() => goToCustomer(CUSTOMER_HOME)}
+              />
+            )}
+
+            {/* Salon Detail — /customer/salon/:salonSlug (alias /salon/:slug) */}
+            {customerRoute.kind === 'salon' && routedSalon && (
+              <SalonDetailPage
+                salon={routedSalon}
+                allSalons={salons}
+                isSaved={savedSalonIds.includes(routedSalon.id)}
+                savedSalonIds={savedSalonIds}
+                currentLocation={currentLocation}
+                onBack={() => {
+                  if (typeof window !== 'undefined' && window.history.length > 1) {
+                    window.history.back();
+                  } else {
+                    goToCustomer(CUSTOMER_SALONS, { replace: true });
+                  }
+                }}
+                onToggleSave={handleToggleSaveSalon}
+                onToggleSaveSalon={handleToggleSaveSalon}
+                onBook={(salon, srv, st, services) => handleOpenBooking(salon, srv, st, services)}
+                onOpenSalon={handleOpenSalonDetails}
+              />
+            )}
+            {customerRoute.kind === 'salon' && !routedSalon && !catalog.isLoading && (
+              <div className="flex-1 flex flex-col items-center justify-center text-center p-10" data-testid="salon-not-found">
+                <span className="material-symbols-outlined text-5xl text-outline-variant mb-3">storefront</span>
+                <h2 className="font-bold text-on-surface">Salon not found</h2>
+                <p className="text-sm text-on-surface-variant mt-1">It may have moved or been removed.</p>
+                <button type="button" onClick={() => goToCustomer(CUSTOMER_SALONS, { replace: true })} className="mt-4 h-10 px-5 rounded-xl bg-primary text-on-primary text-xs font-bold cursor-pointer">Browse all salons</button>
+              </div>
+            )}
+
             {activeTab === 'search' &&
               customerRoute.kind !== 'membership' &&
+              customerRoute.kind !== 'salons' &&
+              customerRoute.kind !== 'salon' &&
               customerRoute.kind !== 'services' &&
               customerRoute.kind !== 'service' && (
               <SearchTab

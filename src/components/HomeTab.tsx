@@ -29,6 +29,8 @@ interface HomeTabProps {
   onOpenMembership?: () => void;
   /** Navigate to referral. */
   onOpenReferral?: () => void;
+  /** Open the full salon discovery page (/customer/salons), optionally pre-sorted. */
+  onOpenDiscovery?: (sort?: 'nearest' | 'top_rated' | 'most_popular' | 'lowest_price') => void;
   /** Active playing video ID for concurrent autoplay coordination */
   playingVideoId?: string | null;
   /** Handler when active playing video changes */
@@ -390,6 +392,7 @@ const SalonRail: React.FC<{
   onToggleSave: (id: string) => void;
   badgeFor?: (s: Salon) => string | undefined;
   emptyLabel?: string;
+  onSeeAll?: () => void;
 }> = ({
   title,
   subtitle,
@@ -400,11 +403,19 @@ const SalonRail: React.FC<{
   onToggleSave,
   badgeFor,
   emptyLabel = 'No salons in this section yet.',
+  onSeeAll,
 }) => (
   <section className="mb-7">
-    <div className="px-page-margin mb-3">
-      <h2 className="font-section-heading text-[17px] font-bold text-on-surface">{title}</h2>
-      {subtitle && <p className="text-[12px] text-on-surface-variant mt-0.5">{subtitle}</p>}
+    <div className="px-page-margin mb-3 flex items-end justify-between gap-2">
+      <div>
+        <h2 className="font-section-heading text-[17px] font-bold text-on-surface">{title}</h2>
+        {subtitle && <p className="text-[12px] text-on-surface-variant mt-0.5">{subtitle}</p>}
+      </div>
+      {onSeeAll && (
+        <button type="button" onClick={onSeeAll} className="shrink-0 text-[12px] font-bold text-primary inline-flex items-center gap-0.5 cursor-pointer" data-testid="rail-see-all">
+          See all<span className="material-symbols-outlined text-sm">chevron_right</span>
+        </button>
+      )}
     </div>
     {salons.length === 0 ? (
       <p className="px-page-margin text-[13px] text-on-surface-variant">{emptyLabel}</p>
@@ -448,6 +459,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
   onOpenReferral,
   playingVideoId,
   onPlayingVideoChange,
+  onOpenDiscovery,
 }) => {
   const [searchInput, setSearchInput] = useState(initialSearchQuery || '');
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
@@ -1100,6 +1112,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           onBook={onBookSalon}
           onToggleSave={onToggleSaveSalon}
           badgeFor={(s) => (isVerified(s) ? 'Verified' : undefined)}
+          onSeeAll={onOpenDiscovery ? () => onOpenDiscovery('nearest') : undefined}
         />
       )}
 
@@ -1116,6 +1129,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           onBook={onBookSalon}
           onToggleSave={onToggleSaveSalon}
           badgeFor={() => 'Top rated'}
+          onSeeAll={onOpenDiscovery ? () => onOpenDiscovery('top_rated') : undefined}
         />
       )}
 
@@ -1132,6 +1146,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           onBook={onBookSalon}
           onToggleSave={onToggleSaveSalon}
           badgeFor={(s) => (s.trending ? 'Trending' : 'Hot')}
+          onSeeAll={onOpenDiscovery ? () => onOpenDiscovery('most_popular') : undefined}
         />
       )}
 
