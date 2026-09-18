@@ -6,7 +6,7 @@
  *   Customer note · Payment status · Reward status
  *   Directions · Contact salon · Cancel (if upcoming) · Review (if completed)
  */
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import type { Appointment } from '../types';
 import {
   bookingDirectionsUrl,
@@ -22,6 +22,8 @@ import {
   resolveWhatsAppStatus,
 } from '../lib/bookingStatus';
 import { isAppointmentUpcoming } from '../lib/appointments';
+import { paymentsApi, type RefundQuote } from '../lib/smartClient';
+import { refundPolicyFor } from '../lib/refundPolicy';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -194,6 +196,8 @@ export interface BookingDetailPageProps {
   onOpenRewards?: () => void;
   /** Called after a review is submitted (UI-only until a reviews API exists). */
   onSubmitReview?: (appointmentId: string, rating: number, note: string) => void;
+  /** Supabase access token — enables the server invoice + live refund quote. */
+  accessToken?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -210,8 +214,35 @@ export const BookingDetailPage: React.FC<BookingDetailPageProps> = ({
   onOpenSalon,
   onOpenRewards,
   onSubmitReview,
+  accessToken,
 }) => {
   const [cancelConfirm, setCancelConfirm] = useState(false);
+  const [refundQuote, setRefundQuote] = useState<RefundQuote | null>(null);
+  const [invoiceState, setInvoiceState] = useState<'idle' | 'opening' | 'error'>('idle');
+
+  // Refund quote: server-authoritative when signed in, else the same policy computed locally.
+  useEffect(() => {
+    if (!appointment || !cancelConfirm) return;
+    const local = refundPolicyFor(appointment.date, appointment.time, appointment.paymentStatus === 'paid' ? appointment.advancePaid ?? 0 : 0);
+    setRefundQuote(local);
+    if (!accessToken) return;
+    let cancelled = false;
+    paymentsApi.quoteRefund(accessToken, appointment.id).then((r) => { if (!cancelled && r.ok) setRefundQuote(r.data.quote); });
+    return () => { cancelled = true; };
+  }, [appointment, cancelConfirm, accessToken]);
+
+  const openInvoice = async () => {
+    if (!appointment) return;
+    setInvoiceState('opening');
+    if (accessToken) {
+      const r = await paymentsApi.openInvoice(accessToken, appointment.id);
+      setInvoiceState(r.ok ? 'idle' : 'error');
+      if (r.ok) return;
+    }
+    // Offline/demo: print the on-screen receipt.
+    window.print();
+    setInvoiceState('idle');
+  };
   const [showReview, setShowReview] = useState(false);
   const [rating, setRating] = useState(5);
   const [reviewNote, setReviewNote] = useState('');
@@ -734,8 +765,14 @@ export const BookingDetailPage: React.FC<BookingDetailPageProps> = ({
             Cancel booking {appointment.bookingRef}?
           </p>
           <p className="text-[12px] text-on-surface-variant mt-1">
-            This can’t be undone. Any advance follows the salon’s refund policy.
+            This can’t be undone.
           </p>
+          {refundQuote && (
+            <p className="text-[12px] mt-1 font-semibold text-on-surface" data-testid="refund-quote">
+              {refundQuote.label}
+              {refundQuote.amountRupees > 0 ? ` — ₹${refundQuote.amountRupees} back to your original payment method in 3–5 working days.` : appointment.paymentStatus === 'paid' && (appointment.advancePaid ?? 0) > 0 ? ' — your advance is not refundable at this notice.' : ''}
+            </p>
+          )}
           <div className="flex items-center gap-2 mt-3">
             <button
               type="button"
@@ -876,6 +913,20 @@ export const BookingDetailPage: React.FC<BookingDetailPageProps> = ({
               </div>
             )}
           </div>
+        )}
+
+        {/* Invoice — any paid or completed booking */}
+        {(appointment.paymentStatus === 'paid' || appointment.status === 'completed') && (
+          <button
+            type="button"
+            id="booking-detail-invoice-btn"
+            onClick={openInvoice}
+            disabled={invoiceState === 'opening'}
+            className="w-full py-3.5 px-4 rounded-xl border-2 border-outline-variant/60 text-on-surface font-bold text-[14px] flex items-center justify-center gap-2 hover:bg-surface-container transition-colors cursor-pointer disabled:opacity-60"
+          >
+            <span className="material-symbols-outlined text-[18px]">receipt_long</span>
+            {invoiceState === 'opening' ? 'Preparing invoice…' : invoiceState === 'error' ? 'Invoice unavailable — retry' : 'Download invoice'}
+          </button>
         )}
 
         {/* Cancel — upcoming only */}

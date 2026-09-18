@@ -29,9 +29,9 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 export const NOTIFICATIONS_TABLE = 'notifications';
 export const NOTIFICATION_DELIVERIES_TABLE = 'notification_deliveries';
 
-type Channel = 'email' | 'whatsapp' | 'push';
+type Channel = 'email' | 'whatsapp' | 'push' | 'sms';
 
-const VALID_CHANNELS: Channel[] = ['email', 'whatsapp', 'push'];
+const VALID_CHANNELS: Channel[] = ['email', 'whatsapp', 'push', 'sms'];
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -46,6 +46,7 @@ export interface ChannelConfig {
   };
   email: { configured: boolean; provider: string };
   push: { configured: boolean; provider: string };
+  sms: { configured: boolean; provider: string };
   webhook: { verificationConfigured: boolean; signatureVerification: boolean };
 }
 
@@ -67,6 +68,7 @@ export function readChannelConfig(env: NodeJS.ProcessEnv = process.env): Channel
       configured: Boolean(env.FCM_SERVICE_ACCOUNT_JSON),
       provider: 'fcm_http_v1',
     },
+    sms: readSmsConfig(env),
     webhook: {
       verificationConfigured: Boolean(env.WHATSAPP_WEBHOOK_VERIFY_TOKEN),
       signatureVerification: Boolean(env.META_APP_SECRET),
@@ -183,7 +185,7 @@ export async function confirmDelivery(
 // Provider senders (structure — each is a thin binding to a real HTTP API)
 // ---------------------------------------------------------------------------
 
-interface SendInput {
+export interface SendInput {
   to: string | null;
   title: string;
   body: string;
@@ -192,7 +194,7 @@ interface SendInput {
   payload: Record<string, unknown>;
 }
 
-interface ProviderOutcome {
+export interface ProviderOutcome {
   accepted: boolean;
   provider: string;
   providerMessageId?: string | null;
@@ -327,9 +329,122 @@ export async function sendEmail(
  * the token store (device tokens per user) is out of scope here, so this reports
  * not-configured unless both the credentials and a recipient token are present.
  */
+/**
+ * SMS. Two providers are supported out of the box:
+ *   • Twilio     — TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_FROM_NUMBER
+ *   • MSG91 (IN) — MSG91_AUTH_KEY / MSG91_SENDER_ID (+ optional MSG91_TEMPLATE_ID for DLT)
+ * Acceptance = provider queued the message. No delivery claim is ever made here.
+ */
+export function readSmsConfig(env: NodeJS.ProcessEnv = process.env): { configured: boolean; provider: string } {
+  if (env.MSG91_AUTH_KEY && env.MSG91_SENDER_ID) return { configured: true, provider: 'msg91' };
+  if (env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_FROM_NUMBER) return { configured: true, provider: 'twilio' };
+  return { configured: false, provider: 'none' };
+}
+
+/** Normalise an Indian mobile number to E.164 (+91XXXXXXXXXX). Returns null if unusable. */
+export function toE164India(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length === 10) return `+91${digits}`;
+  if (digits.length === 12 && digits.startsWith('91')) return `+${digits}`;
+  if (digits.length === 11 && digits.startsWith('0')) return `+91${digits.slice(1)}`;
+  if (raw.trim().startsWith('+') && digits.length >= 10 && digits.length <= 15) return `+${digits}`;
+  return null;
+}
+
+export async function sendSms(
+  input: SendInput,
+  env: NodeJS.ProcessEnv = process.env,
+  fetchImpl: typeof fetch = fetch
+): Promise<ProviderOutcome> {
+  const cfg = readSmsConfig(env);
+  if (!cfg.configured) return { accepted: false, provider: 'sms', error: 'SMS provider not configured' };
+  const to = toE164India(input.to);
+  if (!to) return { accepted: false, provider: cfg.provider, error: 'No valid destination phone number' };
+  const text = `${input.title ? input.title + ': ' : ''}${input.body}`.slice(0, 480);
+
+  try {
+    if (cfg.provider === 'msg91') {
+      const response = await fetchImpl('https://control.msg91.com/api/v5/flow/', {
+        method: 'POST',
+        headers: { authkey: env.MSG91_AUTH_KEY as string, 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          env.MSG91_TEMPLATE_ID
+            ? { template_id: env.MSG91_TEMPLATE_ID, sender: env.MSG91_SENDER_ID, short_url: '0', recipients: [{ mobiles: to.replace('+', ''), message: text }] }
+            : { sender: env.MSG91_SENDER_ID, route: '4', country: '91', sms: [{ message: text, to: [to.replace('+', '')] }] }
+        ),
+      });
+      const json = (await response.json().catch(() => ({}))) as { type?: string; message?: string; request_id?: string };
+      if (!response.ok || json.type === 'error') return { accepted: false, provider: 'msg91', error: json.message || `MSG91 HTTP ${response.status}` };
+      return { accepted: true, provider: 'msg91', providerMessageId: json.request_id ?? null, providerStatus: 'queued' };
+    }
+
+    const sid = env.TWILIO_ACCOUNT_SID as string;
+    const auth = Buffer.from(`${sid}:${env.TWILIO_AUTH_TOKEN}`).toString('base64');
+    const form = new URLSearchParams({ To: to, From: env.TWILIO_FROM_NUMBER as string, Body: text });
+    const response = await fetchImpl(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
+      method: 'POST',
+      headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: form.toString(),
+    });
+    const json = (await response.json().catch(() => ({}))) as { sid?: string; status?: string; message?: string };
+    if (!response.ok) return { accepted: false, provider: 'twilio', error: json.message || `Twilio HTTP ${response.status}` };
+    return { accepted: true, provider: 'twilio', providerMessageId: json.sid ?? null, providerStatus: json.status ?? 'queued' };
+  } catch (err) {
+    return { accepted: false, provider: cfg.provider, error: (err as Error)?.message || 'SMS request failed' };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// FCM HTTP v1 push (service-account JWT → OAuth token → messages:send)
+// ---------------------------------------------------------------------------
+
+let fcmTokenCache: { token: string; expiresAt: number } | null = null;
+
+function base64url(input: Buffer | string): string {
+  return Buffer.from(input).toString('base64').replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
+
+/** Mint (and cache) a Google OAuth access token for the FCM scope. Exported for tests. */
+export async function getFcmAccessToken(
+  env: NodeJS.ProcessEnv = process.env,
+  fetchImpl: typeof fetch = fetch,
+  nowMs: number = Date.now()
+): Promise<{ ok: true; token: string; projectId: string } | { ok: false; error: string }> {
+  let sa: { client_email?: string; private_key?: string; project_id?: string };
+  try {
+    sa = JSON.parse(env.FCM_SERVICE_ACCOUNT_JSON || '{}');
+  } catch {
+    return { ok: false, error: 'FCM_SERVICE_ACCOUNT_JSON is not valid JSON' };
+  }
+  if (!sa.client_email || !sa.private_key || !sa.project_id) return { ok: false, error: 'FCM service account is missing client_email / private_key / project_id' };
+  if (fcmTokenCache && fcmTokenCache.expiresAt > nowMs + 60_000) return { ok: true, token: fcmTokenCache.token, projectId: sa.project_id };
+
+  const iat = Math.floor(nowMs / 1000);
+  const header = base64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+  const claims = base64url(JSON.stringify({ iss: sa.client_email, scope: 'https://www.googleapis.com/auth/firebase.messaging', aud: 'https://oauth2.googleapis.com/token', iat, exp: iat + 3600 }));
+  const signature = base64url(crypto.createSign('RSA-SHA256').update(`${header}.${claims}`).sign(sa.private_key));
+  const assertion = `${header}.${claims}.${signature}`;
+
+  try {
+    const response = await fetchImpl('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion }).toString(),
+    });
+    const json = (await response.json().catch(() => ({}))) as { access_token?: string; expires_in?: number; error_description?: string };
+    if (!response.ok || !json.access_token) return { ok: false, error: json.error_description || `OAuth HTTP ${response.status}` };
+    fcmTokenCache = { token: json.access_token, expiresAt: nowMs + (json.expires_in ?? 3600) * 1000 };
+    return { ok: true, token: json.access_token, projectId: sa.project_id };
+  } catch (err) {
+    return { ok: false, error: (err as Error)?.message || 'OAuth token request failed' };
+  }
+}
+
 export async function sendPush(
   input: SendInput,
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  fetchImpl: typeof fetch = fetch
 ): Promise<ProviderOutcome> {
   if (!env.FCM_SERVICE_ACCOUNT_JSON) {
     return { accepted: false, provider: 'fcm_http_v1', error: 'Push provider not configured' };
@@ -337,14 +452,32 @@ export async function sendPush(
   if (!input.to) {
     return { accepted: false, provider: 'fcm_http_v1', error: 'No device token for this user' };
   }
-  return {
-    accepted: false,
-    provider: 'fcm_http_v1',
-    error: 'Push transport not wired: mint an OAuth token and POST to FCM v1 here',
-  };
+  const auth = await getFcmAccessToken(env, fetchImpl);
+  if (auth.ok === false) return { accepted: false, provider: 'fcm_http_v1', error: auth.error };
+
+  try {
+    const response = await fetchImpl(`https://fcm.googleapis.com/v1/projects/${auth.projectId}/messages:send`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${auth.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: {
+          token: input.to,
+          notification: { title: input.title.slice(0, 100), body: input.body.slice(0, 240) },
+          data: Object.fromEntries(Object.entries({ notificationId: input.notificationId, type: input.type, ...input.payload }).map(([k, v]) => [k, typeof v === 'string' ? v : JSON.stringify(v)])),
+          webpush: { fcm_options: { link: typeof input.payload.link === 'string' ? input.payload.link : '/customer/notifications' } },
+        },
+      }),
+    });
+    const json = (await response.json().catch(() => ({}))) as { name?: string; error?: { message?: string } };
+    if (!response.ok) return { accepted: false, provider: 'fcm_http_v1', error: json.error?.message || `FCM HTTP ${response.status}` };
+    return { accepted: true, provider: 'fcm_http_v1', providerMessageId: json.name ?? null, providerStatus: 'accepted' };
+  } catch (err) {
+    return { accepted: false, provider: 'fcm_http_v1', error: (err as Error)?.message || 'FCM request failed' };
+  }
 }
 
-const SENDERS: Record<Channel, (input: SendInput, env?: NodeJS.ProcessEnv) => Promise<ProviderOutcome>> = {
+export const SENDERS: Record<Channel, (input: SendInput, env?: NodeJS.ProcessEnv) => Promise<ProviderOutcome>> = {
+  sms: sendSms,
   whatsapp: sendWhatsApp,
   email: sendEmail,
   push: sendPush,
@@ -569,6 +702,8 @@ export function createNotificationsRouter(env: NodeJS.ProcessEnv = process.env):
           ? config.whatsapp.configured
           : channel === 'email'
           ? config.email.configured
+          : channel === 'sms'
+          ? config.sms.configured
           : config.push.configured;
 
       if (!isConfigured) {

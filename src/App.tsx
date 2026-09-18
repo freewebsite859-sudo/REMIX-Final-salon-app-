@@ -118,6 +118,7 @@ import {
 import { fetchUserProfile } from './lib/profileService';
 import { requestAccountDeletion } from './lib/accountDeletion';
 import { requestBookingCancellation } from './lib/bookingCancellation';
+import { paymentsApi } from './lib/smartClient';
 import {
   listNotifications,
   resolveNotificationTarget,
@@ -388,6 +389,8 @@ export default function App() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   /** Set when a cancellation was refused server-side; the booking stays active. */
   const [cancellationError, setCancellationError] = useState<string | null>(null);
+  /** Post-cancellation refund outcome, shown once on the bookings list. */
+  const [cancellationNotice, setCancellationNotice] = useState<string | null>(null);
   /**
    * Splash handoff. The boot splash unmounts by early return, which made it
    * vanish on a single frame. Instead it stays mounted for SPLASH_EXIT_MS with
@@ -1384,6 +1387,20 @@ export default function App() {
     setAppointments((prev) =>
       prev.map((a) => (a.id === id ? { ...a, status: 'cancelled' } : a))
     );
+
+    // Advance refund (server-authoritative policy → Razorpay refund → ledger).
+    // Runs after the cancel is confirmed; a refund failure never un-cancels.
+    const cancelledApt = appointments.find((a) => a.id === id);
+    if (session?.access_token && cancelledApt?.paymentStatus === 'paid' && (cancelledApt.advancePaid ?? 0) > 0) {
+      const refund = await paymentsApi.refund(session.access_token, id, 'customer_cancellation');
+      if (refund.ok === true) {
+        console.info(`[Nexora] ${refund.data.message}`);
+        setCancellationNotice(refund.data.message);
+      } else if (refund.ok === false && refund.status !== 409) {
+        console.warn(`[Nexora] Refund not initiated: ${refund.error}`);
+        setCancellationNotice(`Booking cancelled. Refund could not be started automatically (${refund.error}) — support will process it manually.`);
+      }
+    }
     return true;
   };
 
@@ -1746,6 +1763,9 @@ export default function App() {
                 upcomingAppointment={upcomingAppointment}
                 savedSalonIds={savedSalonIds}
                 appointments={appointments}
+                userId={session?.user?.id}
+                accessToken={session?.access_token ?? null}
+                savedStaff={savedStaff}
                 initialSearchQuery={undefined}
                 onSearchQueryChange={(q) => {
                   // Typing on Home promotes the URL to /customer/search?q=
@@ -1987,6 +2007,7 @@ export default function App() {
                     ) || null
                   }
                   onBack={() => goToCustomer(CUSTOMER_BOOKINGS, { replace: true })}
+                  accessToken={session?.access_token ?? null}
                   onCancel={async (id) => {
                     // Only leave the detail screen once the server confirms.
                     // Navigating on a refused cancellation stranded the user on
@@ -2011,6 +2032,8 @@ export default function App() {
                   appointments={appointments}
                   highlightedBookingId={undefined}
                   cancellationError={cancellationError}
+                  cancellationNotice={cancellationNotice}
+                  onDismissNotice={() => setCancellationNotice(null)}
                   onCancelAppointment={handleCancelAppointment}
                   onRescheduleAppointment={handleRescheduleAppointment}
                   onBookAgain={handleBookAgain}

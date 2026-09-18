@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import type { Salon, SalonService, Stylist } from '../../types';
 import { isVerifiedSalon, minSalonPrice, distanceKm } from '../../lib/salonSearch';
 import { mapsDirectionsUrl } from '../../lib/mapsGrounding';
-import { StaticMapPreview } from '../StaticMapPreview';
+import { InteractiveSalonMap } from '../InteractiveSalonMap';
 import { SalonCard, RatingPill } from './SalonCard';
 
 export interface SalonDetailPageProps {
@@ -488,7 +488,7 @@ export const SalonDetailPage: React.FC<SalonDetailPageProps> = ({
           {/* Map */}
           <section aria-labelledby="location-h">
             <h2 id="location-h" className="font-section-heading text-lg font-extrabold text-on-surface mb-3">Location & directions</h2>
-            <StaticMapPreview salon={salon} userLocation={currentLocation} />
+            <InteractiveSalonMap salon={salon} others={similar} userLocation={currentLocation} onSelectSalon={onOpenSalon} />
           </section>
 
           {/* Similar */}

@@ -17,7 +17,7 @@ function nexoraApiPlugin(): Plugin {
     name: 'nexora-api',
     configureServer(server: ViteDevServer) {
       const api = express();
-      api.use(express.json({ limit: '32kb' }));
+      api.use(express.json({ limit: '512kb', verify: (req, _res, buf) => { (req as { rawBody?: Buffer }).rawBody = buf; } }));
       attachNexoraApi(api);
       server.middlewares.use((req, res, next) => {
         const url = req.url || '';

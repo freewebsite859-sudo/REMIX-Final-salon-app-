@@ -13,11 +13,23 @@ import { createPaymentsRouter } from './payments';
 import { createEngagementRouter } from './engagement';
 import { createReferralsRouter } from './referrals';
 import { createUserAccountRouter } from './userAccount';
+import { createAiRouter, createReminderComposer } from './ai';
+import { createSmartMemoryRouter } from './smartMemory';
+import { createPaymentsExtraRouter } from './paymentsExtra';
+import { createMapsRouter } from './maps';
 
 export function attachNexoraApi(app: Express, env: NodeJS.ProcessEnv = process.env): void {
   app.use('/api/notifications', createNotificationsRouter(env));
   app.use('/api/bookings', createBookingsRouter(env));
   app.use('/api/payments', createPaymentsRouter(env));
+  // Refunds, invoices, payment history + Razorpay webhook (refund.* events)
+  app.use('/api/payments', createPaymentsExtraRouter(env));
+  // OpenAI-backed recommendations / reminder copy (template fallback when unconfigured)
+  app.use('/api/ai', createAiRouter(env));
+  // Smart Memory Engine: preferences, reminders, push subscriptions, cron dispatcher
+  app.use('/api/smart', createSmartMemoryRouter(env, { composeMessage: (r) => createReminderComposer(env)(r, r.phone ? 'whatsapp' : 'push') }));
+  // Google Maps Platform proxy (server key never reaches the browser)
+  app.use('/api/maps', createMapsRouter(env));
   app.use('/api/engagement', createEngagementRouter(env));
   // Invite-link attribution: GET /resolve, POST /accept, GET /:userId
   app.use('/api/referrals', createReferralsRouter(env));

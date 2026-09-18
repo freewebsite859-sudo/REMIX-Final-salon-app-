@@ -3,6 +3,7 @@ import { Salon, Appointment, SalonService, Stylist, UserProfile } from '../types
 import { AppointmentCountdownBanner, parseAppointmentDateTime } from './AppointmentCountdownBanner';
 import { JAIPUR_AREA_CHIPS } from '../lib/jaipurAreas';
 import { VideoReelsSection } from './VideoReelsSection';
+import { SmartRecommendations } from './SmartRecommendations';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -15,6 +16,11 @@ interface HomeTabProps {
   upcomingAppointment: Appointment | null;
   savedSalonIds: string[];
   appointments?: Appointment[];
+  /** Stable id for the smart-memory engine (Supabase user id or demo id). */
+  userId?: string;
+  /** Supabase access token; enables server sync + AI re-ranking of recommendations. */
+  accessToken?: string | null;
+  savedStaff?: { salonId: string; stylistId: string }[];
   /** Prefill from `/customer/search?q=` when the route drives search. */
   initialSearchQuery?: string;
   /** Called as the user types so the parent can mirror `?q=` in the URL. */
@@ -448,6 +454,9 @@ export const HomeTab: React.FC<HomeTabProps> = ({
   upcomingAppointment,
   savedSalonIds,
   appointments = [],
+  userId,
+  accessToken,
+  savedStaff,
   initialSearchQuery,
   onSearchQueryChange,
   onOpenSalonDetails,
@@ -922,6 +931,22 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           }
           return null;
         })()}
+
+      {/* Smart memory: reminders + personalised picks */}
+      {!isSearching && (
+        <SmartRecommendations
+          userId={userId ?? user.email ?? 'guest'}
+          customerName={user.name}
+          accessToken={accessToken}
+          salons={salons}
+          appointments={appointments ?? []}
+          savedSalonIds={savedSalonIds}
+          savedStaff={savedStaff}
+          onOpenSalon={onOpenSalonDetails}
+          onBook={(salon, service) => onBookSalon(salon, service)}
+          className="mb-2"
+        />
+      )}
 
       {/* Active filter strip */}
       {isSearching && (
