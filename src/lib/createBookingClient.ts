@@ -72,7 +72,11 @@ async function probePaymentConfig(signal?: AbortSignal): Promise<{ configured: b
 }
 
 function shouldDemoFallback(status: number, contentType?: string | null): boolean {
-  if (status === 404 || status === 503 || status === 501) return true;
+  // Only fallback when the API surface itself is not mounted (Vite-only preview)
+  // or returns HTML. A 503 means the payment service is reachable but reports
+  // itself unconfigured — that must surface as an error, not a demo booking
+  // that bypasses the 25% verified advance requirement.
+  if (status === 404) return true;
   if (contentType && contentType.includes('text/html')) return true;
   return false;
 }

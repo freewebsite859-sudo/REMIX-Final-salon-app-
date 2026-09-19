@@ -150,8 +150,11 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
   const [showFailureDialog, setShowFailureDialog] = useState<boolean>(false);
   const [isRetryingPayment, setIsRetryingPayment] = useState<boolean>(false);
   const [gatewayConfigured, setGatewayConfigured] = useState<boolean>(false);
+  const [gatewayProbeDone, setGatewayProbeDone] = useState<boolean>(false);
   const isSubmitting = buttonState !== 'idle';
-  const showDemoCheckoutNotice = isLocalDemoMode || !gatewayConfigured;
+  // Show demo notice only when we are in local demo OR we have probed and gateway is not configured.
+  // Before probe completes, assume gateway is configured to avoid flashing demo notice in production.
+  const showDemoCheckoutNotice = isLocalDemoMode || (gatewayProbeDone && !gatewayConfigured);
 
   // Tell the parent when we enter/leave the confirmation screen so it can
   // hide the sticky bottom nav for a full-bleed ticket on mobile.
@@ -161,6 +164,39 @@ export const BookingSummaryModal: React.FC<BookingSummaryModalProps> = ({
       onConfirmationStateChange?.(false);
     };
   }, [isOpen, isSuccess, onConfirmationStateChange]);
+
+  // Probe whether the secure payment gateway is configured so the UI can
+  // show the correct contract notice. Previously this state was never set,
+  // so the modal always showed the demo notice even when Razorpay was live.
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    setGatewayProbeDone(false);
+    void (async () => {
+      try {
+        const res = await fetch('/api/payments/config');
+        const ct = res.headers.get('content-type') || '';
+        if (!res.ok || ct.includes('text/html')) {
+          if (!cancelled) {
+            setGatewayConfigured(false);
+            setGatewayProbeDone(true);
+          }
+          return;
+        }
+        const body = (await res.json().catch(() => ({}))) as { configured?: boolean };
+        if (!cancelled) {
+          setGatewayConfigured(body.configured === true);
+          setGatewayProbeDone(true);
+        }
+      } catch {
+        if (!cancelled) {
+          setGatewayConfigured(false);
+          setGatewayProbeDone(true);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;

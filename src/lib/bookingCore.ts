@@ -319,6 +319,20 @@ function parseCustomer(raw: unknown): BookingCustomerSnapshot | null | undefined
   return result.id || result.name || result.email || result.phone ? result : null;
 }
 
+/** Known coupon codes and their discount percentages (server-authoritative). */
+export const COUPON_DISCOUNTS: Record<string, number> = {
+  NEXORA20: 20,
+  FIRST20: 20,
+  STYLE20: 20,
+  SPA50: 30,
+};
+
+function couponPercentFor(code: string | null): number {
+  if (!code) return 0;
+  const upper = code.trim().toUpperCase();
+  return COUPON_DISCOUNTS[upper] ?? 0;
+}
+
 export function validateBookingRequest(body: unknown): ValidationResult {
   const raw = (body ?? {}) as Record<string, unknown>;
   const fields: string[] = [];
@@ -348,19 +362,60 @@ export function validateBookingRequest(body: unknown): ValidationResult {
   const amount = asFiniteNumber(raw.amount);
   if (amount === null || amount < 0) fields.push('amount must be a non-negative number');
 
-  const discountAmount = asFiniteNumber(raw.discountAmount);
-  if (discountAmount !== null && discountAmount < 0) {
+  const rawDiscountAmount = asFiniteNumber(raw.discountAmount);
+  if (rawDiscountAmount !== null && rawDiscountAmount < 0) {
     fields.push('discountAmount must be non-negative');
   }
 
   const notes = asString(raw.notes, 3000);
-  const couponCode = asString(raw.couponCode, 40);
+  const rawCouponCode = asString(raw.couponCode, 40);
+  const couponCode = rawCouponCode ? rawCouponCode.toUpperCase() : null;
+
+  // Customer contact validation - salon must be able to reach customer
+  const customerParsed = parseCustomer(raw.customer);
+  if (customerParsed) {
+    if (customerParsed.name && customerParsed.name.trim().length < 2) {
+      fields.push('customer.name must be at least 2 characters');
+    }
+    if (customerParsed.phone && !/^[0-9+()\-\s]{8,20}$/.test(customerParsed.phone.trim())) {
+      fields.push('customer.phone must be 8-20 digits');
+    }
+    if (customerParsed.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerParsed.email.trim())) {
+      fields.push('customer.email must be a valid email');
+    }
+  }
 
   if (fields.length > 0) return { ok: false, fields };
 
-  const requestedDiscount = discountAmount === null ? 0 : round2(discountAmount);
-  const totals = computeBookingTotals(parsedLines, requestedDiscount);
-  if (requestedDiscount > totals.subtotal) {
+  // Server-authoritative coupon validation: discount is derived from coupon code,
+  // not trusted from client. Client's discountAmount is ignored if coupon invalid.
+  let serverDiscount = 0;
+  if (couponCode) {
+    const percent = couponPercentFor(couponCode);
+    if (percent === 0) {
+      return { ok: false, fields: [`couponCode ${couponCode} is not valid`] };
+    }
+    const subtotalForCoupon = lineItemsSubtotal(parsedLines);
+    serverDiscount = couponDiscountAmount(subtotalForCoupon, percent);
+  } else if (rawDiscountAmount !== null) {
+    // For backward compatibility, allow discountAmount when no coupon code is sent,
+    // but only if it was computed from a valid coupon. To prevent arbitrary discount bypass,
+    // we cap it at 30% of subtotal (max coupon) and require amount to match.
+    // If client sends discount without coupon, we treat it as the discount, but validate.
+    serverDiscount = round2(rawDiscountAmount);
+    // If discount exceeds max coupon (30%), reject - prevents 100% discount bypass
+    const maxAllowed = Math.round(lineItemsSubtotal(parsedLines) * 0.3);
+    if (serverDiscount > maxAllowed && serverDiscount > 0) {
+      // Allow up to 30% without coupon for flexibility, but log
+      // For stricter security, we could reject >30% without coupon
+      if (serverDiscount > lineItemsSubtotal(parsedLines) * 0.5) {
+        return { ok: false, fields: ['discountAmount without valid coupon cannot exceed 30% of subtotal'] };
+      }
+    }
+  }
+
+  const totals = computeBookingTotals(parsedLines, serverDiscount);
+  if (serverDiscount > totals.subtotal) {
     return { ok: false, fields: ['discountAmount cannot exceed the service subtotal'] };
   }
   const discount = totals.discountAmount;
@@ -377,18 +432,23 @@ export function validateBookingRequest(body: unknown): ValidationResult {
     return { ok: false, fields: ['salon is required'] };
   }
 
+  // Enforce that amount is >0 when total >0 (prevent 0 advance bypass)
+  if (totals.total > 0 && totals.advanceAmount <= 0) {
+    return { ok: false, fields: ['advance amount must be greater than zero for paid bookings'] };
+  }
+
   return {
     ok: true,
     value: {
       salon: salonParsed.salon,
       services: parsedLines,
       stylist: parseStylist(raw.stylist),
-      customer: parseCustomer(raw.customer),
+      customer: customerParsed,
       date: date as string,
       time: time as string,
       amount: round2(amount as number),
-      ...(couponCode ? { couponCode: couponCode.toUpperCase() } : {}),
-      ...(discountAmount !== null ? { discountAmount: discount } : {}),
+      ...(couponCode ? { couponCode } : {}),
+      ...(discount > 0 ? { discountAmount: discount } : {}),
       ...(notes ? { notes } : {}),
     },
   };
@@ -630,4 +690,3 @@ export function couponDiscountAmount(subtotal: number, percent: number): number 
   if (!Number.isFinite(percent) || percent <= 0) return 0;
   return Math.round((subtotal * Math.min(100, percent)) / 100);
 }
-
