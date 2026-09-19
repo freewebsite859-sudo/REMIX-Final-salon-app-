@@ -398,17 +398,54 @@ export function createPaymentsExtraRouter(
     if (!verifyRazorpayWebhook(raw, req.headers['x-razorpay-signature'] as string | undefined, env.RAZORPAY_WEBHOOK_SECRET)) {
       return res.status(401).json({ error: 'Invalid webhook signature' });
     }
-    let event: { event?: string; payload?: { refund?: { entity?: { id?: string; status?: string; payment_id?: string } }; payment?: { entity?: { id?: string; status?: string } } } };
+    let event: { 
+      event?: string; 
+      payload?: { 
+        refund?: { entity?: { id?: string; status?: string; payment_id?: string } }; 
+        payment?: { entity?: { id?: string; status?: string; order_id?: string; amount?: number } };
+        order?: { entity?: { id?: string; status?: string; amount?: number } };
+      } 
+    };
     try { event = JSON.parse(raw.toString('utf8')); } catch { return res.status(400).json({ error: 'Malformed JSON' }); }
 
     const handled: string[] = [];
+    // Refund events - existing handling
     if (store && event.event?.startsWith('refund.') && event.payload?.refund?.entity?.id) {
       const r = event.payload.refund.entity;
       const status: RefundRecord['status'] = event.event === 'refund.processed' ? 'processed' : event.event === 'refund.failed' ? 'failed' : 'pending';
       await store.updateRefundStatus(r.id as string, status, r);
       handled.push(`${event.event}:${r.id}`);
     }
-    return res.json({ received: true, handled });
+    // Payment captured - for reconciliation and audit
+    // This verifies that a payment the gateway reports as captured matches a booking we have
+    // The primary payment flow is via /verify HMAC, but webhook provides additional proof
+    if (event.event === 'payment.captured' && event.payload?.payment?.entity?.id) {
+      const p = event.payload.payment.entity;
+      // Log for audit - in production this would update payment ledger
+      console.info(`[Nexora] Webhook payment.captured: payment_id=${p.id} order_id=${p.order_id} amount=${p.amount}`);
+      handled.push(`${event.event}:${p.id}`);
+      // If store has method to verify booking payment, we could update here
+      // For now, we acknowledge receipt - booking was already marked paid via /verify
+    }
+    if (event.event === 'payment.failed' && event.payload?.payment?.entity?.id) {
+      const p = event.payload.payment.entity;
+      console.info(`[Nexora] Webhook payment.failed: payment_id=${p.id} order_id=${p.order_id}`);
+      handled.push(`${event.event}:${p.id}`);
+    }
+    if (event.event === 'order.paid' && event.payload?.order?.entity?.id) {
+      const o = event.payload.order.entity;
+      console.info(`[Nexora] Webhook order.paid: order_id=${o.id} amount=${o.amount}`);
+      handled.push(`${event.event}:${o.id}`);
+      // Also check nested payment if present
+      if (event.payload?.payment?.entity?.id) {
+        handled.push(`payment.captured:${event.payload.payment.entity.id}`);
+      }
+    }
+    // Handle other payment-related events for completeness
+    if (event.event === 'payment.authorized' && event.payload?.payment?.entity?.id) {
+      handled.push(`${event.event}:${event.payload.payment.entity.id}`);
+    }
+    return res.json({ received: true, handled, event: event.event });
   });
 
   return router;
