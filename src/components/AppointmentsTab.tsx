@@ -33,6 +33,9 @@ interface AppointmentsTabProps {
    * the client-only cancellation used to do.
    */
   cancellationError?: string | null;
+  /** Refund outcome after a successful cancellation. */
+  cancellationNotice?: string | null;
+  onDismissNotice?: () => void;
   onRescheduleAppointment: (id: string) => void;
   onBookAgain?: (appointment: Appointment) => void;
   onOpenSalonDetailsById?: (salonId: string) => void;
@@ -60,6 +63,8 @@ export const AppointmentsTab: React.FC<AppointmentsTabProps> = ({
   highlightedBookingId,
   onCancelAppointment,
   cancellationError,
+  cancellationNotice,
+  onDismissNotice,
   onRescheduleAppointment,
   onBookAgain,
   onOpenSalonDetailsById,
@@ -197,6 +202,14 @@ export const AppointmentsTab: React.FC<AppointmentsTabProps> = ({
               {cancellationError}
             </p>
           </div>
+        </div>
+      )}
+
+      {cancellationNotice && (
+        <div id="my-bookings-refund-notice" role="status" className="mb-4 flex items-start gap-2.5 px-3.5 py-3 rounded-xl bg-primary/8 border border-primary/25">
+          <span className="material-symbols-outlined text-[18px] text-primary shrink-0 mt-px">currency_rupee</span>
+          <p className="text-[12px] text-on-surface leading-relaxed flex-1">{cancellationNotice}</p>
+          {onDismissNotice && <button type="button" onClick={onDismissNotice} aria-label="Dismiss" className="text-on-surface-variant"><span className="material-symbols-outlined text-[18px]">close</span></button>}
         </div>
       )}
 

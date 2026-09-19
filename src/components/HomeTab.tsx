@@ -3,6 +3,7 @@ import { Salon, Appointment, SalonService, Stylist, UserProfile } from '../types
 import { AppointmentCountdownBanner, parseAppointmentDateTime } from './AppointmentCountdownBanner';
 import { JAIPUR_AREA_CHIPS } from '../lib/jaipurAreas';
 import { VideoReelsSection } from './VideoReelsSection';
+import { SmartRecommendations } from './SmartRecommendations';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -15,6 +16,11 @@ interface HomeTabProps {
   upcomingAppointment: Appointment | null;
   savedSalonIds: string[];
   appointments?: Appointment[];
+  /** Stable id for the smart-memory engine (Supabase user id or demo id). */
+  userId?: string;
+  /** Supabase access token; enables server sync + AI re-ranking of recommendations. */
+  accessToken?: string | null;
+  savedStaff?: { salonId: string; stylistId: string }[];
   /** Prefill from `/customer/search?q=` when the route drives search. */
   initialSearchQuery?: string;
   /** Called as the user types so the parent can mirror `?q=` in the URL. */
@@ -29,6 +35,8 @@ interface HomeTabProps {
   onOpenMembership?: () => void;
   /** Navigate to referral. */
   onOpenReferral?: () => void;
+  /** Open the full salon discovery page (/customer/salons), optionally pre-sorted. */
+  onOpenDiscovery?: (sort?: 'nearest' | 'top_rated' | 'most_popular' | 'lowest_price') => void;
   /** Active playing video ID for concurrent autoplay coordination */
   playingVideoId?: string | null;
   /** Handler when active playing video changes */
@@ -390,6 +398,7 @@ const SalonRail: React.FC<{
   onToggleSave: (id: string) => void;
   badgeFor?: (s: Salon) => string | undefined;
   emptyLabel?: string;
+  onSeeAll?: () => void;
 }> = ({
   title,
   subtitle,
@@ -400,11 +409,19 @@ const SalonRail: React.FC<{
   onToggleSave,
   badgeFor,
   emptyLabel = 'No salons in this section yet.',
+  onSeeAll,
 }) => (
   <section className="mb-7">
-    <div className="px-page-margin mb-3">
-      <h2 className="font-section-heading text-[17px] font-bold text-on-surface">{title}</h2>
-      {subtitle && <p className="text-[12px] text-on-surface-variant mt-0.5">{subtitle}</p>}
+    <div className="px-page-margin mb-3 flex items-end justify-between gap-2">
+      <div>
+        <h2 className="font-section-heading text-[17px] font-bold text-on-surface">{title}</h2>
+        {subtitle && <p className="text-[12px] text-on-surface-variant mt-0.5">{subtitle}</p>}
+      </div>
+      {onSeeAll && (
+        <button type="button" onClick={onSeeAll} className="shrink-0 text-[12px] font-bold text-primary inline-flex items-center gap-0.5 cursor-pointer" data-testid="rail-see-all">
+          See all<span className="material-symbols-outlined text-sm">chevron_right</span>
+        </button>
+      )}
     </div>
     {salons.length === 0 ? (
       <p className="px-page-margin text-[13px] text-on-surface-variant">{emptyLabel}</p>
@@ -437,6 +454,9 @@ export const HomeTab: React.FC<HomeTabProps> = ({
   upcomingAppointment,
   savedSalonIds,
   appointments = [],
+  userId,
+  accessToken,
+  savedStaff,
   initialSearchQuery,
   onSearchQueryChange,
   onOpenSalonDetails,
@@ -448,6 +468,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
   onOpenReferral,
   playingVideoId,
   onPlayingVideoChange,
+  onOpenDiscovery,
 }) => {
   const [searchInput, setSearchInput] = useState(initialSearchQuery || '');
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
@@ -911,6 +932,22 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           return null;
         })()}
 
+      {/* Smart memory: reminders + personalised picks */}
+      {!isSearching && (
+        <SmartRecommendations
+          userId={userId ?? user.email ?? 'guest'}
+          customerName={user.name}
+          accessToken={accessToken}
+          salons={salons}
+          appointments={appointments ?? []}
+          savedSalonIds={savedSalonIds}
+          savedStaff={savedStaff}
+          onOpenSalon={onOpenSalonDetails}
+          onBook={(salon, service) => onBookSalon(salon, service)}
+          className="mb-2"
+        />
+      )}
+
       {/* Active filter strip */}
       {isSearching && (
         <div className="px-page-margin mb-4 flex items-center justify-between gap-2">
@@ -1100,6 +1137,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           onBook={onBookSalon}
           onToggleSave={onToggleSaveSalon}
           badgeFor={(s) => (isVerified(s) ? 'Verified' : undefined)}
+          onSeeAll={onOpenDiscovery ? () => onOpenDiscovery('nearest') : undefined}
         />
       )}
 
@@ -1116,6 +1154,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           onBook={onBookSalon}
           onToggleSave={onToggleSaveSalon}
           badgeFor={() => 'Top rated'}
+          onSeeAll={onOpenDiscovery ? () => onOpenDiscovery('top_rated') : undefined}
         />
       )}
 
@@ -1132,6 +1171,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           onBook={onBookSalon}
           onToggleSave={onToggleSaveSalon}
           badgeFor={(s) => (s.trending ? 'Trending' : 'Hot')}
+          onSeeAll={onOpenDiscovery ? () => onOpenDiscovery('most_popular') : undefined}
         />
       )}
 

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
+    "reminders:run": "node scripts/run-reminders.mjs",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
@@ -57,7 +58,13 @@
     "test:booking-cancellation": "tsx --import ./test/asset-loader-register.mjs test/bookingCancellation.test.mts",
     "test:booking-contact-leak": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs --import ./test/force-demo-auth.mjs test/bookingContactLeak.test.tsx",
     "test:media-playback": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/mediaPlayback.test.tsx",
-    "test:splash-transition": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/splashTransition.test.tsx"
+    "test:splash-transition": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/splashTransition.test.tsx",
+    "test:landing-sections": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/landingSections.test.tsx",
+    "test:landing-trust-map": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/landingTrustMap.test.tsx",
+    "test:salon-discovery": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/salonDiscovery.test.tsx",
+    "test:smart-memory": "tsx --import ./test/asset-loader-register.mjs test/smartMemory.test.mts",
+    "test:payments-extra": "tsx --import ./test/asset-loader-register.mjs test/paymentsExtra.test.mts",
+    "test:smart-recommendations": "tsx --import ./test/asset-loader-register.mjs --import ./test/setup-jsdom.mjs test/smartRecommendations.test.tsx"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",

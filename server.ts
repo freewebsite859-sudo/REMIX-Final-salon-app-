@@ -9,7 +9,7 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
-app.use(express.json({ limit: '32kb' }));
+app.use(express.json({ limit: '512kb', verify: (req, _res, buf) => { (req as { rawBody?: Buffer }).rawBody = buf; } }));
 
 // Direct booking inserts are refused (402). The payments router creates the
 // booking only after a server-side gateway order + HMAC signature verify.

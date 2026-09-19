@@ -99,3 +99,82 @@
 .pb-safe {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
+
+/* ---- Landing page floating card effects & animations ---- */
+@keyframes float-y {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+}
+
+@keyframes float-y-slow {
+  0%, 100% { transform: translateY(0px) rotate(-1deg); }
+  50% { transform: translateY(-14px) rotate(1deg); }
+}
+
+@keyframes shimmer-sweep {
+  0% { transform: translateX(-120%) skewX(-12deg); }
+  100% { transform: translateX(220%) skewX(-12deg); }
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(0.9); opacity: 0.8; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+.animate-float { animation: float-y 5s ease-in-out infinite; }
+.animate-float-slow { animation: float-y-slow 7s ease-in-out infinite; }
+.animate-float-delayed { animation: float-y 5s ease-in-out 1.5s infinite; }
+.animate-pulse-ring { animation: pulse-ring 1.8s cubic-bezier(0.2, 0.6, 0.3, 1) infinite; }
+
+.floating-card {
+  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.35s ease, border-color 0.3s ease;
+  will-change: transform;
+}
+.floating-card:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 24px 48px -16px rgba(120, 0, 50, 0.22), 0 8px 16px -8px rgba(38, 24, 26, 0.12);
+}
+
+.shimmer-on-hover { position: relative; overflow: hidden; }
+.shimmer-on-hover::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+  transform: translateX(-120%) skewX(-12deg);
+  pointer-events: none;
+}
+.shimmer-on-hover:hover::after { animation: shimmer-sweep 0.9s ease forwards; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-float, .animate-float-slow, .animate-float-delayed, .animate-pulse-ring { animation: none; }
+  .floating-card:hover { transform: none; }
+  .shimmer-on-hover:hover::after { animation: none; }
+}
+
+/* ---- Dual-thumb price range slider ---- */
+.range-thumb::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 9999px;
+  background: #fff;
+  border: 3px solid var(--color-primary);
+  box-shadow: 0 2px 6px rgba(120, 0, 50, 0.3);
+  cursor: grab;
+  pointer-events: auto;
+}
+.range-thumb::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 9999px;
+  background: #fff;
+  border: 3px solid var(--color-primary);
+  box-shadow: 0 2px 6px rgba(120, 0, 50, 0.3);
+  cursor: grab;
+  pointer-events: auto;
+}
+.range-thumb::-webkit-slider-runnable-track { background: transparent; }
+.range-thumb::-moz-range-track { background: transparent; }
