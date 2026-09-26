@@ -264,12 +264,16 @@ function slotToIsoDate(slot?: { day?: string; date?: string; time?: string } | n
     return slot.date;
   }
   const today = new Date();
-  const todayStr = today.toISOString().split('T')[0];
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(
+    today.getDate()
+  ).padStart(2, '0')}`;
   const dayLabel = (slot?.day || '').toLowerCase();
   if (dayLabel === 'tomorrow') {
-    const tomorrow = new Date();
+    const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
-    return tomorrow.toISOString().split('T')[0];
+    return `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(
+      tomorrow.getDate()
+    ).padStart(2, '0')}`;
   }
   return todayStr;
 }

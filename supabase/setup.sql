@@ -499,6 +499,7 @@ create table if not exists public.bookings (
   user_id          uuid references auth.users (id) on delete set null,
   customer         jsonb,
   salon_id         text not null,
+  shop_slug        text,
   salon_snapshot   jsonb not null default '{}'::jsonb,
   stylist_snapshot jsonb,
   slot_date        date not null,
@@ -521,6 +522,45 @@ create table if not exists public.bookings (
   created_at       timestamptz not null default now(),
   updated_at       timestamptz not null default now()
 );
+
+-- Ensure shop_slug column exists for existing tables
+alter table public.bookings add column if not exists shop_slug text;
+
+-- ============================================================================
+-- Shops table (Dynamic shop listings with shop_slug routing)
+-- ============================================================================
+create table if not exists public.shops (
+  id               text primary key default gen_random_uuid()::text,
+  name             text not null,
+  shop_slug        text not null unique,
+  slug             text,
+  tagline          text,
+  description      text,
+  category         text,
+  categories       text[] default '{}',
+  area             text,
+  city             text,
+  address          text,
+  latitude         double precision,
+  longitude        double precision,
+  maps_url         text,
+  image            text,
+  gallery          text[] default '{}',
+  is_open          boolean default true,
+  opening_hours    text,
+  price_range      text default '₹₹',
+  rating           numeric default 4.8,
+  review_count     integer default 0,
+  phone            text,
+  gender           text default 'unisex',
+  services         jsonb default '[]'::jsonb,
+  stylists         jsonb default '[]'::jsonb,
+  created_at       timestamptz not null default now()
+);
+
+alter table public.shops enable row level security;
+drop policy if exists "public read shops" on public.shops;
+create policy "public read shops" on public.shops for select to anon, authenticated using (true);
 
 create table if not exists public.booking_services (
   booking_id       uuid not null references public.bookings (id) on delete cascade,

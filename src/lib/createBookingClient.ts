@@ -26,7 +26,7 @@ import type { Appointment } from '../types';
 import type { BookingCreateRequest } from './bookingContract';
 import { createDemoBooking } from './demoBookingStore';
 import { checkoutWithRazorpay, type RazorpayPaymentSuccessResponse } from './razorpay';
-import { isLocalDemoMode } from './supabase';
+import { isLocalDemoMode, supabase } from './supabase';
 
 export interface CreateBookingResult {
   ok: boolean;
@@ -140,22 +140,59 @@ export async function createBooking(
     payment?: VerifiedPaymentPayload;
   } = {}
 ): Promise<CreateBookingResult> {
+  let result: CreateBookingResult;
   if (isLocalDemoMode) {
-    return createDemoBooking(request);
-  }
-
-  // No Razorpay keys (or `/api` not mounted) used to 404 and show
-  // "booking service endpoint was not found". A labeled on-device booking
-  // is honest here: paymentStatus stays pending, isDemoBooking is true, no
-  // charge is claimed. Production with keys still runs HMAC checkout.
-  if (!options.payment) {
+    result = await createDemoBooking(request);
+  } else if (!options.payment) {
     const probe = await probePaymentConfig(options.signal);
     if (!probe.configured) {
-      return createDemoBooking(request);
+      result = await createDemoBooking(request);
+    } else {
+      result = await completeVerifiedCheckout(request, options);
+    }
+  } else {
+    result = await completeVerifiedCheckout(request, options);
+  }
+
+  // Insert/sync booking payload into Supabase bookings table with shop_slug column
+  if (result.ok && result.appointment && supabase) {
+    try {
+      const shopSlug =
+        result.appointment.shopSlug ||
+        request.salon.shop_slug ||
+        request.salon.slug ||
+        request.salon.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') ||
+        'roshan-salon';
+
+      const bookingPayload = {
+        id: result.appointment.id,
+        booking_ref: result.appointment.bookingRef,
+        salon_id: result.appointment.salonId,
+        shop_slug: shopSlug,
+        slot_date: result.appointment.date,
+        slot_time: result.appointment.time,
+        status: result.appointment.status || 'pending',
+        total_amount: result.appointment.totalPrice,
+        advance_amount: result.appointment.advancePaid || 0,
+        payment_status: result.appointment.paymentStatus || 'pending',
+        customer: request.customer || null,
+        salon_snapshot: request.salon,
+        metadata: {
+          services: request.services,
+          shop_slug: shopSlug,
+          external_url: `https://fanal-templetes-app.vercel.app/?site=${encodeURIComponent(shopSlug)}`,
+        },
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      void supabase.from('bookings').upsert(bookingPayload, { onConflict: 'id' });
+    } catch {
+      // Non-blocking sync
     }
   }
 
-  return completeVerifiedCheckout(request, options);
+  return result;
 }
 
 export async function completeVerifiedCheckout(

@@ -28,6 +28,8 @@ export interface CatalogResult {
 export interface SalonDbRow {
   id: string;
   name: string;
+  slug?: string | null;
+  shop_slug?: string | null;
   tagline?: string | null;
   description?: string | null;
   latitude: number;
@@ -64,6 +66,39 @@ export interface SalonDbRow {
   reviews?: ReviewDbRow[] | null;
   distance?: string | null;
   distance_km?: number | null;
+}
+
+export interface ShopDbRow {
+  id: string;
+  name: string;
+  shop_slug?: string | null;
+  slug?: string | null;
+  tagline?: string | null;
+  description?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  address?: string | null;
+  area?: string | null;
+  city?: string | null;
+  maps_url?: string | null;
+  image?: string | null;
+  gallery?: string[] | string | null;
+  is_open?: boolean | null;
+  opening_hours?: string | null;
+  price_range?: Salon['priceRange'] | string | null;
+  rating?: number | null;
+  review_count?: number | null;
+  featured?: boolean | null;
+  trending?: boolean | null;
+  amenities?: string[] | string | null;
+  discount_offer?: string | null;
+  phone?: string | null;
+  gender?: Salon['gender'] | string | null;
+  category?: string | null;
+  categories?: string[] | string | null;
+  services?: ServiceDbRow[] | SalonService[] | null;
+  stylists?: ProfessionalDbRow[] | Stylist[] | null;
+  video_url?: string | null;
 }
 
 export interface ServiceDbRow {
@@ -113,6 +148,7 @@ export interface ReviewDbRow {
 // ---------------------------------------------------------------------------
 
 const TABLES = {
+  shops: 'VITE_NEXORA_SHOPS_TABLE',
   salons: 'VITE_NEXORA_SALONS_TABLE',
   services: 'VITE_NEXORA_SERVICES_TABLE',
   categories: 'VITE_NEXORA_CATEGORIES_TABLE',
@@ -351,9 +387,17 @@ export function normalizeCatalog(
     const distanceLabel = asTrimmedString(row.distance, '');
     const distanceKm = asNumber(row.distance_km);
 
+    const slug =
+      asTrimmedString(row.slug ?? row.shop_slug, '') ||
+      name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') ||
+      'salon';
+    const shopSlug = asTrimmedString(row.shop_slug ?? row.slug, '') || slug;
+
     salons.push({
       id,
       name,
+      slug,
+      shop_slug: shopSlug,
       tagline: asTrimmedString(row.tagline ?? row.description, ''),
       categories,
       tags: asStringArrayFromMixed(row.tags),
@@ -589,14 +633,125 @@ export function mergeTemplateSalons(remoteSalons: Salon[]): Salon[] {
   return merged;
 }
 
+/**
+ * Normalizes rows from the Supabase `shops` table.
+ * Guarantees every shop has a valid `shop_slug` for routing to external site:
+ * https://fanal-templetes-app.vercel.app/?site={shop_slug}
+ */
+export function normalizeShops(rows: ShopDbRow[]): Salon[] {
+  const salons: Salon[] = [];
+  for (const row of rows) {
+    if (!isRecord(row)) continue;
+    const id = asTrimmedString(row.id, '');
+    const name = asTrimmedString(row.name, '');
+    if (!id || !name) continue;
 
+    const latitude = asNumber(row.latitude) ?? 26.8533;
+    const longitude = asNumber(row.longitude) ?? 75.7681;
+    const area = asTrimmedString(row.area, 'Mansarovar');
+    const city = asTrimmedString(row.city, 'Jaipur');
+    const address = asTrimmedString(row.address, `${area}, ${city}`);
 
-/** Fetch the canonical catalog, falling back without ever mixing fake rows into real rows. */
+    const rawSlug = asTrimmedString(row.shop_slug ?? row.slug, '');
+    const shopSlug =
+      rawSlug ||
+      name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') ||
+      'roshan-salon';
+
+    const categories = [
+      ...asStringArrayFromMixed(row.categories),
+      asTrimmedString(row.category, ''),
+    ].filter((val, idx, arr) => val && arr.indexOf(val) === idx);
+
+    const services: SalonService[] = Array.isArray(row.services)
+      ? (row.services as unknown[])
+          .map((s) => {
+            if (!isRecord(s)) return null;
+            return normalizeService(s as unknown as ServiceDbRow);
+          })
+          .filter((s): s is SalonService => s !== null)
+      : [];
+
+    const stylists: Stylist[] = Array.isArray(row.stylists)
+      ? (row.stylists as unknown[])
+          .map((st) => {
+            if (!isRecord(st)) return null;
+            return normalizeStylist(st as unknown as ProfessionalDbRow);
+          })
+          .filter((st): st is Stylist => st !== null)
+      : [];
+
+    salons.push({
+      id,
+      name,
+      slug: shopSlug,
+      shop_slug: shopSlug,
+      tagline: asTrimmedString(row.tagline ?? row.description, 'Premium Salon & Grooming Services'),
+      categories: categories.length ? categories : ['Hair Cut', 'Styling', 'Barber'],
+      tags: categories.map((c) => c.toLowerCase()),
+      keywords: [
+        name.toLowerCase(),
+        shopSlug,
+        city.toLowerCase(),
+        area.toLowerCase(),
+        ...categories.map((c) => c.toLowerCase()),
+      ],
+      rating: asNumber(row.rating) ?? 4.8,
+      reviewCount: asNumber(row.review_count) ?? 120,
+      distance: '0.6 km',
+      location: {
+        area,
+        city,
+        address,
+        latitude,
+        longitude,
+        mapsUrl: asOptionalString(row.maps_url),
+      },
+      image: asTrimmedString(
+        row.image,
+        'https://images.unsplash.com/photo-1503951914875-452162b0f3f1?auto=format&fit=crop&w=800&q=80'
+      ),
+      gallery: asStringArrayFromMixed(row.gallery),
+      isOpen: asBoolean(row.is_open, true),
+      openingHours: asTrimmedString(row.opening_hours, '9:00 AM - 9:30 PM'),
+      priceRange: priceRangeValue(row.price_range),
+      featured: asBoolean(row.featured, true),
+      trending: asBoolean(row.trending, true),
+      services: mapBookingServices(services),
+      stylists: mapBookingStylists(stylists, id, name),
+      reviews: [],
+      amenities: asStringArrayFromMixed(row.amenities),
+      discountOffer: asOptionalString(row.discount_offer),
+      phone: asOptionalString(row.phone),
+      gender: genderValue(row.gender),
+      videoUrl: asOptionalString(row.video_url) || getReelsForSalon(id)[0]?.videoUrl,
+      videoReels: getReelsForSalon(id),
+    });
+  }
+  return salons;
+}
+
+/** Fetch the canonical catalog, dynamically reading from Supabase `shops` table. */
 export async function fetchCatalog(client: SupabaseClient | null = supabase): Promise<CatalogResult> {
-  if (!client || isNexoraDemoMode) {
-    return { salons: DEMO_SALONS, source: 'fallback', warnings: ['Supabase catalog is not configured.'] };
+  if (!client) {
+    return { salons: DEMO_SALONS, source: 'fallback', warnings: ['Supabase client is not available.'] };
   }
 
+  // 1. First dynamically fetch from Supabase shops table
+  const shopsResult = await readRows<ShopDbRow>(client, tableName('shops', 'shops'));
+  if (shopsResult.rows.length > 0) {
+    const normalizedShops = normalizeShops(shopsResult.rows);
+    const sanitizedShops = sanitizeRemoteSalons(normalizedShops);
+    if (sanitizedShops.length > 0) {
+      return { salons: sanitizedShops, source: 'remote', warnings: [] };
+    }
+  }
+
+  if (isNexoraDemoMode) {
+    return { salons: DEMO_SALONS, source: 'fallback', warnings: ['Supabase catalog is in demo mode.'] };
+  }
+
+  // 2. Fall back to salons + child tables if shops table is empty
   const [salonsResult, servicesResult, categoriesResult, professionalsResult] = await Promise.all([
     readRows<SalonDbRow>(client, tableName('salons', 'salons')),
     readRows<ServiceDbRow>(client, tableName('services', 'services')),
@@ -605,6 +760,7 @@ export async function fetchCatalog(client: SupabaseClient | null = supabase): Pr
   ]);
 
   const warnings = [
+    shopsResult.error,
     salonsResult.error,
     servicesResult.error,
     categoriesResult.error,
@@ -634,9 +790,6 @@ export async function fetchCatalog(client: SupabaseClient | null = supabase): Pr
     };
   }
 
-  // Remote wins outright. Demo/template salons are NOT appended here: a
-  // `source: 'remote'` catalog must contain remote rows only, so a customer
-  // never sees (or books) a seeded salon that does not exist upstream.
   const remoteSalons = sanitizeRemoteSalons(normalized);
 
   if (remoteSalons.length === 0) {
@@ -651,5 +804,68 @@ export async function fetchCatalog(client: SupabaseClient | null = supabase): Pr
   }
 
   return { salons: remoteSalons, source: 'remote', warnings };
+}
+
+/**
+ * Dynamically queries the Supabase `shops` table with optional location and category filters.
+ * Falls back to in-memory catalog filtering if the remote table is empty.
+ */
+export async function fetchShopsFromSupabase(
+  options: { location?: string; category?: string; client?: SupabaseClient | null } = {}
+): Promise<{ shops: Salon[]; error?: string }> {
+  const activeClient = options.client || supabase;
+  if (!activeClient) {
+    return { shops: DEMO_SALONS };
+  }
+
+  try {
+    const { data, error } = await activeClient.from('shops').select('*');
+    if (!error && Array.isArray(data) && data.length > 0) {
+      let normalized = normalizeShops(data as ShopDbRow[]);
+      if (options.category && options.category !== 'all') {
+        const cat = options.category.toLowerCase();
+        normalized = normalized.filter(
+          (s) =>
+            s.categories.some((c) => c.toLowerCase().includes(cat)) ||
+            s.name.toLowerCase().includes(cat) ||
+            s.gender === cat
+        );
+      }
+      if (options.location && options.location.trim()) {
+        const loc = options.location.trim().toLowerCase();
+        normalized = normalized.filter(
+          (s) =>
+            s.location.area.toLowerCase().includes(loc) ||
+            s.location.city.toLowerCase().includes(loc) ||
+            s.location.address.toLowerCase().includes(loc)
+        );
+      }
+      return { shops: sanitizeRemoteSalons(normalized) };
+    }
+
+    // Fallback if shops table is empty
+    const catalog = await fetchCatalog(activeClient);
+    let filtered = catalog.salons;
+    if (options.category && options.category !== 'all') {
+      const cat = options.category.toLowerCase();
+      filtered = filtered.filter(
+        (s) =>
+          s.categories.some((c) => c.toLowerCase().includes(cat)) ||
+          s.name.toLowerCase().includes(cat)
+      );
+    }
+    if (options.location && options.location.trim()) {
+      const loc = options.location.trim().toLowerCase();
+      filtered = filtered.filter(
+        (s) =>
+          s.location.area.toLowerCase().includes(loc) ||
+          s.location.city.toLowerCase().includes(loc)
+      );
+    }
+    return { shops: filtered.length ? filtered : catalog.salons };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { shops: DEMO_SALONS, error: message };
+  }
 }
 

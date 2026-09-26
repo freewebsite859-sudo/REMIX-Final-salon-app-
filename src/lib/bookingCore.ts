@@ -84,6 +84,7 @@ export interface BookingDbRow {
   user_id: string | null;
   customer: BookingCustomerSnapshot | null;
   salon_id: string;
+  shop_slug?: string;
   salon_snapshot: BookingSalonSnapshot;
   stylist_snapshot: BookingStylistSnapshot | null;
   slot_date: string;
@@ -348,12 +349,14 @@ export function validateBookingRequest(body: unknown): ValidationResult {
   if (!date || !DATE_RE.test(date)) {
     fields.push('date must be a YYYY-MM-DD string');
   } else {
-    // A booking slot cannot be in the past (server-local calendar date).
-    const today = new Date();
-    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(
-      today.getDate()
-    ).padStart(2, '0')}`;
-    if (date < todayStr) fields.push('date must not be in the past');
+    // A booking slot cannot be in the past.
+    // Allow a 24-hour buffer to account for global timezone differences (e.g. UTC-12 to UTC+14)
+    // so clients booking for their local "today" are never rejected when the server is ahead.
+    const earliestDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const earliestAllowedStr = `${earliestDate.getUTCFullYear()}-${String(
+      earliestDate.getUTCMonth() + 1
+    ).padStart(2, '0')}-${String(earliestDate.getUTCDate()).padStart(2, '0')}`;
+    if (date < earliestAllowedStr) fields.push('date must not be in the past');
   }
 
   const time = asString(raw.time, 12);
@@ -479,12 +482,19 @@ export function buildBookingRows(
       ? customer.id
       : null;
 
+  const shopSlug =
+    input.salon.shop_slug ||
+    input.salon.slug ||
+    input.salon.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') ||
+    'roshan-salon';
+
   const booking: BookingDbRow = {
     id,
     booking_ref: bookingRef,
     user_id: userId,
     customer,
     salon_id: input.salon.id,
+    shop_slug: shopSlug,
     salon_snapshot: input.salon,
     stylist_snapshot: input.stylist ?? null,
     slot_date: input.date,
@@ -553,6 +563,11 @@ export function bookingToAppointment(input: BookingCreateRequest, booking: Booki
     bookingRef: booking.booking_ref,
     salonId: salon.id,
     salonName: salon.name,
+    shopSlug:
+      booking.shop_slug ||
+      salon.shop_slug ||
+      salon.slug ||
+      (salon.name ? salon.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') : 'roshan-salon'),
     salonImage: salon.image ?? '',
     salonAddress: salon.address ?? '',
     ...(salon.phone ? { salonPhone: salon.phone } : {}),

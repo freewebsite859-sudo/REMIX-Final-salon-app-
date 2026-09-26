@@ -4,11 +4,13 @@ import {
   DEFAULT_SEARCH_FILTERS,
   DISTANCE_OPTIONS,
   PRICE_PRESETS,
+  PRICE_RANGE_OPTIONS,
   RATING_OPTIONS,
   SEARCH_CATEGORIES,
   SERVICE_TYPE_OPTIONS,
   SORT_OPTIONS,
   TRENDING_SEARCHES,
+  type PriceRangeTier,
   type SearchFilters,
   type SearchSort,
   clearRecentSearches,
@@ -82,8 +84,22 @@ function getSpeechRecognitionCtor(): (new () => SpeechRec) | null {
 }
 
 // ---------------------------------------------------------------------------
-// Result card
+// Result card & Shop Redirection
 // ---------------------------------------------------------------------------
+
+export function getShopSlug(salon: Salon): string {
+  return (
+    salon.shop_slug ||
+    salon.slug ||
+    (salon.name ? salon.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') : '') ||
+    'roshan-salon'
+  );
+}
+
+export function getShopExternalUrl(salon: Salon): string {
+  const slug = getShopSlug(salon);
+  return `https://fanal-templetes-app.vercel.app/?site=${encodeURIComponent(slug)}`;
+}
 
 const SearchResultCard: React.FC<{
   salon: Salon;
@@ -111,13 +127,23 @@ const SearchResultCard: React.FC<{
   const verified = isVerifiedSalon(salon);
   const category = salon.categories?.[0] || (salon.gender === 'men' ? 'Barber' : 'Salon');
   const offer = hasOffers(salon);
+  const shopSlug = getShopSlug(salon);
+  const externalSiteUrl = getShopExternalUrl(salon);
+
+  const handleCardClick = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (typeof window !== 'undefined') {
+      window.location.href = externalSiteUrl;
+    }
+    onOpen();
+  };
 
   return (
     <article
       id={`search-result-${salon.id}`}
       className="bg-white border border-outline-variant/50 rounded-2xl overflow-hidden shadow-xs hover:shadow-md transition-shadow flex flex-col sm:flex-row"
     >
-      <div className="relative sm:w-[140px] h-[140px] sm:h-auto shrink-0 cursor-pointer" onClick={onOpen}>
+      <div className="relative sm:w-[140px] h-[140px] sm:h-auto shrink-0 cursor-pointer" onClick={handleCardClick}>
         {salon.image ? (
           <img
             src={salon.image}
@@ -156,11 +182,20 @@ const SearchResultCard: React.FC<{
       <div className="p-3.5 flex flex-col gap-1.5 flex-1 min-w-0">
         <div className="flex items-start gap-1.5">
           <h3
-            onClick={onOpen}
+            onClick={handleCardClick}
             className="font-card-title text-[15px] font-bold text-on-surface hover:text-nexora-pink cursor-pointer leading-snug line-clamp-2 flex-1"
           >
             {salon.name}
           </h3>
+          <a
+            href={externalSiteUrl}
+            onClick={handleCardClick}
+            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-colors shrink-0"
+            title={`Visit ${salon.name} at fanal-templetes-app.vercel.app/?site=${shopSlug}`}
+          >
+            <span>Shop Site</span>
+            <span className="material-symbols-outlined text-[11px]">open_in_new</span>
+          </a>
           {verified && (
             <span
               className="material-symbols-outlined text-[16px] text-emerald-600 fill-1 shrink-0 mt-0.5"
@@ -227,6 +262,13 @@ const SearchResultCard: React.FC<{
             ({salon.reviewCount.toLocaleString('en-IN')})
           </span>
           <span className="text-on-surface-variant">·</span>
+          <span
+            className="font-bold text-on-surface tracking-wider px-1.5 py-0.5 rounded bg-surface-container text-[11px]"
+            title={`Cost: ${salon.priceRange || '₹₹'}`}
+          >
+            {salon.priceRange || '₹₹'}
+          </span>
+          <span className="text-on-surface-variant">·</span>
           <span className="text-on-surface-variant truncate">{salon.location.area}</span>
           <span className="text-on-surface-variant">·</span>
           <span className="font-semibold text-primary">{salon.distance}</span>
@@ -265,10 +307,12 @@ const SearchResultCard: React.FC<{
           <div className="flex items-center gap-1.5">
             <button
               type="button"
-              onClick={onOpen}
-              className="px-2.5 py-2 rounded-xl border border-outline-variant/60 text-[11px] font-bold text-on-surface hover:border-primary/40 transition-colors cursor-pointer"
+              onClick={handleCardClick}
+              className="px-2.5 py-2 rounded-xl border border-outline-variant/60 text-[11px] font-bold text-on-surface hover:border-primary/40 hover:text-primary transition-colors cursor-pointer inline-flex items-center gap-1"
+              title={`Visit shop at fanal-templetes-app.vercel.app/?site=${shopSlug}`}
             >
-              View
+              <span>View</span>
+              <span className="material-symbols-outlined text-[13px]">open_in_new</span>
             </button>
             <button
               type="button"
@@ -820,6 +864,57 @@ export const SearchTab: React.FC<SearchTabProps> = ({
           )}
         </div>
 
+        {/* Price range filter quick toggle */}
+        <div
+          id="search-price-range-toggles"
+          className="mt-2.5 flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5"
+          role="group"
+          aria-label="Price range filter"
+        >
+          <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant mr-1 shrink-0">
+            Cost:
+          </span>
+          <button
+            type="button"
+            id="search-quick-price-all"
+            onClick={() => patchFilters({ priceRanges: [] })}
+            className={`shrink-0 px-2.5 py-1 rounded-full text-[11px] font-bold border transition-all cursor-pointer ${
+              !filters.priceRanges || filters.priceRanges.length === 0
+                ? 'bg-primary text-white border-primary shadow-xs'
+                : 'bg-white text-on-surface-variant border-outline-variant/60 hover:border-primary/40'
+            }`}
+          >
+            All
+          </button>
+          {PRICE_RANGE_OPTIONS.map((tier) => {
+            const isSelected = filters.priceRanges?.includes(tier.id);
+            return (
+              <button
+                key={tier.id}
+                type="button"
+                id={`search-quick-price-${tier.id}`}
+                aria-pressed={isSelected}
+                onClick={() => {
+                  const current = filters.priceRanges || [];
+                  const updated = current.includes(tier.id)
+                    ? current.filter((t) => t !== tier.id)
+                    : [...current, tier.id];
+                  patchFilters({ priceRanges: updated });
+                }}
+                className={`shrink-0 px-3 py-1 rounded-full text-[11px] font-bold border transition-all cursor-pointer inline-flex items-center gap-1 ${
+                  isSelected
+                    ? 'bg-primary text-white border-primary shadow-xs ring-1 ring-primary'
+                    : 'bg-white text-on-surface border-outline-variant/60 hover:border-primary/40'
+                }`}
+                title={`${tier.label} - ${tier.sublabel} (${tier.approxRange}): ${tier.description}`}
+              >
+                <span className="font-extrabold tracking-wider">{tier.label}</span>
+                <span className="text-[10px] opacity-90 font-normal">({tier.sublabel})</span>
+              </button>
+            );
+          })}
+        </div>
+
         {/* Natural-language understanding strip */}
         {query.trim() && liveParsed.understanding.length > 0 && (
           <div
@@ -901,10 +996,69 @@ export const SearchTab: React.FC<SearchTabProps> = ({
             </div>
           </div>
 
-          {/* Price range */}
+          {/* Price range tier toggle (₹, ₹₹, ₹₹₹, ₹₹₹₹) */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">
+                Price range / Cost
+              </p>
+              {filters.priceRanges && filters.priceRanges.length > 0 && (
+                <button
+                  type="button"
+                  id="search-filter-clear-price-tiers"
+                  onClick={() => patchFilters({ priceRanges: [] })}
+                  className="text-[11px] font-semibold text-nexora-pink hover:underline cursor-pointer"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" role="group" aria-label="Cost range">
+              {PRICE_RANGE_OPTIONS.map((tier) => {
+                const isSelected = filters.priceRanges?.includes(tier.id);
+                return (
+                  <button
+                    key={tier.id}
+                    type="button"
+                    id={`search-filter-price-tier-${tier.id}`}
+                    aria-pressed={isSelected}
+                    onClick={() => {
+                      const current = filters.priceRanges || [];
+                      const updated = current.includes(tier.id)
+                        ? current.filter((t) => t !== tier.id)
+                        : [...current, tier.id];
+                      patchFilters({ priceRanges: updated });
+                    }}
+                    className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-1 ${
+                      isSelected
+                        ? 'bg-primary/10 border-primary text-primary shadow-xs ring-1 ring-primary'
+                        : 'bg-surface-container-low text-on-surface border-outline-variant/50 hover:border-primary/40'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-extrabold text-[15px] tracking-wider">{tier.label}</span>
+                      {isSelected && (
+                        <span className="material-symbols-outlined text-[16px] text-primary fill-1">
+                          check_circle
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <span className="text-[11px] font-bold block">{tier.sublabel}</span>
+                      <span className="text-[9.5px] text-on-surface-variant line-clamp-1">
+                        {tier.approxRange}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Price presets (Budget numeric caps) */}
           <div>
             <p className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant mb-1.5">
-              Price range
+              Budget cap (₹)
             </p>
             <div className="flex gap-2 overflow-x-auto no-scrollbar pb-0.5">
               {PRICE_PRESETS.map((p) => {
@@ -1342,7 +1496,13 @@ export const SearchTab: React.FC<SearchTabProps> = ({
                   fuzzy={fuzzy}
                   grounding={groundingPrefs.groundedResults ? grounding : null}
                   isSaved={savedSalonIds.includes(salon.id)}
-                  onOpen={() => onOpenSalonDetails(salon)}
+                  onOpen={() => {
+                    const targetUrl = getShopExternalUrl(salon);
+                    if (typeof window !== 'undefined') {
+                      window.location.href = targetUrl;
+                    }
+                    onOpenSalonDetails(salon);
+                  }}
                   onBook={() => onBookSalon(salon, matchedService || undefined)}
                   onToggleSave={() => onToggleSaveSalon(salon.id)}
                 />

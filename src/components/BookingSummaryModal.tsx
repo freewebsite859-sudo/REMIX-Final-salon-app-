@@ -64,10 +64,14 @@ export interface BookingSummaryModalProps {
 function formatReadableDate(dateStr: string): string {
   if (!dateStr) return 'Today';
   const today = new Date();
-  const todayStr = today.toISOString().split('T')[0];
-  const tomorrow = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(
+    today.getDate()
+  ).padStart(2, '0')}`;
+  const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowStr = tomorrow.toISOString().split('T')[0];
+  const tomorrowStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(
+    tomorrow.getDate()
+  ).padStart(2, '0')}`;
 
   if (dateStr === todayStr) {
     return `Today, ${today.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;

@@ -37,6 +37,8 @@ export type SearchSortId =
 
 export type DistanceKmOption = 1 | 3 | 5 | 10 | null;
 
+export type PriceRangeTier = '₹' | '₹₹' | '₹₹₹' | '₹₹₹₹';
+
 export interface SearchFilters {
   category: SearchCategoryId;
   /** Free-text service type (e.g. "Haircut", "Facial"). */
@@ -56,6 +58,8 @@ export interface SearchFilters {
   offersOnly: boolean;
   /** Area name from NL or chip (e.g. "Mansarovar"). */
   area: string;
+  /** Selected price range tiers (e.g. ['₹', '₹₹']). Empty means any price tier. */
+  priceRanges: PriceRangeTier[];
 }
 
 export type SearchSort = SearchSortId;
@@ -106,6 +110,7 @@ export const DEFAULT_SEARCH_FILTERS: SearchFilters = {
   verifiedOnly: false,
   offersOnly: false,
   area: '',
+  priceRanges: [],
 };
 
 export const SEARCH_CATEGORIES: Array<{
@@ -168,6 +173,19 @@ export const PRICE_PRESETS: Array<{ min: number | null; max: number | null; labe
   { min: 1000, max: null, label: '₹1,000+' },
 ];
 
+export const PRICE_RANGE_OPTIONS: Array<{
+  id: PriceRangeTier;
+  label: string;
+  sublabel: string;
+  description: string;
+  approxRange: string;
+}> = [
+  { id: '₹', label: '₹', sublabel: 'Budget', description: 'Pocket-friendly & essentials', approxRange: 'Under ₹500' },
+  { id: '₹₹', label: '₹₹', sublabel: 'Moderate', description: 'Great value & mid-range', approxRange: '₹500 – ₹1,500' },
+  { id: '₹₹₹', label: '₹₹₹', sublabel: 'Premium', description: 'Upscale styling & treatments', approxRange: '₹1,500 – ₹3,000' },
+  { id: '₹₹₹₹', label: '₹₹₹₹', sublabel: 'Luxury', description: 'Elite & full luxury wellness', approxRange: '₹3,000+' },
+];
+
 export const SORT_OPTIONS: Array<{ id: SearchSort; label: string; icon: string }> = [
   { id: 'nearest', label: 'Nearest', icon: 'near_me' },
   { id: 'top_rated', label: 'Top rated', icon: 'star' },
@@ -207,6 +225,26 @@ export function servicePrice(s: SalonService): number {
 export function minSalonPrice(salon: Salon): number {
   if (!salon.services || salon.services.length === 0) return 399;
   return Math.min(...salon.services.map(servicePrice));
+}
+
+export function normalizeSalonPriceRange(
+  priceRange?: string | null,
+  salon?: Salon
+): PriceRangeTier {
+  if (priceRange) {
+    const clean = priceRange.replace(/\$/g, '₹').trim();
+    if (clean === '₹' || clean === '₹₹' || clean === '₹₹₹' || clean === '₹₹₹₹') {
+      return clean as PriceRangeTier;
+    }
+  }
+  if (salon && salon.services && salon.services.length > 0) {
+    const minP = minSalonPrice(salon);
+    if (minP < 300) return '₹';
+    if (minP < 800) return '₹₹';
+    if (minP < 2000) return '₹₹₹';
+    return '₹₹₹₹';
+  }
+  return '₹₹';
 }
 
 export function isVerifiedSalon(salon: Salon): boolean {
@@ -572,6 +610,29 @@ export function parseSearchQuery(rawInput: string): ParsedSearchQuery {
     }
   }
 
+  // Price range tiers (₹, ₹₹, ₹₹₹, ₹₹₹₹ / budget, moderate, luxury)
+  const tierSymbolMatch = working.match(/(?:^|\s)(₹{1,4}|\${1,4})(?=\s|$)/);
+  if (tierSymbolMatch) {
+    const norm = tierSymbolMatch[1].replace(/\$/g, '₹') as PriceRangeTier;
+    if (['₹', '₹₹', '₹₹₹', '₹₹₹₹'].includes(norm)) {
+      inferred.priceRanges = [norm];
+      understanding.push(`Price: ${norm}`);
+      working = working.replace(tierSymbolMatch[0], ' ');
+    }
+  } else if (/\b(?:budget|affordable|inexpensive|pocket[- ]friendly|cheap)\b/i.test(working)) {
+    inferred.priceRanges = ['₹'];
+    understanding.push('Budget (₹)');
+    working = working.replace(/\b(?:budget|affordable|inexpensive|pocket[- ]friendly|cheap)\b/gi, ' ');
+  } else if (/\b(?:mid[- ]range|moderate)\b/i.test(working)) {
+    inferred.priceRanges = ['₹₹'];
+    understanding.push('Moderate (₹₹)');
+    working = working.replace(/\b(?:mid[- ]range|moderate)\b/gi, ' ');
+  } else if (/\b(?:luxury|premium|upscale|high[- ]end|elite)\b/i.test(working)) {
+    inferred.priceRanges = ['₹₹₹', '₹₹₹₹'];
+    understanding.push('Luxury (₹₹₹+)');
+    working = working.replace(/\b(?:luxury|premium|upscale|high[- ]end|elite)\b/gi, ' ');
+  }
+
   // Open now
   if (/\bopen\s+now\b/i.test(working) || /\bcurrently\s+open\b/i.test(working)) {
     inferred.openNow = true;
@@ -803,6 +864,10 @@ export function mergeFilters(
     verifiedOnly: base.verifiedOnly || Boolean(inferred.verifiedOnly),
     offersOnly: base.offersOnly || Boolean(inferred.offersOnly),
     area: pick('area', (v) => !v),
+    priceRanges:
+      base.priceRanges && base.priceRanges.length > 0
+        ? base.priceRanges
+        : (inferred.priceRanges || []),
   };
 }
 
@@ -820,6 +885,7 @@ export function countActiveFilters(f: SearchFilters): number {
   if (f.verifiedOnly) n++;
   if (f.offersOnly) n++;
   if (f.area.trim()) n++;
+  if (f.priceRanges && f.priceRanges.length > 0) n++;
   return n;
 }
 
@@ -830,6 +896,13 @@ function passesFilters(
 ): { ok: boolean; matchedService: SalonService | null; fromPrice: number; fuzzy: boolean } {
   const fromPrice = minSalonPrice(salon);
   let matchedService: SalonService | null = null;
+
+  if (filters.priceRanges && filters.priceRanges.length > 0) {
+    const tier = normalizeSalonPriceRange(salon.priceRange, salon);
+    if (!filters.priceRanges.includes(tier)) {
+      return { ok: false, matchedService: null, fromPrice, fuzzy: false };
+    }
+  }
 
   if (!categoryMatch(salon, filters.category)) {
     return { ok: false, matchedService: null, fromPrice, fuzzy: false };

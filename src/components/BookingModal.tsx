@@ -64,10 +64,15 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   onOpenSummary,
   customerDetails,
 }) => {
-  const todayStr = new Date().toISOString().split('T')[0];
-  const tomorrow = new Date();
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
+    now.getDate()
+  ).padStart(2, '0')}`;
+  const tomorrow = new Date(now);
   tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowStr = tomorrow.toISOString().split('T')[0];
+  const tomorrowStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(
+    tomorrow.getDate()
+  ).padStart(2, '0')}`;
 
   const [selectedServices, setSelectedServices] = useState<SalonService[]>([]);
   const [selectedStylist, setSelectedStylist] = useState<Stylist | null>(null);

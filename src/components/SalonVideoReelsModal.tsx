@@ -324,7 +324,6 @@ export const SalonVideoReelsModal: React.FC<SalonVideoReelsModalProps> = ({
                   setProgress((curr / dur) * 100);
                 }
               }}
-              preload="auto"
               onError={onVideoError}
               onPlaying={onVideoPlaying}
               onPause={onVideoPause}

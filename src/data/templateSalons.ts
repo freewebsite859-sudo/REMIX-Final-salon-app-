@@ -86,9 +86,13 @@ export function getTemplateSalons(): Salon[] {
     const area = tmpl.defaultAddress ? tmpl.defaultAddress.split(',')[0] : 'Central Market';
     const address = `${tmpl.defaultAddress || 'Main Road'}, ${city}`;
 
+    const slug = tmpl.id.toLowerCase().replace(/_/g, '-');
+
     return {
       id: tmpl.id,
       name: tmpl.title,
+      slug,
+      shop_slug: slug,
       tagline: tmpl.tagline || `${tmpl.shortName} - Premium Salon & Spa`,
       about: tmpl.about || `${tmpl.title} offers top-rated beauty, wellness, and grooming services in ${city}.`,
       categories: allCategories,

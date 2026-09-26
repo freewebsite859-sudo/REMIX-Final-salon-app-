@@ -53,6 +53,8 @@ export interface BookingServiceLine {
 export interface BookingSalonSnapshot {
   id: string;
   name: string;
+  slug?: string;
+  shop_slug?: string;
   image?: string;
   address?: string;
   phone?: string;
@@ -205,6 +207,12 @@ export function toBookingSalonSnapshot(
     id: typeof salon.id === 'string' ? salon.id : '',
     name: typeof salon.name === 'string' ? salon.name : '',
   };
+  if (typeof salon.slug === 'string' && salon.slug.trim()) snapshot.slug = salon.slug.trim();
+  if (typeof salon.shop_slug === 'string' && salon.shop_slug.trim()) {
+    snapshot.shop_slug = salon.shop_slug.trim();
+  } else if (snapshot.slug) {
+    snapshot.shop_slug = snapshot.slug;
+  }
   if (typeof salon.image === 'string') snapshot.image = salon.image;
   if (typeof salon.location?.address === 'string') snapshot.address = salon.location.address;
   if (typeof salon.phone === 'string') snapshot.phone = salon.phone;

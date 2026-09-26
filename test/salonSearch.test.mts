@@ -5,14 +5,17 @@ import assert from 'node:assert/strict';
 import { DEMO_SALONS } from '../src/data/demoCatalog.ts';
 import {
   DEFAULT_SEARCH_FILTERS,
+  PRICE_RANGE_OPTIONS,
   clearRecentSearches,
   countActiveFilters,
   isVerifiedSalon,
   loadRecentSearches,
+  normalizeSalonPriceRange,
   parseSearchQuery,
   pushRecentSearch,
   searchSalons,
   sortResults,
+  type PriceRangeTier,
   type SearchResult,
 } from '../src/lib/salonSearch.ts';
 
@@ -71,6 +74,24 @@ function check(label: string, cond: boolean, detail = '') {
   check('NL: verified', p.inferred.verifiedOnly === true);
   check('NL: distance 3', p.inferred.maxDistanceKm === 3);
   check('NL: category barber', p.inferred.category === 'barber');
+}
+
+{
+  const p = parseSearchQuery('budget haircut in Jaipur');
+  check('NL: budget infers price tier ₹', p.inferred.priceRanges?.[0] === '₹');
+}
+
+{
+  const p = parseSearchQuery('luxury spa near me');
+  check(
+    'NL: luxury infers premium/luxury price tiers',
+    Boolean(p.inferred.priceRanges?.includes('₹₹₹') && p.inferred.priceRanges?.includes('₹₹₹₹'))
+  );
+}
+
+{
+  const p = parseSearchQuery('₹₹ salon in Mansarovar');
+  check('NL: literal ₹₹ symbol parsed', p.inferred.priceRanges?.[0] === '₹₹');
 }
 
 {
@@ -222,6 +243,39 @@ function compactIncludesHaircut(name: string): boolean {
   );
 }
 
+{
+  const { results } = searchSalons(
+    DEMO_SALONS,
+    '',
+    { ...DEFAULT_SEARCH_FILTERS, priceRanges: ['₹'] },
+    'top_rated'
+  );
+  check(
+    'filters: priceRange tier ₹ matches budget salons',
+    results.length > 0 &&
+      results.every((r) => normalizeSalonPriceRange(r.salon.priceRange, r.salon) === '₹'),
+    `n=${results.length}`
+  );
+}
+
+{
+  const { results } = searchSalons(
+    DEMO_SALONS,
+    '',
+    { ...DEFAULT_SEARCH_FILTERS, priceRanges: ['₹₹₹', '₹₹₹₹'] },
+    'top_rated'
+  );
+  check(
+    'filters: priceRange tiers ₹₹₹ and ₹₹₹₹ match upscale salons',
+    results.length > 0 &&
+      results.every((r) => {
+        const tier = normalizeSalonPriceRange(r.salon.priceRange, r.salon);
+        return tier === '₹₹₹' || tier === '₹₹₹₹';
+      }),
+    `n=${results.length}`
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Sort
 // ---------------------------------------------------------------------------
@@ -318,6 +372,13 @@ function compactIncludesHaircut(name: string): boolean {
       verifiedOnly: true,
       maxPrice: 300,
     }) === 3
+  );
+  check(
+    'count: priceRanges active',
+    countActiveFilters({
+      ...DEFAULT_SEARCH_FILTERS,
+      priceRanges: ['₹', '₹₹'],
+    }) === 1
   );
 }
 

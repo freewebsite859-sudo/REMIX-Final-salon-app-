@@ -55,6 +55,8 @@ export interface GalleryPhoto {
 export interface Salon {
   id: string;
   name: string;
+  slug?: string;
+  shop_slug?: string;
   tagline: string;
   categories: string[];
   /**
@@ -132,6 +134,7 @@ export interface Appointment {
   id: string;
   salonId: string;
   salonName: string;
+  shopSlug?: string;
   salonAddress: string;
   salonImage: string;
   salonPhone?: string;

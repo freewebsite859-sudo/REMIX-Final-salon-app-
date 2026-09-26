@@ -371,6 +371,34 @@ export const BookingConfirmationPage: React.FC<BookingConfirmationPageProps> = (
       <section
         className={`${embedded ? 'mt-3 space-y-2.5' : 'px-page-margin mt-4 space-y-2.5'}`}
       >
+        {/* External Salon Shop Portal Link (fanal-templetes-app.vercel.app) */}
+        {(() => {
+          const shopSlug =
+            appointment.shopSlug ||
+            (appointment.salonName
+              ? appointment.salonName.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+              : 'roshan-salon');
+          const externalSiteUrl = `https://fanal-templetes-app.vercel.app/?site=${encodeURIComponent(shopSlug)}`;
+          return (
+            <a
+              id="booking-external-portal-btn"
+              href={externalSiteUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-primary/10 via-primary/5 to-nexora-pink/10 border border-primary/30 text-primary font-bold text-[13px] flex items-center justify-between hover:border-primary/60 hover:shadow-xs transition-all cursor-pointer"
+            >
+              <span className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-[18px] text-nexora-pink">storefront</span>
+                <span>Visit {appointment.salonName} Shop Portal</span>
+              </span>
+              <span className="flex items-center gap-1 text-[11px] text-nexora-pink font-semibold">
+                <span>fanal-templetes-app</span>
+                <span className="material-symbols-outlined text-[14px]">open_in_new</span>
+              </span>
+            </a>
+          );
+        })()}
+
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
           {/* Add to calendar */}
           <div className="relative">
